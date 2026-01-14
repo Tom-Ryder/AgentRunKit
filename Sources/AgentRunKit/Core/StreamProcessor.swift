@@ -93,6 +93,10 @@ struct StreamProcessor: Sendable {
             }
         }
 
+        guard pendingArguments.isEmpty else {
+            throw AgentError.malformedStream(.orphanedToolCallArguments(indices: pendingArguments.keys.sorted()))
+        }
+
         let toolCalls = accumulators.keys.sorted().compactMap { index in
             accumulators[index]?.toToolCall()
         }

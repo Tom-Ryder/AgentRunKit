@@ -4,6 +4,7 @@ public enum MalformedStreamReason: Sendable, Equatable, CustomStringConvertible 
     case toolCallDeltaWithoutStart(index: Int)
     case missingToolCallId(index: Int)
     case missingToolCallName(index: Int)
+    case orphanedToolCallArguments(indices: [Int])
 
     public var description: String {
         switch self {
@@ -13,6 +14,8 @@ public enum MalformedStreamReason: Sendable, Equatable, CustomStringConvertible 
             "Tool call at index \(index) missing ID"
         case let .missingToolCallName(index):
             "Tool call at index \(index) missing name"
+        case let .orphanedToolCallArguments(indices):
+            "Tool call arguments at indices \(indices) never received start event"
         }
     }
 }
