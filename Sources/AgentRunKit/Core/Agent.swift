@@ -11,6 +11,10 @@ public final class Agent<C: ToolContext>: Sendable {
         tools: [any AnyTool<C>],
         configuration: AgentConfiguration = AgentConfiguration()
     ) {
+        let names = tools.map(\.name)
+        let duplicates = Dictionary(grouping: names, by: { $0 }).filter { $1.count > 1 }.keys
+        precondition(duplicates.isEmpty, "Duplicate tool names: \(duplicates.sorted().joined(separator: ", "))")
+
         self.client = client
         self.tools = tools
         toolDefinitions = tools.map { ToolDefinition($0) } + [Self.finishToolDefinition]
@@ -20,7 +24,10 @@ public final class Agent<C: ToolContext>: Sendable {
     private static var finishToolDefinition: ToolDefinition {
         ToolDefinition(
             name: "finish",
-            description: "Call this tool when you have completed the task. Pass the final result as content.",
+            description: """
+            Call this tool when you have completed the task. Pass the final result as content. \
+            IMPORTANT: If called alongside other tools, those tools will NOT be executed.
+            """,
             parametersSchema: .object(
                 properties: [
                     "content": .string(description: "The final result or response to return to the user"),
