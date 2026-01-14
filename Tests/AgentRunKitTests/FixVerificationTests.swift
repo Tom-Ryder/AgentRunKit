@@ -343,3 +343,259 @@ private struct InterleavedAddParams: Codable, SchemaProviding, Sendable {
 private struct InterleavedAddOutput: Codable, Sendable {
     let sum: Int
 }
+
+@Suite
+struct OrphanedStreamDeltaTests {
+    @Test
+    func orphanedDeltasWithoutStartThrowsError() async throws {
+        let deltas: [StreamDelta] = [
+            .toolCallDelta(index: 5, arguments: #"{"message":"orphaned"}"#),
+            .finished(usage: nil)
+        ]
+        let client = StreamingMockLLMClient(streamSequences: [deltas])
+        let agent = Agent<EmptyContext>(client: client, tools: [])
+
+        do {
+            for try await _ in agent.stream(userMessage: "Hi", context: EmptyContext()) {}
+            Issue.record("Expected malformedStream error for orphaned deltas")
+        } catch let error as AgentError {
+            guard case let .malformedStream(reason) = error else {
+                Issue.record("Expected malformedStream, got \(error)")
+                return
+            }
+            guard case let .orphanedToolCallArguments(indices) = reason else {
+                Issue.record("Expected orphanedToolCallArguments, got \(reason)")
+                return
+            }
+            #expect(indices == [5])
+        }
+    }
+
+    @Test
+    func multipleOrphanedIndicesReported() async throws {
+        let deltas: [StreamDelta] = [
+            .toolCallDelta(index: 2, arguments: #"{"a":1}"#),
+            .toolCallDelta(index: 7, arguments: #"{"b":2}"#),
+            .toolCallDelta(index: 3, arguments: #"{"c":3}"#),
+            .finished(usage: nil)
+        ]
+        let client = StreamingMockLLMClient(streamSequences: [deltas])
+        let agent = Agent<EmptyContext>(client: client, tools: [])
+
+        do {
+            for try await _ in agent.stream(userMessage: "Hi", context: EmptyContext()) {}
+            Issue.record("Expected malformedStream error")
+        } catch let error as AgentError {
+            guard case let .malformedStream(reason) = error else {
+                Issue.record("Expected malformedStream, got \(error)")
+                return
+            }
+            guard case let .orphanedToolCallArguments(indices) = reason else {
+                Issue.record("Expected orphanedToolCallArguments, got \(reason)")
+                return
+            }
+            #expect(indices == [2, 3, 7])
+        }
+    }
+
+    @Test
+    func mixedOrphanedAndValidDeltasThrows() async throws {
+        let echoTool = Tool<InterleavedEchoParams, InterleavedEchoOutput, EmptyContext>(
+            name: "echo",
+            description: "Echoes input",
+            executor: { params, _ in InterleavedEchoOutput(echoed: "Echo: \(params.message)") }
+        )
+
+        let deltas: [StreamDelta] = [
+            .toolCallStart(index: 0, id: "call_1", name: "echo"),
+            .toolCallDelta(index: 0, arguments: #"{"message":"valid"}"#),
+            .toolCallDelta(index: 5, arguments: #"{"orphaned":true}"#),
+            .finished(usage: nil)
+        ]
+        let client = StreamingMockLLMClient(streamSequences: [deltas])
+        let agent = Agent<EmptyContext>(client: client, tools: [echoTool])
+
+        do {
+            for try await _ in agent.stream(userMessage: "Hi", context: EmptyContext()) {}
+            Issue.record("Expected malformedStream error")
+        } catch let error as AgentError {
+            guard case let .malformedStream(reason) = error else {
+                Issue.record("Expected malformedStream, got \(error)")
+                return
+            }
+            guard case let .orphanedToolCallArguments(indices) = reason else {
+                Issue.record("Expected orphanedToolCallArguments, got \(reason)")
+                return
+            }
+            #expect(indices == [5])
+        }
+    }
+}
+
+@Suite
+struct HTTPDateParsingTests {
+    @Test
+    func parseRetryAfterWithIntegerSeconds() {
+        let client = OpenAIClient(apiKey: "test", model: "test", baseURL: OpenAIClient.openAIBaseURL)
+        let response = HTTPURLResponse(
+            url: URL(string: "https://example.com")!,
+            statusCode: 429,
+            httpVersion: nil,
+            headerFields: ["Retry-After": "120"]
+        )!
+        let duration = client.parseRetryAfter(response)
+        #expect(duration == .seconds(120))
+    }
+
+    @Test
+    func parseRetryAfterWithZeroSeconds() {
+        let client = OpenAIClient(apiKey: "test", model: "test", baseURL: OpenAIClient.openAIBaseURL)
+        let response = HTTPURLResponse(
+            url: URL(string: "https://example.com")!,
+            statusCode: 429,
+            httpVersion: nil,
+            headerFields: ["Retry-After": "0"]
+        )!
+        let duration = client.parseRetryAfter(response)
+        #expect(duration == .seconds(0))
+    }
+
+    @Test
+    func parseRetryAfterWithMissingHeader() {
+        let client = OpenAIClient(apiKey: "test", model: "test", baseURL: OpenAIClient.openAIBaseURL)
+        let response = HTTPURLResponse(
+            url: URL(string: "https://example.com")!,
+            statusCode: 429,
+            httpVersion: nil,
+            headerFields: [:]
+        )!
+        let duration = client.parseRetryAfter(response)
+        #expect(duration == nil)
+    }
+
+    @Test
+    func parseRetryAfterWithMalformedValue() {
+        let client = OpenAIClient(apiKey: "test", model: "test", baseURL: OpenAIClient.openAIBaseURL)
+        let response = HTTPURLResponse(
+            url: URL(string: "https://example.com")!,
+            statusCode: 429,
+            httpVersion: nil,
+            headerFields: ["Retry-After": "not-a-number-or-date"]
+        )!
+        let duration = client.parseRetryAfter(response)
+        #expect(duration == nil)
+    }
+
+    @Test
+    func parseRetryAfterWithHTTPDate() {
+        let client = OpenAIClient(apiKey: "test", model: "test", baseURL: OpenAIClient.openAIBaseURL)
+        let futureDate = Date().addingTimeInterval(60)
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone(identifier: "GMT")
+        formatter.dateFormat = "EEE, dd MMM yyyy HH:mm:ss zzz"
+        let dateString = formatter.string(from: futureDate)
+
+        let response = HTTPURLResponse(
+            url: URL(string: "https://example.com")!,
+            statusCode: 429,
+            httpVersion: nil,
+            headerFields: ["Retry-After": dateString]
+        )!
+        let duration = client.parseRetryAfter(response)
+        #expect(duration != nil)
+        if let duration {
+            let seconds = duration.components.seconds
+            #expect(seconds >= 55 && seconds <= 65)
+        }
+    }
+
+    @Test
+    func parseRetryAfterWithPastHTTPDateReturnsZero() {
+        let client = OpenAIClient(apiKey: "test", model: "test", baseURL: OpenAIClient.openAIBaseURL)
+        let pastDate = Date().addingTimeInterval(-60)
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone(identifier: "GMT")
+        formatter.dateFormat = "EEE, dd MMM yyyy HH:mm:ss zzz"
+        let dateString = formatter.string(from: pastDate)
+
+        let response = HTTPURLResponse(
+            url: URL(string: "https://example.com")!,
+            statusCode: 429,
+            httpVersion: nil,
+            headerFields: ["Retry-After": dateString]
+        )!
+        let duration = client.parseRetryAfter(response)
+        #expect(duration == .seconds(0))
+    }
+
+    @Test
+    func parseRetryAfterWithRFC850DateFormat() {
+        let client = OpenAIClient(apiKey: "test", model: "test", baseURL: OpenAIClient.openAIBaseURL)
+        let response = HTTPURLResponse(
+            url: URL(string: "https://example.com")!,
+            statusCode: 429,
+            httpVersion: nil,
+            headerFields: ["Retry-After": "Sunday, 06-Nov-94 08:49:37 GMT"]
+        )!
+        let duration = client.parseRetryAfter(response)
+        #expect(duration == .seconds(0))
+    }
+
+    @Test
+    func parseRetryAfterWithANSICAsctimeFormat() {
+        let client = OpenAIClient(apiKey: "test", model: "test", baseURL: OpenAIClient.openAIBaseURL)
+        let response = HTTPURLResponse(
+            url: URL(string: "https://example.com")!,
+            statusCode: 429,
+            httpVersion: nil,
+            headerFields: ["Retry-After": "Sun Nov  6 08:49:37 1994"]
+        )!
+        let duration = client.parseRetryAfter(response)
+        #expect(duration == .seconds(0))
+    }
+}
+
+@Suite
+struct SSEPayloadExtractionTests {
+    @Test
+    func extractsPayloadWithSpace() {
+        let payload = OpenAIClient.extractSSEPayload(from: "data: {\"content\":\"hello\"}")
+        #expect(payload == "{\"content\":\"hello\"}")
+    }
+
+    @Test
+    func extractsPayloadWithoutSpace() {
+        let payload = OpenAIClient.extractSSEPayload(from: "data:{\"content\":\"hello\"}")
+        #expect(payload == "{\"content\":\"hello\"}")
+    }
+
+    @Test
+    func extractsDoneMarkerWithSpace() {
+        let payload = OpenAIClient.extractSSEPayload(from: "data: [DONE]")
+        #expect(payload == "[DONE]")
+    }
+
+    @Test
+    func extractsDoneMarkerWithoutSpace() {
+        let payload = OpenAIClient.extractSSEPayload(from: "data:[DONE]")
+        #expect(payload == "[DONE]")
+    }
+
+    @Test
+    func returnsNilForNonDataLines() {
+        #expect(OpenAIClient.extractSSEPayload(from: ": comment") == nil)
+        #expect(OpenAIClient.extractSSEPayload(from: "event: message") == nil)
+        #expect(OpenAIClient.extractSSEPayload(from: "") == nil)
+        #expect(OpenAIClient.extractSSEPayload(from: "id: 123") == nil)
+    }
+
+    @Test
+    func handlesEmptyPayload() {
+        let withSpace = OpenAIClient.extractSSEPayload(from: "data: ")
+        let withoutSpace = OpenAIClient.extractSSEPayload(from: "data:")
+        #expect(withSpace == "")
+        #expect(withoutSpace == "")
+    }
+}
