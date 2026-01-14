@@ -146,8 +146,7 @@ extension OpenAIClient {
         try await performStreamWithRetry(urlRequest: urlRequest) { bytes in
             for try await line in bytes.lines {
                 try Task.checkCancellation()
-                guard line.hasPrefix("data: ") else { continue }
-                let payload = String(line.dropFirst(6))
+                guard let payload = Self.extractSSEPayload(from: line) else { continue }
                 if payload == "[DONE]" {
                     continuation.finish()
                     return
@@ -285,9 +284,41 @@ extension OpenAIClient {
     }
 
     func parseRetryAfter(_ response: HTTPURLResponse) -> Duration? {
-        guard let value = response.value(forHTTPHeaderField: "Retry-After"),
-              let seconds = Int(value) else { return nil }
-        return .seconds(seconds)
+        guard let value = response.value(forHTTPHeaderField: "Retry-After") else { return nil }
+        if let seconds = Int(value) {
+            return .seconds(seconds)
+        }
+        if let date = Self.parseHTTPDate(value) {
+            let seconds = max(0, Int(date.timeIntervalSinceNow.rounded(.up)))
+            return .seconds(seconds)
+        }
+        return nil
+    }
+
+    private static let httpDateFormatters: [DateFormatter] = [
+        "EEE, dd MMM yyyy HH:mm:ss zzz",
+        "EEEE, dd-MMM-yy HH:mm:ss zzz",
+        "EEE MMM d HH:mm:ss yyyy"
+    ].map { format in
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone(identifier: "GMT")
+        formatter.dateFormat = format
+        return formatter
+    }
+
+    private static func parseHTTPDate(_ string: String) -> Date? {
+        for formatter in httpDateFormatters {
+            if let date = formatter.date(from: string) { return date }
+        }
+        return nil
+    }
+
+    static func extractSSEPayload(from line: String) -> String? {
+        guard line.hasPrefix("data:") else { return nil }
+        return line.hasPrefix("data: ")
+            ? String(line.dropFirst(6))
+            : String(line.dropFirst(5))
     }
 
     func parseStreamingChunk(_ data: Data) throws -> StreamingChunk {
