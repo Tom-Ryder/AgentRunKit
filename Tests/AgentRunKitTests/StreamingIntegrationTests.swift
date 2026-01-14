@@ -1,0 +1,218 @@
+import Foundation
+import Testing
+
+@testable import AgentRunKit
+
+private let apiKey = ProcessInfo.processInfo.environment["OPENROUTER_API_KEY"] ?? ""
+private let hasAPIKey = !apiKey.isEmpty
+private let defaultModel = "google/gemini-3-flash-preview"
+
+@Suite(.enabled(if: hasAPIKey, "Requires OPENROUTER_API_KEY environment variable"))
+struct StreamingIntegrationTests {
+    let client = OpenAIClient(
+        apiKey: apiKey,
+        model: defaultModel,
+        maxTokens: 1024,
+        baseURL: OpenAIClient.openRouterBaseURL
+    )
+
+    @Test
+    func clientStreamingWorks() async throws {
+        let messages: [ChatMessage] = [
+            .system("You are a helpful assistant. Be concise."),
+            .user("Count from 1 to 5, one number per line.")
+        ]
+
+        var contentChunks: [String] = []
+        var finishedCount = 0
+
+        for try await delta in client.stream(messages: messages, tools: []) {
+            switch delta {
+            case let .content(text):
+                contentChunks.append(text)
+            case .finished:
+                finishedCount += 1
+            default:
+                break
+            }
+        }
+
+        let fullContent = contentChunks.joined()
+        #expect(!contentChunks.isEmpty, "Should receive content")
+        #expect(fullContent.contains("1"))
+        #expect(fullContent.contains("5"))
+        #expect(finishedCount == 1, "Should receive exactly one finished event")
+    }
+
+    @Test
+    func clientStreamingWithToolCalls() async throws {
+        let weatherTool = ToolDefinition(
+            name: "get_weather",
+            description: "Get the current weather for a city",
+            parametersSchema: .object(
+                properties: ["city": .string(description: "The city name")],
+                required: ["city"]
+            )
+        )
+
+        let messages: [ChatMessage] = [
+            .system("You are a helpful assistant. Use tools when appropriate."),
+            .user("What's the weather in Paris?")
+        ]
+
+        var toolCallStartName: String?
+        var toolCallStartIndex: Int?
+        var toolCallArgs: [Int: String] = [:]
+
+        for try await delta in client.stream(messages: messages, tools: [weatherTool]) {
+            switch delta {
+            case let .toolCallStart(index, _, name):
+                if name == "get_weather" {
+                    toolCallStartName = name
+                    toolCallStartIndex = index
+                }
+            case let .toolCallDelta(index, arguments):
+                toolCallArgs[index, default: ""] += arguments
+            default:
+                break
+            }
+        }
+
+        #expect(toolCallStartName == "get_weather", "Should call get_weather tool")
+
+        if let index = toolCallStartIndex {
+            let args = toolCallArgs[index] ?? ""
+            #expect(args.lowercased().contains("paris"), "Tool args should contain Paris")
+        }
+    }
+
+    @Test
+    func agentStreamingCompletesWithFinishTool() async throws {
+        let agent = Agent<EmptyContext>(client: client, tools: [])
+
+        var events: [StreamEvent] = []
+        for try await event in agent.stream(
+            userMessage: "Say 'Hello World' and finish. Use the finish tool.",
+            context: EmptyContext()
+        ) {
+            events.append(event)
+        }
+
+        let deltas = events.compactMap { event -> String? in
+            if case let .delta(text) = event { return text }
+            return nil
+        }
+
+        let hasFinished = events.contains { event in
+            if case .finished = event { return true }
+            return false
+        }
+
+        #expect(!deltas.isEmpty || hasFinished, "Should receive content or finish")
+        #expect(hasFinished, "Should receive finished event")
+    }
+
+    @Test
+    func agentStreamingWithToolExecution() async throws {
+        let addTool = Tool<StreamingAddParams, StreamingAddOutput, EmptyContext>(
+            name: "add",
+            description: "Add two numbers together",
+            executor: { params, _ in StreamingAddOutput(sum: params.lhs + params.rhs) }
+        )
+
+        let config = AgentConfiguration(
+            maxIterations: 5,
+            systemPrompt: """
+            You are a calculator. Use add tool for addition, then finish with the result.
+            """
+        )
+
+        let agent = Agent<EmptyContext>(client: client, tools: [addTool], configuration: config)
+
+        var toolStarted = false
+        var toolCompleted = false
+        var hasFinished = false
+
+        for try await event in agent.stream(
+            userMessage: "What is 7 + 8?",
+            context: EmptyContext()
+        ) {
+            switch event {
+            case .toolCallStarted:
+                toolStarted = true
+            case let .toolCallCompleted(_, name, result):
+                if name == "add" {
+                    toolCompleted = true
+                    #expect(result.content.contains("15"), "Add result should contain 15")
+                }
+            case .finished:
+                hasFinished = true
+            default:
+                break
+            }
+        }
+
+        #expect(toolStarted, "Should emit toolCallStarted event")
+        #expect(toolCompleted, "Should emit toolCallCompleted event")
+        #expect(hasFinished, "Should emit finished event")
+    }
+
+    @Test
+    func chatStreamingWithTools() async throws {
+        let echoTool = Tool<StreamingEchoParams, StreamingEchoOutput, EmptyContext>(
+            name: "echo",
+            description: "Echo back the message",
+            executor: { params, _ in StreamingEchoOutput(echoed: "Echo: \(params.message)") }
+        )
+
+        let chat = Chat<EmptyContext>(
+            client: client,
+            tools: [echoTool],
+            systemPrompt: "You are a helpful assistant. Use the echo tool when asked to echo something."
+        )
+
+        var events: [StreamEvent] = []
+        for try await event in chat.stream("Echo the word 'test'", context: EmptyContext()) {
+            events.append(event)
+        }
+
+        let hasFinished = events.contains { if case .finished = $0 { return true }; return false }
+        #expect(hasFinished, "Should finish successfully")
+
+        let toolCompleted = events.first { event in
+            if case let .toolCallCompleted(_, name, _) = event { return name == "echo" }
+            return false
+        }
+        #expect(toolCompleted != nil, "Should execute echo tool")
+    }
+}
+
+private struct StreamingAddParams: Codable, SchemaProviding, Sendable {
+    let lhs: Int
+    let rhs: Int
+
+    static var jsonSchema: JSONSchema {
+        .object(
+            properties: [
+                "lhs": .integer(description: "First number"),
+                "rhs": .integer(description: "Second number")
+            ],
+            required: ["lhs", "rhs"]
+        )
+    }
+}
+
+private struct StreamingAddOutput: Codable, Sendable {
+    let sum: Int
+}
+
+private struct StreamingEchoParams: Codable, SchemaProviding, Sendable {
+    let message: String
+    static var jsonSchema: JSONSchema {
+        .object(properties: ["message": .string(description: "Message to echo")], required: ["message"])
+    }
+}
+
+private struct StreamingEchoOutput: Codable, Sendable {
+    let echoed: String
+}
