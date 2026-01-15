@@ -221,7 +221,10 @@ struct ChatTests {
         }
         #expect(content == "Hi")
     }
+}
 
+@Suite
+struct ChatStreamingEdgeTests {
     @Test
     func outOfOrderDeltasBuffered() async throws {
         let echoTool = Tool<EchoParams, EchoOutput, EmptyContext>(

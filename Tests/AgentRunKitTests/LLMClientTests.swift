@@ -63,6 +63,8 @@ struct MockLLMClientTests {
                 Issue.record("Expected llmError, got \(error)")
                 return
             }
+        } catch {
+            Issue.record("Expected llmError, got \(error)")
         }
     }
 }
@@ -148,6 +150,35 @@ struct OpenAIClientRequestTests {
 
         #expect(json?["tools"] == nil)
         #expect(json?["tool_choice"] == nil)
+    }
+
+    @Test
+    func requestEncodesAudioParts() throws {
+        let client = OpenAIClient(
+            apiKey: "test-key",
+            model: "test/model",
+            baseURL: OpenAIClient.openRouterBaseURL
+        )
+        let audioData = Data("audio".utf8)
+        let messages: [ChatMessage] = [
+            .user([.text("Transcribe"), .audio(data: audioData, format: .wav)])
+        ]
+        let request = client.buildRequest(messages: messages, tools: [])
+
+        let encoder = JSONEncoder()
+        encoder.keyEncodingStrategy = .convertToSnakeCase
+        let data = try encoder.encode(request)
+        let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+
+        let jsonMessages = json?["messages"] as? [[String: Any]]
+        let content = jsonMessages?.first?["content"] as? [[String: Any]]
+        let textPart = content?.first { $0["type"] as? String == "text" }
+        #expect(textPart?["text"] as? String == "Transcribe")
+        let audioPart = content?.first { $0["type"] as? String == "input_audio" }
+        #expect(audioPart?["type"] as? String == "input_audio")
+        let inputAudio = audioPart?["input_audio"] as? [String: Any]
+        #expect(inputAudio?["format"] as? String == "wav")
+        #expect(inputAudio?["data"] as? String == audioData.base64EncodedString())
     }
 
     @Test
@@ -259,5 +290,100 @@ struct OpenAIClientURLRequestTests {
         let urlRequest = try client.buildURLRequest(request)
 
         #expect(urlRequest.url?.absoluteString == "https://custom.api.example.com/v2/chat/completions")
+    }
+
+    @Test
+    func buildTranscriptionURLRequestEncodesMultipartBody() {
+        let client = OpenAIClient(apiKey: "test-key", model: "test/model", baseURL: OpenAIClient.openAIBaseURL)
+        let audioData = Data("audio-data".utf8)
+        let urlRequest = client.buildTranscriptionURLRequest(
+            audio: audioData,
+            format: .wav,
+            model: "whisper-1",
+            options: TranscriptionOptions(language: "en", prompt: "Hello", temperature: 0.2),
+            boundary: "boundary"
+        )
+
+        #expect(urlRequest.url?.absoluteString == "https://api.openai.com/v1/audio/transcriptions")
+        #expect(urlRequest.httpMethod == "POST")
+        #expect(urlRequest.value(forHTTPHeaderField: "Authorization") == "Bearer test-key")
+        #expect(urlRequest.value(forHTTPHeaderField: "Content-Type") == "multipart/form-data; boundary=boundary")
+
+        guard let body = urlRequest.httpBody else {
+            Issue.record("Expected httpBody to be set")
+            return
+        }
+
+        let parts = parseMultipartBody(body, boundary: "boundary")
+        #expect(parts.count == 5)
+
+        let modelPart = multipartPart(named: "model", parts: parts)
+        #expect(modelPart?.body == "whisper-1")
+
+        let languagePart = multipartPart(named: "language", parts: parts)
+        #expect(languagePart?.body == "en")
+
+        let promptPart = multipartPart(named: "prompt", parts: parts)
+        #expect(promptPart?.body == "Hello")
+
+        let temperaturePart = multipartPart(named: "temperature", parts: parts)
+        #expect(temperaturePart?.body == "0.2")
+
+        let filePart = multipartPart(named: "file", parts: parts)
+        #expect(filePart?.headers["Content-Type"] == "audio/wav")
+        #expect(filePart?.body == "audio-data")
+        #expect(filePart?.filename == "audio.wav")
+    }
+
+    @Test
+    func buildTranscriptionURLRequestOmitsOptionalFields() {
+        let client = OpenAIClient(apiKey: "test-key", model: "test/model", baseURL: OpenAIClient.openAIBaseURL)
+        let audioData = Data("audio-data".utf8)
+        let urlRequest = client.buildTranscriptionURLRequest(
+            audio: audioData,
+            format: .wav,
+            model: "whisper-1",
+            options: TranscriptionOptions(),
+            boundary: "boundary"
+        )
+
+        guard let body = urlRequest.httpBody else {
+            Issue.record("Expected httpBody to be set")
+            return
+        }
+
+        let parts = parseMultipartBody(body, boundary: "boundary")
+        #expect(parts.count == 2)
+        #expect(multipartPart(named: "model", parts: parts)?.body == "whisper-1")
+        #expect(multipartPart(named: "file", parts: parts)?.body == "audio-data")
+        #expect(multipartPart(named: "language", parts: parts) == nil)
+        #expect(multipartPart(named: "prompt", parts: parts) == nil)
+        #expect(multipartPart(named: "temperature", parts: parts) == nil)
+    }
+
+    @Test
+    func buildTranscriptionURLRequestWithFileBody() throws {
+        let client = OpenAIClient(apiKey: "test-key", model: "test/model", baseURL: OpenAIClient.openAIBaseURL)
+        let audioURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("swiftagent-audio-\(UUID().uuidString).wav")
+        let audioData = Data("audio-data".utf8)
+        try audioData.write(to: audioURL)
+        defer { try? FileManager.default.removeItem(at: audioURL) }
+
+        let (urlRequest, bodyURL) = try client.buildTranscriptionURLRequest(
+            audioFileURL: audioURL,
+            format: .wav,
+            model: "whisper-1",
+            options: TranscriptionOptions(),
+            boundary: "boundary"
+        )
+        defer { try? FileManager.default.removeItem(at: bodyURL) }
+
+        #expect(urlRequest.httpBody == nil)
+        let body = try Data(contentsOf: bodyURL)
+        let parts = parseMultipartBody(body, boundary: "boundary")
+        #expect(parts.count == 2)
+        #expect(multipartPart(named: "model", parts: parts)?.body == "whisper-1")
+        #expect(multipartPart(named: "file", parts: parts)?.body == "audio-data")
     }
 }

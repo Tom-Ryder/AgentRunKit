@@ -23,6 +23,14 @@ public enum ChatMessage: Sendable, Equatable, Codable {
         .userMultimodal([.text(text), .video(data: videoData, mimeType: mimeType)])
     }
 
+    public static func user(text: String, audioData: Data, format: AudioInputFormat) -> ChatMessage {
+        .userMultimodal([.text(text), .audio(data: audioData, format: format)])
+    }
+
+    public static func user(audioData: Data, format: AudioInputFormat) -> ChatMessage {
+        .userMultimodal([.audio(data: audioData, format: format)])
+    }
+
     private enum CodingKeys: String, CodingKey {
         case role, content, id, name
     }

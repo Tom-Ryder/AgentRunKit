@@ -131,6 +131,15 @@ struct ChatMessageTests {
     }
 
     @Test
+    func userAudioRoundTrip() throws {
+        let audioData = Data("audio".utf8)
+        let original = ChatMessage.user(text: "Transcribe", audioData: audioData, format: .wav)
+        let data = try JSONEncoder().encode(original)
+        let decoded = try JSONDecoder().decode(ChatMessage.self, from: data)
+        #expect(decoded == original)
+    }
+
+    @Test
     func toolMessageRoundTrip() throws {
         let original = ChatMessage.tool(id: "call_123", name: "get_weather", content: "{\"temp\": 72}")
         let data = try JSONEncoder().encode(original)
@@ -141,5 +150,104 @@ struct ChatMessageTests {
         #expect(json?["role"] as? String == "tool")
         #expect(json?["id"] as? String == "call_123")
         #expect(json?["name"] as? String == "get_weather")
+    }
+}
+
+@Suite
+struct ContentPartTests {
+    @Test
+    func audioEncodesAsInputAudio() throws {
+        let audioData = Data("audio".utf8)
+        let part = ContentPart.audio(data: audioData, format: .wav)
+        let data = try JSONEncoder().encode(part)
+        let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+        #expect(json?["type"] as? String == "input_audio")
+        let inputAudio = json?["input_audio"] as? [String: Any]
+        #expect(inputAudio?["format"] as? String == "wav")
+        #expect(inputAudio?["data"] as? String == audioData.base64EncodedString())
+    }
+
+    @Test
+    func audioRoundTrip() throws {
+        let audioData = Data([0x01, 0x02, 0x03])
+        let original = ContentPart.audio(data: audioData, format: .mp3)
+        let data = try JSONEncoder().encode(original)
+        let decoded = try JSONDecoder().decode(ContentPart.self, from: data)
+        #expect(decoded == original)
+    }
+
+    @Test
+    func audioDecodeFailsWithoutData() throws {
+        let json: [String: Any] = [
+            "type": "input_audio",
+            "input_audio": ["format": "wav"]
+        ]
+        let data = try JSONSerialization.data(withJSONObject: json)
+        do {
+            _ = try JSONDecoder().decode(ContentPart.self, from: data)
+            Issue.record("Expected decoding failure")
+        } catch let DecodingError.keyNotFound(key, _) {
+            #expect(key.stringValue == "data")
+        } catch {
+            Issue.record("Unexpected error: \(error)")
+        }
+    }
+
+    @Test
+    func audioDecodeFailsWithInvalidBase64() throws {
+        let json: [String: Any] = [
+            "type": "input_audio",
+            "input_audio": [
+                "format": "wav",
+                "data": "not-base64"
+            ]
+        ]
+        let data = try JSONSerialization.data(withJSONObject: json)
+        do {
+            _ = try JSONDecoder().decode(ContentPart.self, from: data)
+            Issue.record("Expected decoding failure")
+        } catch let DecodingError.dataCorrupted(context) {
+            #expect(context.debugDescription == "input_audio.data is not valid base64")
+        } catch {
+            Issue.record("Unexpected error: \(error)")
+        }
+    }
+
+    @Test
+    func audioDecodeFailsWithUnknownFormat() throws {
+        let audioData = Data("audio".utf8)
+        let json: [String: Any] = [
+            "type": "input_audio",
+            "input_audio": [
+                "format": "aac",
+                "data": audioData.base64EncodedString()
+            ]
+        ]
+        let data = try JSONSerialization.data(withJSONObject: json)
+        do {
+            _ = try JSONDecoder().decode(ContentPart.self, from: data)
+            Issue.record("Expected decoding failure")
+        } catch let DecodingError.dataCorrupted(context) {
+            #expect(context.debugDescription.contains("Unknown audio format"))
+        } catch {
+            Issue.record("Unexpected error: \(error)")
+        }
+    }
+}
+
+@Suite
+struct AudioFormatTests {
+    @Test
+    func audioInputFormatMappings() {
+        #expect(AudioInputFormat.wav.mimeType == "audio/wav")
+        #expect(AudioInputFormat.mp3.mimeType == "audio/mpeg")
+        #expect(AudioInputFormat.webm.fileExtension == "webm")
+    }
+
+    @Test
+    func transcriptionAudioFormatMappings() {
+        #expect(TranscriptionAudioFormat.mp3.mimeType == "audio/mpeg")
+        #expect(TranscriptionAudioFormat.m4a.mimeType == "audio/mp4")
+        #expect(TranscriptionAudioFormat.wav.fileExtension == "wav")
     }
 }

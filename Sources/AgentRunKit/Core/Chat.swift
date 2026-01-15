@@ -24,7 +24,12 @@ public struct Chat<C: ToolContext>: Sendable {
     }
 
     public func send(_ message: String) async throws -> AssistantMessage {
-        let messages = buildMessages(userMessage: message)
+        let messages = buildMessages(userMessage: .user(message))
+        return try await client.generate(messages: messages, tools: toolDefinitions)
+    }
+
+    public func send(_ parts: [ContentPart]) async throws -> AssistantMessage {
+        let messages = buildMessages(userMessage: .user(parts))
         return try await client.generate(messages: messages, tools: toolDefinitions)
     }
 
@@ -32,24 +37,49 @@ public struct Chat<C: ToolContext>: Sendable {
         _ message: String,
         returning _: T.Type
     ) async throws -> T {
-        let messages = buildMessages(userMessage: message)
+        let messages = buildMessages(userMessage: .user(message))
         let response = try await client.generate(
             messages: messages,
             tools: [],
             responseFormat: .jsonSchema(T.self)
         )
+        return try decodeStructuredOutput(response.content)
+    }
+
+    public func send<T: Decodable & SchemaProviding>(
+        _ parts: [ContentPart],
+        returning _: T.Type
+    ) async throws -> T {
+        let messages = buildMessages(userMessage: .user(parts))
+        let response = try await client.generate(
+            messages: messages,
+            tools: [],
+            responseFormat: .jsonSchema(T.self)
+        )
+        return try decodeStructuredOutput(response.content)
+    }
+
+    private func decodeStructuredOutput<T: Decodable>(_ content: String) throws -> T {
         do {
-            return try JSONDecoder().decode(T.self, from: Data(response.content.utf8))
+            return try JSONDecoder().decode(T.self, from: Data(content.utf8))
         } catch {
             throw AgentError.structuredOutputDecodingFailed(message: String(describing: error))
         }
     }
 
     public func stream(_ message: String, context: C) -> AsyncThrowingStream<StreamEvent, Error> {
+        stream(userMessage: .user(message), context: context)
+    }
+
+    public func stream(_ parts: [ContentPart], context: C) -> AsyncThrowingStream<StreamEvent, Error> {
+        stream(userMessage: .user(parts), context: context)
+    }
+
+    private func stream(userMessage: ChatMessage, context: C) -> AsyncThrowingStream<StreamEvent, Error> {
         AsyncThrowingStream { continuation in
             let task = Task {
                 do {
-                    try await performStream(message: message, context: context, continuation: continuation)
+                    try await performStream(userMessage: userMessage, context: context, continuation: continuation)
                 } catch {
                     continuation.finish(throwing: error)
                 }
@@ -61,11 +91,11 @@ public struct Chat<C: ToolContext>: Sendable {
     }
 
     private func performStream(
-        message: String,
+        userMessage: ChatMessage,
         context: C,
         continuation: AsyncThrowingStream<StreamEvent, Error>.Continuation
     ) async throws {
-        var messages = buildMessages(userMessage: message)
+        var messages = buildMessages(userMessage: userMessage)
         var totalUsage = TokenUsage()
         let policy = StreamPolicy.chat
         let processor = StreamProcessor(client: client, toolDefinitions: toolDefinitions, policy: policy)
@@ -100,12 +130,12 @@ public struct Chat<C: ToolContext>: Sendable {
         continuation.finish(throwing: AgentError.maxIterationsReached(iterations: maxToolRounds))
     }
 
-    private func buildMessages(userMessage: String) -> [ChatMessage] {
+    private func buildMessages(userMessage: ChatMessage) -> [ChatMessage] {
         var messages: [ChatMessage] = []
         if let systemPrompt {
             messages.append(.system(systemPrompt))
         }
-        messages.append(.user(userMessage))
+        messages.append(userMessage)
         return messages
     }
 

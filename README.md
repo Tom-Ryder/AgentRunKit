@@ -28,7 +28,7 @@
 - **Type-Safe Tools** - Define tools with `Codable` parameters and automatic schema inference
 - **Multi-Provider Support** - OpenAI, OpenRouter, Groq, Together, Ollama
 - **Streaming** - Real-time token streaming with `StreamEvent` callbacks
-- **Multimodal** - Images, video, and PDF via base64 or URL
+- **Multimodal** - Images, audio, video, and PDF (base64; images also support URLs)
 - **Structured Output** - JSON schema-constrained responses
 - **Retry with Backoff** - Automatic retry on transient failures and rate limits
 - **Cancellation** - Proper Swift concurrency cancellation support
@@ -267,7 +267,7 @@ let custom = OpenAIClient(
 
 ## Multimodal Input
 
-Send images, video, and PDFs:
+Send images, audio, video, and PDFs. For OpenRouter speech-to-text, use model `mistralai/voxtral-small-24b-2507`.
 
 ```swift
 // Image from URL
@@ -291,12 +291,36 @@ let message = ChatMessage.user([
     .image(url: "https://example.com/b.jpg")
 ])
 
+// Audio (speech to text)
+let audioData = try Data(contentsOf: audioURL)
+let message = ChatMessage.user(
+    text: "Transcribe this audio:",
+    audioData: audioData,
+    format: .wav
+)
+
 // PDF document
 let pdfData = try Data(contentsOf: pdfURL)
 let message = ChatMessage.user([
     .text("Summarize this document:"),
     .pdf(data: pdfData)
 ])
+```
+
+Direct transcription via `/audio/transcriptions`:
+
+```swift
+let transcript = try await client.transcribe(
+    audio: audioData,
+    format: .wav,
+    model: "whisper-1"
+)
+
+let transcript = try await client.transcribe(
+    audioFileURL: audioURL,
+    format: .wav,
+    model: "whisper-1"
+)
 ```
 
 ## Structured Output

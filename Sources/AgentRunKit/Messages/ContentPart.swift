@@ -1,11 +1,45 @@
 import Foundation
 
+public enum AudioInputFormat: String, Sendable, Codable, CaseIterable {
+    case wav
+    case mp3
+    case m4a
+    case flac
+    case ogg
+    case opus
+    case webm
+
+    public var mimeType: String {
+        switch self {
+        case .wav:
+            "audio/wav"
+        case .mp3:
+            "audio/mpeg"
+        case .m4a:
+            "audio/mp4"
+        case .flac:
+            "audio/flac"
+        case .ogg:
+            "audio/ogg"
+        case .opus:
+            "audio/opus"
+        case .webm:
+            "audio/webm"
+        }
+    }
+
+    public var fileExtension: String {
+        rawValue
+    }
+}
+
 public enum ContentPart: Sendable, Equatable {
     case text(String)
     case imageURL(String)
     case imageBase64(data: Data, mimeType: String)
     case videoBase64(data: Data, mimeType: String)
     case pdfBase64(data: Data)
+    case audioBase64(data: Data, format: AudioInputFormat)
 
     public static func image(url: String) -> ContentPart {
         .imageURL(url)
@@ -22,15 +56,23 @@ public enum ContentPart: Sendable, Equatable {
     public static func pdf(data: Data) -> ContentPart {
         .pdfBase64(data: data)
     }
+
+    public static func audio(data: Data, format: AudioInputFormat) -> ContentPart {
+        .audioBase64(data: data, format: format)
+    }
 }
 
 extension ContentPart: Codable {
     private enum CodingKeys: String, CodingKey {
-        case type, text, imageURL = "image_url", inlineData = "inline_data"
+        case type, text, imageURL = "image_url", inputAudio = "input_audio", inlineData = "inline_data"
     }
 
     private enum ImageURLKeys: String, CodingKey {
         case url
+    }
+
+    private enum InputAudioKeys: String, CodingKey {
+        case data, format
     }
 
     private enum InlineDataKeys: String, CodingKey {
@@ -53,6 +95,25 @@ extension ContentPart: Codable {
             } else {
                 self = .imageURL(url)
             }
+        case "input_audio":
+            let audioContainer = try container.nestedContainer(keyedBy: InputAudioKeys.self, forKey: .inputAudio)
+            let dataString = try audioContainer.decode(String.self, forKey: .data)
+            guard let data = Data(base64Encoded: dataString) else {
+                throw DecodingError.dataCorruptedError(
+                    forKey: .data,
+                    in: audioContainer,
+                    debugDescription: "input_audio.data is not valid base64"
+                )
+            }
+            let formatString = try audioContainer.decode(String.self, forKey: .format)
+            guard let format = AudioInputFormat(rawValue: formatString) else {
+                throw DecodingError.dataCorruptedError(
+                    forKey: .format,
+                    in: audioContainer,
+                    debugDescription: "Unknown audio format: \(formatString)"
+                )
+            }
+            self = .audioBase64(data: data, format: format)
         default:
             throw DecodingError.dataCorrupted(
                 DecodingError.Context(codingPath: decoder.codingPath, debugDescription: "Unknown content type: \(type)")
@@ -117,6 +178,12 @@ extension ContentPart: Codable {
             var urlContainer = container.nestedContainer(keyedBy: ImageURLKeys.self, forKey: .imageURL)
             let base64 = data.base64EncodedString()
             try urlContainer.encode("data:application/pdf;base64,\(base64)", forKey: .url)
+
+        case let .audioBase64(data, format):
+            try container.encode("input_audio", forKey: .type)
+            var audioContainer = container.nestedContainer(keyedBy: InputAudioKeys.self, forKey: .inputAudio)
+            try audioContainer.encode(data.base64EncodedString(), forKey: .data)
+            try audioContainer.encode(format.rawValue, forKey: .format)
         }
     }
 }

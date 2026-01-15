@@ -224,3 +224,46 @@ struct StreamingFunction: Decodable, Sendable {
     let name: String?
     let arguments: String?
 }
+
+public enum TranscriptionAudioFormat: String, Sendable, Codable, CaseIterable {
+    case mp3
+    case mp4
+    case mpeg
+    case mpga
+    case m4a
+    case wav
+    case webm
+
+    public var mimeType: String {
+        switch self {
+        case .mp3, .mpeg, .mpga:
+            "audio/mpeg"
+        case .mp4, .m4a:
+            "audio/mp4"
+        case .wav:
+            "audio/wav"
+        case .webm:
+            "audio/webm"
+        }
+    }
+
+    public var fileExtension: String {
+        rawValue
+    }
+}
+
+public struct TranscriptionOptions: Sendable, Equatable {
+    public let language: String?
+    public let prompt: String?
+    public let temperature: Double?
+
+    public init(language: String? = nil, prompt: String? = nil, temperature: Double? = nil) {
+        self.language = language
+        self.prompt = prompt
+        self.temperature = temperature
+    }
+}
+
+struct TranscriptionResponse: Decodable, Sendable {
+    let text: String
+}
