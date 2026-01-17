@@ -1,7 +1,7 @@
 import Foundation
 
 public indirect enum JSONSchema: Sendable, Equatable {
-    case string(description: String? = nil)
+    case string(description: String? = nil, enumValues: [String]? = nil)
     case integer(description: String? = nil)
     case number(description: String? = nil)
     case boolean(description: String? = nil)
@@ -22,9 +22,10 @@ extension JSONSchema: Encodable {
         var container = encoder.container(keyedBy: CodingKeys.self)
 
         switch self {
-        case let .string(description):
+        case let .string(description, enumValues):
             try container.encode("string", forKey: .type)
             try container.encodeIfPresent(description, forKey: .description)
+            try container.encodeIfPresent(enumValues, forKey: .enum)
 
         case let .integer(description):
             try container.encode("integer", forKey: .type)
@@ -62,5 +63,6 @@ extension JSONSchema: Encodable {
 
     private enum CodingKeys: String, CodingKey {
         case type, description, items, properties, required, anyOf, additionalProperties
+        case `enum`
     }
 }
