@@ -257,12 +257,15 @@ extension OpenAIClient {
     func extractDeltas(from chunk: StreamingChunk) -> [StreamDelta] {
         var deltas: [StreamDelta] = []
         for choice in chunk.choices {
+            if let reasoning = choice.delta.reasoning ?? choice.delta.reasoningContent, !reasoning.isEmpty {
+                deltas.append(.reasoning(reasoning))
+            }
             if let content = choice.delta.content, !content.isEmpty {
                 deltas.append(.content(content))
             }
             if let toolCalls = choice.delta.toolCalls {
                 for call in toolCalls {
-                    if let id = call.id, let name = call.function?.name {
+                    if let id = call.id, !id.isEmpty, let name = call.function?.name, !name.isEmpty {
                         deltas.append(.toolCallStart(index: call.index, id: id, name: name))
                     }
                     if let args = call.function?.arguments, !args.isEmpty {

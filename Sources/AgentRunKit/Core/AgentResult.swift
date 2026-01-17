@@ -27,11 +27,19 @@ public struct AgentResult: Sendable, Equatable {
     public let content: String
     public let totalTokenUsage: TokenUsage
     public let iterations: Int
+    public let history: [ChatMessage]
 
-    public init(finishReason: FinishReason, content: String, totalTokenUsage: TokenUsage, iterations: Int) {
+    public init(
+        finishReason: FinishReason,
+        content: String,
+        totalTokenUsage: TokenUsage,
+        iterations: Int,
+        history: [ChatMessage] = []
+    ) {
         self.finishReason = finishReason
         self.content = content
         self.totalTokenUsage = totalTokenUsage
         self.iterations = iterations
+        self.history = history
     }
 }

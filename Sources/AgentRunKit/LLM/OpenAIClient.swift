@@ -7,14 +7,16 @@ public struct OpenAIClient: LLMClient, Sendable {
     let baseURL: URL
     let session: URLSession
     let retryPolicy: RetryPolicy
+    let reasoningConfig: ReasoningConfig?
 
     public init(
         apiKey: String,
         model: String,
-        maxTokens: Int = 128_000,
+        maxTokens: Int = 16384,
         baseURL: URL,
         session: URLSession = .shared,
-        retryPolicy: RetryPolicy = .default
+        retryPolicy: RetryPolicy = .default,
+        reasoningConfig: ReasoningConfig? = nil
     ) {
         self.apiKey = apiKey
         modelIdentifier = model
@@ -22,6 +24,7 @@ public struct OpenAIClient: LLMClient, Sendable {
         self.baseURL = baseURL
         self.session = session
         self.retryPolicy = retryPolicy
+        self.reasoningConfig = reasoningConfig
     }
 
     public func generate(
@@ -110,7 +113,8 @@ extension OpenAIClient {
             maxTokens: maxTokens,
             stream: stream ? true : nil,
             streamOptions: stream ? StreamOptions(includeUsage: true) : nil,
-            responseFormat: responseFormat
+            responseFormat: responseFormat,
+            reasoningEffort: reasoningConfig?.effort.rawValue
         )
     }
 
@@ -235,19 +239,23 @@ extension OpenAIClient {
         }
 
         let tokenUsage = response.usage.map { usage in
-            let reasoning = usage.completionTokensDetails?.reasoningTokens ?? 0
-            let outputMinusReasoning = max(0, usage.completionTokens - reasoning)
+            let reasoningTokens = usage.completionTokensDetails?.reasoningTokens ?? 0
+            let outputMinusReasoning = max(0, usage.completionTokens - reasoningTokens)
             return TokenUsage(
                 input: usage.promptTokens,
                 output: outputMinusReasoning,
-                reasoning: reasoning
+                reasoning: reasoningTokens
             )
         }
+
+        let reasoning = (choice.message.reasoning ?? choice.message.reasoningContent)
+            .flatMap { $0.isEmpty ? nil : ReasoningContent(content: $0) }
 
         return AssistantMessage(
             content: choice.message.content ?? "",
             toolCalls: toolCalls,
-            tokenUsage: tokenUsage
+            tokenUsage: tokenUsage,
+            reasoning: reasoning
         )
     }
 

@@ -86,4 +86,57 @@ public enum ChatMessage: Sendable, Equatable, Codable {
             try container.encode(content, forKey: .content)
         }
     }
+
+    var isSystem: Bool {
+        guard case .system = self else { return false }
+        return true
+    }
+
+    var toolCalls: [ToolCall] {
+        guard case let .assistant(message) = self else { return [] }
+        return message.toolCalls
+    }
+}
+
+extension [ChatMessage] {
+    func truncated(to maxMessages: Int, preservingSystemPrompt: Bool = true) -> [ChatMessage] {
+        guard count > maxMessages else { return self }
+
+        let systemPrompt = preservingSystemPrompt ? first(where: \.isSystem) : nil
+        let nonSystemMessages = filter { !$0.isSystem }
+
+        let cutIndex = findSafeCutIndex(in: nonSystemMessages, keeping: maxMessages)
+        let kept = nonSystemMessages[cutIndex...]
+
+        if let systemPrompt {
+            return [systemPrompt] + kept
+        }
+        return Array(kept)
+    }
+
+    private func findSafeCutIndex(in messages: [ChatMessage], keeping maxMessages: Int) -> Int {
+        let targetCut = Swift.max(0, messages.count - maxMessages)
+        guard targetCut > 0 else { return 0 }
+
+        var safeBoundaries = [0]
+        var pendingToolCallIDs = Set<String>()
+
+        for index in 0 ..< messages.count {
+            let message = messages[index]
+            for call in message.toolCalls {
+                pendingToolCallIDs.insert(call.id)
+            }
+            if case let .tool(id, _, _) = message {
+                pendingToolCallIDs.remove(id)
+            }
+            if pendingToolCallIDs.isEmpty {
+                safeBoundaries.append(index + 1)
+            }
+        }
+
+        for boundary in safeBoundaries.reversed() where boundary <= targetCut {
+            return boundary
+        }
+        return 0
+    }
 }

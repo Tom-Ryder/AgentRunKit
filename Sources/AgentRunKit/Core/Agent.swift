@@ -39,28 +39,38 @@ public final class Agent<C: ToolContext>: Sendable {
         )
     }
 
-    public func run(userMessage: String, context: C) async throws -> AgentResult {
-        try await run(userMessage: .user(userMessage), context: context)
+    public func run(
+        userMessage: String,
+        history: [ChatMessage] = [],
+        context: C
+    ) async throws -> AgentResult {
+        try await run(userMessage: .user(userMessage), history: history, context: context)
     }
 
-    public func run(userMessage: ChatMessage, context: C) async throws -> AgentResult {
-        var messages: [ChatMessage] = []
-        if let systemPrompt = configuration.systemPrompt {
-            messages.append(.system(systemPrompt))
-        }
-        messages.append(userMessage)
+    public func run(
+        userMessage: ChatMessage,
+        history: [ChatMessage] = [],
+        context: C
+    ) async throws -> AgentResult {
+        var messages = buildInitialMessages(userMessage: userMessage, history: history)
 
         var totalUsage = TokenUsage()
 
         for iteration in 1 ... configuration.maxIterations {
             try Task.checkCancellation()
 
-            let response = try await client.generate(messages: messages, tools: toolDefinitions)
+            let truncatedMessages = truncateIfNeeded(messages)
+            let response = try await client.generate(messages: truncatedMessages, tools: toolDefinitions)
             messages.append(.assistant(response))
             if let usage = response.tokenUsage { totalUsage += usage }
 
             if let finishCall = response.toolCalls.first(where: { $0.name == "finish" }) {
-                return try parseFinishResult(finishCall, tokenUsage: totalUsage, iterations: iteration)
+                return try parseFinishResult(
+                    finishCall,
+                    tokenUsage: totalUsage,
+                    iterations: iteration,
+                    history: messages
+                )
             }
 
             if !response.toolCalls.isEmpty {
@@ -74,15 +84,33 @@ public final class Agent<C: ToolContext>: Sendable {
         throw AgentError.maxIterationsReached(iterations: configuration.maxIterations)
     }
 
-    public func stream(userMessage: String, context: C) -> AsyncThrowingStream<StreamEvent, Error> {
-        stream(userMessage: .user(userMessage), context: context)
+    private func truncateIfNeeded(_ messages: [ChatMessage]) -> [ChatMessage] {
+        guard let maxMessages = configuration.maxMessages else { return messages }
+        return messages.truncated(to: maxMessages, preservingSystemPrompt: true)
     }
 
-    public func stream(userMessage: ChatMessage, context: C) -> AsyncThrowingStream<StreamEvent, Error> {
+    public func stream(
+        userMessage: String,
+        history: [ChatMessage] = [],
+        context: C
+    ) -> AsyncThrowingStream<StreamEvent, Error> {
+        stream(userMessage: .user(userMessage), history: history, context: context)
+    }
+
+    public func stream(
+        userMessage: ChatMessage,
+        history: [ChatMessage] = [],
+        context: C
+    ) -> AsyncThrowingStream<StreamEvent, Error> {
         AsyncThrowingStream { continuation in
             let task = Task {
                 do {
-                    try await performStream(userMessage: userMessage, context: context, continuation: continuation)
+                    try await performStream(
+                        userMessage: userMessage,
+                        history: history,
+                        context: context,
+                        continuation: continuation
+                    )
                 } catch {
                     continuation.finish(throwing: error)
                 }
@@ -95,10 +123,11 @@ public final class Agent<C: ToolContext>: Sendable {
 
     private func performStream(
         userMessage: ChatMessage,
+        history: [ChatMessage],
         context: C,
         continuation: AsyncThrowingStream<StreamEvent, Error>.Continuation
     ) async throws {
-        var messages = buildInitialMessages(userMessage: userMessage)
+        var messages = buildInitialMessages(userMessage: userMessage, history: history)
         var totalUsage = TokenUsage()
         let policy = StreamPolicy.agent
         let processor = StreamProcessor(client: client, toolDefinitions: toolDefinitions, policy: policy)
@@ -106,15 +135,18 @@ public final class Agent<C: ToolContext>: Sendable {
         for _ in 1 ... configuration.maxIterations {
             try Task.checkCancellation()
 
+            let truncatedMessages = truncateIfNeeded(messages)
             let iteration = try await processor.process(
-                messages: messages,
+                messages: truncatedMessages,
                 totalUsage: &totalUsage,
                 continuation: continuation
             )
 
+            let reasoning = iteration.reasoning.isEmpty ? nil : ReasoningContent(content: iteration.reasoning)
             messages.append(.assistant(AssistantMessage(
                 content: iteration.content,
-                toolCalls: iteration.toolCalls
+                toolCalls: iteration.toolCalls,
+                reasoning: reasoning
             )))
 
             let executableTools = policy.executableToolCalls(from: iteration.toolCalls)
@@ -127,7 +159,7 @@ public final class Agent<C: ToolContext>: Sendable {
             }
 
             if policy.shouldTerminateAfterIteration(toolCalls: iteration.toolCalls) {
-                let finishEvent = try parseFinishEvent(from: iteration.toolCalls, tokenUsage: totalUsage)
+                let finishEvent = try parseFinishEvent(from: iteration.toolCalls, tokenUsage: totalUsage, history: messages)
                 continuation.yield(finishEvent)
                 continuation.finish()
                 return
@@ -137,11 +169,12 @@ public final class Agent<C: ToolContext>: Sendable {
         continuation.finish(throwing: AgentError.maxIterationsReached(iterations: configuration.maxIterations))
     }
 
-    private func buildInitialMessages(userMessage: ChatMessage) -> [ChatMessage] {
+    private func buildInitialMessages(userMessage: ChatMessage, history: [ChatMessage]) -> [ChatMessage] {
         var messages: [ChatMessage] = []
         if let systemPrompt = configuration.systemPrompt {
             messages.append(.system(systemPrompt))
         }
+        messages.append(contentsOf: history)
         messages.append(userMessage)
         return messages
     }
@@ -201,9 +234,9 @@ private extension Agent {
         return try await tool.execute(arguments: call.argumentsData, context: context)
     }
 
-    func parseFinishEvent(from toolCalls: [ToolCall], tokenUsage: TokenUsage) throws -> StreamEvent {
+    func parseFinishEvent(from toolCalls: [ToolCall], tokenUsage: TokenUsage, history: [ChatMessage]) throws -> StreamEvent {
         guard let finishCall = toolCalls.first(where: { $0.name == "finish" }) else {
-            return .finished(tokenUsage: tokenUsage, content: nil, reason: nil)
+            return .finished(tokenUsage: tokenUsage, content: nil, reason: nil, history: history)
         }
         let decoded: FinishArguments
         do {
@@ -214,11 +247,17 @@ private extension Agent {
         return .finished(
             tokenUsage: tokenUsage,
             content: decoded.content,
-            reason: FinishReason(decoded.reason ?? "completed")
+            reason: FinishReason(decoded.reason ?? "completed"),
+            history: history
         )
     }
 
-    func parseFinishResult(_ call: ToolCall, tokenUsage: TokenUsage, iterations: Int) throws -> AgentResult {
+    func parseFinishResult(
+        _ call: ToolCall,
+        tokenUsage: TokenUsage,
+        iterations: Int,
+        history: [ChatMessage]
+    ) throws -> AgentResult {
         let data = call.argumentsData
         let decoded: FinishArguments
         do {
@@ -230,7 +269,8 @@ private extension Agent {
             finishReason: FinishReason(decoded.reason ?? "completed"),
             content: decoded.content,
             totalTokenUsage: tokenUsage,
-            iterations: iterations
+            iterations: iterations,
+            history: history
         )
     }
 }

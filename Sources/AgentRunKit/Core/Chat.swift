@@ -7,56 +7,87 @@ public struct Chat<C: ToolContext>: Sendable {
     private let systemPrompt: String?
     private let maxToolRounds: Int
     private let toolTimeout: Duration
+    private let maxMessages: Int?
 
     public init(
         client: any LLMClient,
         tools: [any AnyTool<C>] = [],
         systemPrompt: String? = nil,
         maxToolRounds: Int = 10,
-        toolTimeout: Duration = .seconds(30)
+        toolTimeout: Duration = .seconds(30),
+        maxMessages: Int? = nil
     ) {
+        if let maxMessages {
+            precondition(maxMessages >= 1, "maxMessages must be at least 1")
+        }
         self.client = client
         self.tools = tools
         toolDefinitions = tools.map { ToolDefinition($0) }
         self.systemPrompt = systemPrompt
         self.maxToolRounds = maxToolRounds
         self.toolTimeout = toolTimeout
+        self.maxMessages = maxMessages
     }
 
-    public func send(_ message: String) async throws -> AssistantMessage {
-        let messages = buildMessages(userMessage: .user(message))
-        return try await client.generate(messages: messages, tools: toolDefinitions)
+    public func send(
+        _ message: String,
+        history: [ChatMessage] = []
+    ) async throws -> (response: AssistantMessage, history: [ChatMessage]) {
+        try await send(.user(message), history: history)
     }
 
-    public func send(_ parts: [ContentPart]) async throws -> AssistantMessage {
-        let messages = buildMessages(userMessage: .user(parts))
-        return try await client.generate(messages: messages, tools: toolDefinitions)
+    public func send(
+        _ parts: [ContentPart],
+        history: [ChatMessage] = []
+    ) async throws -> (response: AssistantMessage, history: [ChatMessage]) {
+        try await send(.user(parts), history: history)
+    }
+
+    public func send(
+        _ message: ChatMessage,
+        history: [ChatMessage] = []
+    ) async throws -> (response: AssistantMessage, history: [ChatMessage]) {
+        var messages = buildMessages(userMessage: message, history: history)
+        let truncatedMessages = truncateIfNeeded(messages)
+        let response = try await client.generate(messages: truncatedMessages, tools: toolDefinitions)
+        messages.append(.assistant(response))
+        return (response, messages)
     }
 
     public func send<T: Decodable & SchemaProviding>(
         _ message: String,
+        history: [ChatMessage] = [],
         returning _: T.Type
-    ) async throws -> T {
-        let messages = buildMessages(userMessage: .user(message))
+    ) async throws -> (result: T, history: [ChatMessage]) {
+        try T.validateSchema()
+        var messages = buildMessages(userMessage: .user(message), history: history)
+        let truncatedMessages = truncateIfNeeded(messages)
         let response = try await client.generate(
-            messages: messages,
+            messages: truncatedMessages,
             tools: [],
             responseFormat: .jsonSchema(T.self)
         )
-        return try decodeStructuredOutput(response.content)
+        messages.append(.assistant(response))
+        let result: T = try decodeStructuredOutput(response.content)
+        return (result, messages)
     }
 
     public func send<T: Decodable & SchemaProviding>(
         _ parts: [ContentPart],
+        history: [ChatMessage] = [],
         returning _: T.Type
-    ) async throws -> T {
-        let messages = buildMessages(userMessage: .user(parts))
+    ) async throws -> (result: T, history: [ChatMessage]) {
+        try T.validateSchema()
+        var messages = buildMessages(userMessage: .user(parts), history: history)
+        let truncatedMessages = truncateIfNeeded(messages)
         let response = try await client.generate(
-            messages: messages,
+            messages: truncatedMessages,
             tools: [],
             responseFormat: .jsonSchema(T.self)
         )
-        return try decodeStructuredOutput(response.content)
+        messages.append(.assistant(response))
+        let result: T = try decodeStructuredOutput(response.content)
+        return (result, messages)
     }
 
     private func decodeStructuredOutput<T: Decodable>(_ content: String) throws -> T {
@@ -67,19 +98,36 @@ public struct Chat<C: ToolContext>: Sendable {
         }
     }
 
-    public func stream(_ message: String, context: C) -> AsyncThrowingStream<StreamEvent, Error> {
-        stream(userMessage: .user(message), context: context)
+    public func stream(
+        _ message: String,
+        history: [ChatMessage] = [],
+        context: C
+    ) -> AsyncThrowingStream<StreamEvent, Error> {
+        stream(userMessage: .user(message), history: history, context: context)
     }
 
-    public func stream(_ parts: [ContentPart], context: C) -> AsyncThrowingStream<StreamEvent, Error> {
-        stream(userMessage: .user(parts), context: context)
+    public func stream(
+        _ parts: [ContentPart],
+        history: [ChatMessage] = [],
+        context: C
+    ) -> AsyncThrowingStream<StreamEvent, Error> {
+        stream(userMessage: .user(parts), history: history, context: context)
     }
 
-    private func stream(userMessage: ChatMessage, context: C) -> AsyncThrowingStream<StreamEvent, Error> {
+    private func stream(
+        userMessage: ChatMessage,
+        history: [ChatMessage],
+        context: C
+    ) -> AsyncThrowingStream<StreamEvent, Error> {
         AsyncThrowingStream { continuation in
             let task = Task {
                 do {
-                    try await performStream(userMessage: userMessage, context: context, continuation: continuation)
+                    try await performStream(
+                        userMessage: userMessage,
+                        history: history,
+                        context: context,
+                        continuation: continuation
+                    )
                 } catch {
                     continuation.finish(throwing: error)
                 }
@@ -92,10 +140,11 @@ public struct Chat<C: ToolContext>: Sendable {
 
     private func performStream(
         userMessage: ChatMessage,
+        history: [ChatMessage],
         context: C,
         continuation: AsyncThrowingStream<StreamEvent, Error>.Continuation
     ) async throws {
-        var messages = buildMessages(userMessage: userMessage)
+        var messages = buildMessages(userMessage: userMessage, history: history)
         var totalUsage = TokenUsage()
         let policy = StreamPolicy.chat
         let processor = StreamProcessor(client: client, toolDefinitions: toolDefinitions, policy: policy)
@@ -103,22 +152,25 @@ public struct Chat<C: ToolContext>: Sendable {
         for _ in 0 ..< maxToolRounds {
             try Task.checkCancellation()
 
+            let truncatedMessages = truncateIfNeeded(messages)
             let iteration = try await processor.process(
-                messages: messages,
+                messages: truncatedMessages,
                 totalUsage: &totalUsage,
                 continuation: continuation
             )
 
+            let reasoning = iteration.reasoning.isEmpty ? nil : ReasoningContent(content: iteration.reasoning)
+            messages.append(.assistant(AssistantMessage(
+                content: iteration.content,
+                toolCalls: iteration.toolCalls,
+                reasoning: reasoning
+            )))
+
             if policy.shouldTerminateAfterIteration(toolCalls: iteration.toolCalls) {
-                continuation.yield(.finished(tokenUsage: totalUsage, content: nil, reason: nil))
+                continuation.yield(.finished(tokenUsage: totalUsage, content: nil, reason: nil, history: messages))
                 continuation.finish()
                 return
             }
-
-            messages.append(.assistant(AssistantMessage(
-                content: iteration.content,
-                toolCalls: iteration.toolCalls
-            )))
 
             for call in iteration.toolCalls {
                 let result = try await executeToolSafely(call, context: context)
@@ -130,13 +182,19 @@ public struct Chat<C: ToolContext>: Sendable {
         continuation.finish(throwing: AgentError.maxIterationsReached(iterations: maxToolRounds))
     }
 
-    private func buildMessages(userMessage: ChatMessage) -> [ChatMessage] {
+    private func buildMessages(userMessage: ChatMessage, history: [ChatMessage]) -> [ChatMessage] {
         var messages: [ChatMessage] = []
         if let systemPrompt {
             messages.append(.system(systemPrompt))
         }
+        messages.append(contentsOf: history)
         messages.append(userMessage)
         return messages
+    }
+
+    private func truncateIfNeeded(_ messages: [ChatMessage]) -> [ChatMessage] {
+        guard let maxMessages else { return messages }
+        return messages.truncated(to: maxMessages, preservingSystemPrompt: true)
     }
 
     private func executeToolSafely(_ call: ToolCall, context: C) async throws -> ToolResult {
