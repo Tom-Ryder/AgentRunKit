@@ -23,7 +23,7 @@ struct AgentStreamingTests {
 
         #expect(events.contains(.delta("Processing your request...")))
 
-        guard case let .finished(tokenUsage, content, reason) = events.last else {
+        guard case let .finished(tokenUsage, content, reason, history) = events.last else {
             Issue.record("Expected finished event")
             return
         }
@@ -31,11 +31,12 @@ struct AgentStreamingTests {
         #expect(tokenUsage.output == 5)
         #expect(content == "Done!")
         #expect(reason == .completed)
+        #expect(history.count == 2)
     }
 
     @Test
     func streamWithToolCallsEmitsStartedAndCompletedEvents() async throws {
-        let echoTool = Tool<EchoParams, EchoOutput, EmptyContext>(
+        let echoTool = try Tool<EchoParams, EchoOutput, EmptyContext>(
             name: "echo",
             description: "Echoes input",
             executor: { params, _ in EchoOutput(echoed: "Echo: \(params.message)") }
@@ -73,18 +74,19 @@ struct AgentStreamingTests {
         }
         #expect(toolCompletedEvent != nil)
 
-        guard case let .finished(tokenUsage, content, _) = events.last else {
+        guard case let .finished(tokenUsage, content, _, history) = events.last else {
             Issue.record("Expected finished event")
             return
         }
         #expect(tokenUsage.input == 30)
         #expect(tokenUsage.output == 15)
         #expect(content == "Echoed successfully")
+        #expect(history.count >= 4)
     }
 
     @Test
     func multipleIterationsWork() async throws {
-        let echoTool = Tool<EchoParams, EchoOutput, EmptyContext>(
+        let echoTool = try Tool<EchoParams, EchoOutput, EmptyContext>(
             name: "echo",
             description: "Echoes input",
             executor: { params, _ in EchoOutput(echoed: "Echo: \(params.message)") }
@@ -123,7 +125,7 @@ struct AgentStreamingTests {
 
     @Test
     func maxIterationsThrows() async throws {
-        let loopingTool = Tool<NoopParams, NoopOutput, EmptyContext>(
+        let loopingTool = try Tool<NoopParams, NoopOutput, EmptyContext>(
             name: "loop",
             description: "Loops",
             executor: { _, _ in NoopOutput() }
@@ -192,7 +194,7 @@ struct AgentStreamingTests {
 
     @Test
     func toolErrorsFedBackToLLM() async throws {
-        let failingTool = Tool<NoopParams, NoopOutput, EmptyContext>(
+        let failingTool = try Tool<NoopParams, NoopOutput, EmptyContext>(
             name: "failing",
             description: "Always fails",
             executor: { _, _ in throw TestToolError.intentional }
@@ -252,7 +254,7 @@ struct AgentStreamingTests {
 
     @Test
     func outOfOrderDeltasBuffered() async throws {
-        let echoTool = Tool<EchoParams, EchoOutput, EmptyContext>(
+        let echoTool = try Tool<EchoParams, EchoOutput, EmptyContext>(
             name: "echo",
             description: "Echoes input",
             executor: { params, _ in EchoOutput(echoed: "Echo: \(params.message)") }
@@ -310,6 +312,89 @@ struct AgentStreamingTests {
             return
         }
         #expect(prompt == "You are helpful.")
+    }
+
+    @Test
+    func reasoningDeltasEmittedAsReasoningDeltaEvents() async throws {
+        let deltas: [StreamDelta] = [
+            .reasoning("Let me think about this..."),
+            .reasoning(" The user wants help."),
+            .content("Hello!"),
+            .toolCallStart(index: 0, id: "call_1", name: "finish"),
+            .toolCallDelta(index: 0, arguments: #"{"content": "Done"}"#),
+            .finished(usage: nil)
+        ]
+        let client = StreamingMockLLMClient(streamSequences: [deltas])
+        let agent = Agent<EmptyContext>(client: client, tools: [])
+
+        var events: [StreamEvent] = []
+        for try await event in agent.stream(userMessage: "Hi", context: EmptyContext()) {
+            events.append(event)
+        }
+
+        #expect(events.contains(.reasoningDelta("Let me think about this...")))
+        #expect(events.contains(.reasoningDelta(" The user wants help.")))
+        #expect(events.contains(.delta("Hello!")))
+    }
+
+    @Test
+    func reasoningInterleavedWithContent() async throws {
+        let deltas: [StreamDelta] = [
+            .reasoning("First thought"),
+            .content("Partial response"),
+            .reasoning("Second thought"),
+            .content(" completed"),
+            .toolCallStart(index: 0, id: "call_1", name: "finish"),
+            .toolCallDelta(index: 0, arguments: #"{"content": "Final"}"#),
+            .finished(usage: nil)
+        ]
+        let client = StreamingMockLLMClient(streamSequences: [deltas])
+        let agent = Agent<EmptyContext>(client: client, tools: [])
+
+        var events: [StreamEvent] = []
+        for try await event in agent.stream(userMessage: "Hi", context: EmptyContext()) {
+            events.append(event)
+        }
+
+        let reasoningEvents = events.compactMap { event -> String? in
+            if case let .reasoningDelta(text) = event { return text }
+            return nil
+        }
+        let contentEvents = events.compactMap { event -> String? in
+            if case let .delta(text) = event { return text }
+            return nil
+        }
+
+        #expect(reasoningEvents == ["First thought", "Second thought"])
+        #expect(contentEvents == ["Partial response", " completed"])
+    }
+
+    @Test
+    func accumulatedReasoningIncludedInHistory() async throws {
+        let deltas: [StreamDelta] = [
+            .reasoning("Thinking step 1. "),
+            .reasoning("Thinking step 2."),
+            .content("Response"),
+            .toolCallStart(index: 0, id: "call_1", name: "finish"),
+            .toolCallDelta(index: 0, arguments: #"{"content": "Done"}"#),
+            .finished(usage: nil)
+        ]
+        let client = StreamingMockLLMClient(streamSequences: [deltas])
+        let agent = Agent<EmptyContext>(client: client, tools: [])
+
+        var finalHistory: [ChatMessage] = []
+        for try await event in agent.stream(userMessage: "Hi", context: EmptyContext()) {
+            if case let .finished(_, _, _, history) = event {
+                finalHistory = history
+            }
+        }
+
+        let assistantMessage = finalHistory.compactMap { msg -> AssistantMessage? in
+            if case let .assistant(assistant) = msg { return assistant }
+            return nil
+        }.first
+
+        #expect(assistantMessage?.reasoning?.content == "Thinking step 1. Thinking step 2.")
     }
 }
 

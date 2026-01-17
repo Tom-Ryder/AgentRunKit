@@ -50,6 +50,7 @@ struct AssistantMessageTests {
         #expect(msg.content == "Hello")
         #expect(msg.toolCalls.isEmpty)
         #expect(msg.tokenUsage == nil)
+        #expect(msg.reasoning == nil)
     }
 
     @Test
@@ -59,6 +60,49 @@ struct AssistantMessageTests {
         let msg = AssistantMessage(content: "response", toolCalls: [toolA, toolB])
         #expect(msg.toolCalls == [toolA, toolB])
         #expect(msg.content == "response")
+    }
+
+    @Test
+    func withReasoning() {
+        let reasoning = ReasoningContent(content: "Thinking...", signature: "sig123")
+        let msg = AssistantMessage(content: "Answer", reasoning: reasoning)
+        #expect(msg.content == "Answer")
+        #expect(msg.reasoning?.content == "Thinking...")
+        #expect(msg.reasoning?.signature == "sig123")
+    }
+}
+
+@Suite
+struct ReasoningContentTests {
+    @Test
+    func initWithContentOnly() {
+        let reasoning = ReasoningContent(content: "Thinking about the problem...")
+        #expect(reasoning.content == "Thinking about the problem...")
+        #expect(reasoning.signature == nil)
+    }
+
+    @Test
+    func initWithSignature() {
+        let reasoning = ReasoningContent(content: "Deep thoughts", signature: "sig123")
+        #expect(reasoning.content == "Deep thoughts")
+        #expect(reasoning.signature == "sig123")
+    }
+
+    @Test
+    func codableRoundTrip() throws {
+        let original = ReasoningContent(content: "Reasoning text", signature: "abc")
+        let data = try JSONEncoder().encode(original)
+        let decoded = try JSONDecoder().decode(ReasoningContent.self, from: data)
+        #expect(decoded == original)
+    }
+
+    @Test
+    func codableRoundTripWithoutSignature() throws {
+        let original = ReasoningContent(content: "Just content")
+        let data = try JSONEncoder().encode(original)
+        let decoded = try JSONDecoder().decode(ReasoningContent.self, from: data)
+        #expect(decoded == original)
+        #expect(decoded.signature == nil)
     }
 }
 
@@ -90,6 +134,21 @@ struct CodableRoundTripTests {
         let data = try JSONEncoder().encode(original)
         let decoded = try JSONDecoder().decode(AssistantMessage.self, from: data)
         #expect(decoded == original)
+    }
+
+    @Test
+    func assistantMessageWithReasoningRoundTrip() throws {
+        let original = AssistantMessage(
+            content: "Response",
+            toolCalls: [],
+            tokenUsage: TokenUsage(input: 10, output: 5),
+            reasoning: ReasoningContent(content: "Thought process", signature: "sig")
+        )
+        let data = try JSONEncoder().encode(original)
+        let decoded = try JSONDecoder().decode(AssistantMessage.self, from: data)
+        #expect(decoded == original)
+        #expect(decoded.reasoning?.content == "Thought process")
+        #expect(decoded.reasoning?.signature == "sig")
     }
 }
 
@@ -249,5 +308,302 @@ struct AudioFormatTests {
         #expect(TranscriptionAudioFormat.mp3.mimeType == "audio/mpeg")
         #expect(TranscriptionAudioFormat.m4a.mimeType == "audio/mp4")
         #expect(TranscriptionAudioFormat.wav.fileExtension == "wav")
+    }
+}
+
+@Suite
+struct ChatMessageTruncationTests {
+    @Test
+    func truncationPreservesRecentMessages() {
+        let messages: [ChatMessage] = [
+            .user("1"),
+            .assistant(AssistantMessage(content: "2")),
+            .user("3"),
+            .assistant(AssistantMessage(content: "4")),
+            .user("5")
+        ]
+        let truncated = messages.truncated(to: 3)
+
+        #expect(truncated.count == 3)
+        guard case let .user(first) = truncated[0] else {
+            Issue.record("Expected user message at index 0")
+            return
+        }
+        #expect(first == "3")
+        guard case let .assistant(second) = truncated[1] else {
+            Issue.record("Expected assistant message at index 1")
+            return
+        }
+        #expect(second.content == "4")
+        guard case let .user(last) = truncated[2] else {
+            Issue.record("Expected user message at index 2")
+            return
+        }
+        #expect(last == "5")
+    }
+
+    @Test
+    func truncationPreservesSystemPrompt() {
+        let messages: [ChatMessage] = [
+            .system("System prompt"),
+            .user("1"),
+            .assistant(AssistantMessage(content: "2")),
+            .user("3")
+        ]
+        let truncated = messages.truncated(to: 2, preservingSystemPrompt: true)
+
+        #expect(truncated.count == 3)
+        guard case let .system(prompt) = truncated[0] else {
+            Issue.record("Expected system message first")
+            return
+        }
+        #expect(prompt == "System prompt")
+        guard case .assistant = truncated[1] else {
+            Issue.record("Expected assistant message")
+            return
+        }
+        guard case let .user(msg) = truncated[2] else {
+            Issue.record("Expected user message")
+            return
+        }
+        #expect(msg == "3")
+    }
+
+    @Test
+    func truncationWithoutPreservingSystem() {
+        let messages: [ChatMessage] = [
+            .system("System"),
+            .user("1"),
+            .assistant(AssistantMessage(content: "2"))
+        ]
+        let truncated = messages.truncated(to: 1, preservingSystemPrompt: false)
+
+        #expect(truncated.count == 1)
+        guard case .assistant = truncated[0] else {
+            Issue.record("Expected assistant message")
+            return
+        }
+    }
+
+    @Test
+    func noTruncationWhenUnderLimit() {
+        let messages: [ChatMessage] = [
+            .user("1"),
+            .assistant(AssistantMessage(content: "2"))
+        ]
+        let truncated = messages.truncated(to: 5)
+
+        #expect(truncated.count == 2)
+    }
+
+    @Test
+    func emptyArrayReturnsEmpty() {
+        let messages: [ChatMessage] = []
+        let truncated = messages.truncated(to: 5)
+        #expect(truncated.isEmpty)
+    }
+
+    @Test
+    func singleMessageUnderLimitUnchanged() {
+        let messages: [ChatMessage] = [.user("Only message")]
+        let truncated = messages.truncated(to: 5)
+
+        #expect(truncated.count == 1)
+        guard case let .user(content) = truncated[0] else {
+            Issue.record("Expected user message")
+            return
+        }
+        #expect(content == "Only message")
+    }
+
+    @Test
+    func exactlyAtLimitUnchanged() {
+        let messages: [ChatMessage] = [
+            .user("1"),
+            .assistant(AssistantMessage(content: "2")),
+            .user("3")
+        ]
+        let truncated = messages.truncated(to: 3)
+
+        #expect(truncated.count == 3)
+        guard case let .user(first) = truncated[0] else {
+            Issue.record("Expected user message at index 0")
+            return
+        }
+        #expect(first == "1")
+    }
+
+    @Test
+    func systemPromptDoesNotCountTowardLimit() {
+        let messages: [ChatMessage] = [
+            .system("System prompt"),
+            .user("1"),
+            .assistant(AssistantMessage(content: "2")),
+            .user("3")
+        ]
+        let truncated = messages.truncated(to: 2, preservingSystemPrompt: true)
+
+        #expect(truncated.count == 3)
+        guard case .system = truncated[0] else {
+            Issue.record("Expected system message first")
+            return
+        }
+        guard case .assistant = truncated[1] else {
+            Issue.record("Expected assistant message second")
+            return
+        }
+        guard case let .user(msg) = truncated[2] else {
+            Issue.record("Expected user message third")
+            return
+        }
+        #expect(msg == "3")
+    }
+
+    @Test
+    func truncationWithZeroLimitReturnsOnlySystemPrompt() {
+        let messages: [ChatMessage] = [
+            .system("System prompt"),
+            .user("1"),
+            .assistant(AssistantMessage(content: "2"))
+        ]
+        let truncated = messages.truncated(to: 0, preservingSystemPrompt: true)
+
+        #expect(truncated.count == 1)
+        guard case let .system(prompt) = truncated[0] else {
+            Issue.record("Expected system message only")
+            return
+        }
+        #expect(prompt == "System prompt")
+    }
+
+    @Test
+    func truncationWithoutSystemPromptAndZeroLimitReturnsEmpty() {
+        let messages: [ChatMessage] = [
+            .user("1"),
+            .assistant(AssistantMessage(content: "2"))
+        ]
+        let truncated = messages.truncated(to: 0, preservingSystemPrompt: false)
+        #expect(truncated.isEmpty)
+    }
+
+    @Test
+    func truncationPreservesToolCallResultPairs() {
+        let toolCall = ToolCall(id: "call_1", name: "search", arguments: "{}")
+        let messages: [ChatMessage] = [
+            .user("Old message"),
+            .assistant(AssistantMessage(content: "Using tool", toolCalls: [toolCall])),
+            .tool(id: "call_1", name: "search", content: "result"),
+            .user("New message")
+        ]
+        let truncated = messages.truncated(to: 2)
+
+        #expect(truncated.count == 3)
+        guard case let .assistant(assistant) = truncated[0] else {
+            Issue.record("Expected assistant with tool call preserved")
+            return
+        }
+        #expect(assistant.toolCalls.first?.id == "call_1")
+        guard case let .tool(id, _, _) = truncated[1] else {
+            Issue.record("Expected tool result preserved")
+            return
+        }
+        #expect(id == "call_1")
+        guard case .user = truncated[2] else {
+            Issue.record("Expected user message last")
+            return
+        }
+    }
+
+    @Test
+    func truncationWithMultipleToolCallsKeepsPairs() {
+        let call1 = ToolCall(id: "call_1", name: "tool_a", arguments: "{}")
+        let call2 = ToolCall(id: "call_2", name: "tool_b", arguments: "{}")
+        let messages: [ChatMessage] = [
+            .user("Old"),
+            .assistant(AssistantMessage(content: "response 1")),
+            .user("Newer"),
+            .assistant(AssistantMessage(content: "Using tools", toolCalls: [call1, call2])),
+            .tool(id: "call_1", name: "tool_a", content: "result a"),
+            .tool(id: "call_2", name: "tool_b", content: "result b"),
+            .user("Newest")
+        ]
+        let truncated = messages.truncated(to: 4)
+
+        #expect(truncated.count == 4)
+        guard case let .assistant(assistant) = truncated[0] else {
+            Issue.record("Expected assistant with tool calls")
+            return
+        }
+        #expect(assistant.toolCalls.count == 2)
+        guard case let .tool(id1, _, _) = truncated[1] else {
+            Issue.record("Expected first tool result")
+            return
+        }
+        #expect(id1 == "call_1")
+        guard case let .tool(id2, _, _) = truncated[2] else {
+            Issue.record("Expected second tool result")
+            return
+        }
+        #expect(id2 == "call_2")
+    }
+
+    @Test
+    func truncationWithCompletedToolCallAllowsCut() {
+        let call1 = ToolCall(id: "call_1", name: "tool_a", arguments: "{}")
+        let messages: [ChatMessage] = [
+            .user("Old"),
+            .assistant(AssistantMessage(content: "Using tool", toolCalls: [call1])),
+            .tool(id: "call_1", name: "tool_a", content: "result"),
+            .user("Middle"),
+            .assistant(AssistantMessage(content: "response")),
+            .user("Newest")
+        ]
+        let truncated = messages.truncated(to: 3)
+
+        #expect(truncated.count == 3)
+        guard case let .user(first) = truncated[0] else {
+            Issue.record("Expected user message first")
+            return
+        }
+        #expect(first == "Middle")
+    }
+
+    @Test
+    func truncationDropsCompletePairsWhenPossible() {
+        let call1 = ToolCall(id: "call_1", name: "tool_a", arguments: "{}")
+        let messages: [ChatMessage] = [
+            .assistant(AssistantMessage(content: "Using tool", toolCalls: [call1])),
+            .tool(id: "call_1", name: "tool_a", content: "result"),
+            .user("New")
+        ]
+        let truncated = messages.truncated(to: 1)
+
+        #expect(truncated.count == 1)
+        guard case let .user(content) = truncated[0] else {
+            Issue.record("Expected user message")
+            return
+        }
+        #expect(content == "New")
+    }
+
+    @Test
+    func truncationNeverOrphansToolResult() {
+        let call1 = ToolCall(id: "call_1", name: "tool_a", arguments: "{}")
+        let messages: [ChatMessage] = [
+            .user("Start"),
+            .assistant(AssistantMessage(content: "Using tool", toolCalls: [call1])),
+            .tool(id: "call_1", name: "tool_a", content: "result")
+        ]
+        let truncated = messages.truncated(to: 2)
+
+        #expect(truncated.count == 2)
+        guard case .assistant = truncated[0] else {
+            Issue.record("Expected assistant preserved to avoid orphan")
+            return
+        }
+        guard case .tool = truncated[1] else {
+            Issue.record("Expected tool result preserved")
+            return
+        }
     }
 }

@@ -174,4 +174,237 @@ struct OpenAIClientResponseTests {
             }
         }
     }
+
+    @Test
+    func responseWithReasoningFieldDecodes() throws {
+        let json = """
+        {
+            "choices": [{
+                "message": {
+                    "role": "assistant",
+                    "content": "The answer is 42.",
+                    "reasoning": "Let me think step by step..."
+                },
+                "finish_reason": "stop"
+            }],
+            "usage": {
+                "prompt_tokens": 50,
+                "completion_tokens": 100
+            }
+        }
+        """
+        let client = OpenAIClient(apiKey: "test", model: "test", baseURL: OpenAIClient.openRouterBaseURL)
+        let msg = try client.parseResponse(Data(json.utf8))
+
+        #expect(msg.content == "The answer is 42.")
+        #expect(msg.reasoning?.content == "Let me think step by step...")
+        #expect(msg.reasoning?.signature == nil)
+    }
+
+    @Test
+    func responseWithReasoningContentFieldDecodes() throws {
+        let json = """
+        {
+            "choices": [{
+                "message": {
+                    "role": "assistant",
+                    "content": "Result",
+                    "reasoning_content": "Alternative field name reasoning..."
+                },
+                "finish_reason": "stop"
+            }],
+            "usage": {
+                "prompt_tokens": 50,
+                "completion_tokens": 100
+            }
+        }
+        """
+        let client = OpenAIClient(apiKey: "test", model: "test", baseURL: OpenAIClient.openRouterBaseURL)
+        let msg = try client.parseResponse(Data(json.utf8))
+
+        #expect(msg.content == "Result")
+        #expect(msg.reasoning?.content == "Alternative field name reasoning...")
+    }
+
+    @Test
+    func responseWithoutReasoningHasNilReasoning() throws {
+        let json = """
+        {
+            "choices": [{
+                "message": {
+                    "role": "assistant",
+                    "content": "Simple response"
+                },
+                "finish_reason": "stop"
+            }],
+            "usage": {
+                "prompt_tokens": 50,
+                "completion_tokens": 20
+            }
+        }
+        """
+        let client = OpenAIClient(apiKey: "test", model: "test", baseURL: OpenAIClient.openRouterBaseURL)
+        let msg = try client.parseResponse(Data(json.utf8))
+
+        #expect(msg.content == "Simple response")
+        #expect(msg.reasoning == nil)
+    }
+
+    @Test
+    func responseWithEmptyReasoningTreatedAsNil() throws {
+        let json = """
+        {
+            "choices": [{
+                "message": {
+                    "role": "assistant",
+                    "content": "Response",
+                    "reasoning": ""
+                },
+                "finish_reason": "stop"
+            }],
+            "usage": {
+                "prompt_tokens": 50,
+                "completion_tokens": 20
+            }
+        }
+        """
+        let client = OpenAIClient(apiKey: "test", model: "test", baseURL: OpenAIClient.openRouterBaseURL)
+        let msg = try client.parseResponse(Data(json.utf8))
+
+        #expect(msg.reasoning == nil)
+    }
+
+    @Test
+    func responsePrefersPrimaryReasoningField() throws {
+        let json = """
+        {
+            "choices": [{
+                "message": {
+                    "role": "assistant",
+                    "content": "Result",
+                    "reasoning": "Primary reasoning",
+                    "reasoning_content": "Secondary reasoning"
+                },
+                "finish_reason": "stop"
+            }],
+            "usage": {
+                "prompt_tokens": 50,
+                "completion_tokens": 100
+            }
+        }
+        """
+        let client = OpenAIClient(apiKey: "test", model: "test", baseURL: OpenAIClient.openRouterBaseURL)
+        let msg = try client.parseResponse(Data(json.utf8))
+
+        #expect(msg.reasoning?.content == "Primary reasoning")
+    }
+}
+
+@Suite
+struct StreamingChunkParsingTests {
+    @Test
+    func streamingChunkWithReasoningFieldParsesCorrectly() throws {
+        let json = """
+        {
+            "choices": [{
+                "delta": {
+                    "content": null,
+                    "reasoning": "Let me think..."
+                },
+                "finish_reason": null
+            }]
+        }
+        """
+        let client = OpenAIClient(apiKey: "test", model: "test", baseURL: OpenAIClient.openRouterBaseURL)
+        let chunk = try client.parseStreamingChunk(Data(json.utf8))
+        let deltas = client.extractDeltas(from: chunk)
+
+        #expect(deltas.count == 1)
+        #expect(deltas[0] == .reasoning("Let me think..."))
+    }
+
+    @Test
+    func streamingChunkWithReasoningContentFieldParsesCorrectly() throws {
+        let json = """
+        {
+            "choices": [{
+                "delta": {
+                    "content": null,
+                    "reasoning_content": "Alternative field..."
+                },
+                "finish_reason": null
+            }]
+        }
+        """
+        let client = OpenAIClient(apiKey: "test", model: "test", baseURL: OpenAIClient.openRouterBaseURL)
+        let chunk = try client.parseStreamingChunk(Data(json.utf8))
+        let deltas = client.extractDeltas(from: chunk)
+
+        #expect(deltas.count == 1)
+        #expect(deltas[0] == .reasoning("Alternative field..."))
+    }
+
+    @Test
+    func streamingChunkPrefersPrimaryReasoningField() throws {
+        let json = """
+        {
+            "choices": [{
+                "delta": {
+                    "reasoning": "Primary",
+                    "reasoning_content": "Secondary"
+                },
+                "finish_reason": null
+            }]
+        }
+        """
+        let client = OpenAIClient(apiKey: "test", model: "test", baseURL: OpenAIClient.openRouterBaseURL)
+        let chunk = try client.parseStreamingChunk(Data(json.utf8))
+        let deltas = client.extractDeltas(from: chunk)
+
+        #expect(deltas.count == 1)
+        #expect(deltas[0] == .reasoning("Primary"))
+    }
+
+    @Test
+    func streamingChunkFiltersEmptyReasoning() throws {
+        let json = """
+        {
+            "choices": [{
+                "delta": {
+                    "reasoning": "",
+                    "content": "Hello"
+                },
+                "finish_reason": null
+            }]
+        }
+        """
+        let client = OpenAIClient(apiKey: "test", model: "test", baseURL: OpenAIClient.openRouterBaseURL)
+        let chunk = try client.parseStreamingChunk(Data(json.utf8))
+        let deltas = client.extractDeltas(from: chunk)
+
+        #expect(deltas.count == 1)
+        #expect(deltas[0] == .content("Hello"))
+    }
+
+    @Test
+    func streamingChunkWithInterleavedReasoningAndContent() throws {
+        let json = """
+        {
+            "choices": [{
+                "delta": {
+                    "reasoning": "Thinking...",
+                    "content": "Response"
+                },
+                "finish_reason": null
+            }]
+        }
+        """
+        let client = OpenAIClient(apiKey: "test", model: "test", baseURL: OpenAIClient.openRouterBaseURL)
+        let chunk = try client.parseStreamingChunk(Data(json.utf8))
+        let deltas = client.extractDeltas(from: chunk)
+
+        #expect(deltas.count == 2)
+        #expect(deltas[0] == .reasoning("Thinking..."))
+        #expect(deltas[1] == .content("Response"))
+    }
 }

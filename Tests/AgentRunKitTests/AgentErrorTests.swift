@@ -48,7 +48,7 @@ struct AgentErrorTests {
 
     @Test
     func toolExecutionErrorFeedsToLLM() async throws {
-        let failingTool = Tool<NoopParams, NoopOutput, EmptyContext>(
+        let failingTool = try Tool<NoopParams, NoopOutput, EmptyContext>(
             name: "failing",
             description: "Always fails",
             executor: { _, _ in throw AgentErrorTestError.intentional }
@@ -75,7 +75,7 @@ struct AgentErrorTests {
 
     @Test
     func toolDecodingFailedFeedsErrorToLLM() async throws {
-        let echoTool = Tool<EchoParams, EchoOutput, EmptyContext>(
+        let echoTool = try Tool<EchoParams, EchoOutput, EmptyContext>(
             name: "echo",
             description: "Echoes",
             executor: { params, _ in EchoOutput(echoed: params.message) }

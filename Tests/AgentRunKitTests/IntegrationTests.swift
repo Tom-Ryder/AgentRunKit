@@ -102,7 +102,7 @@ struct AgentIntegrationTests {
             baseURL: OpenAIClient.openRouterBaseURL
         )
 
-        let addTool = Tool<AddParams, AddOutput, EmptyContext>(
+        let addTool = try Tool<AddParams, AddOutput, EmptyContext>(
             name: "add",
             description: "Add two numbers together. Always use this tool for addition.",
             executor: { params, _ in AddOutput(sum: params.lhs + params.rhs) }
@@ -135,7 +135,7 @@ struct AgentIntegrationTests {
             baseURL: OpenAIClient.openRouterBaseURL
         )
 
-        let addTool = Tool<AddParams, AddOutput, EmptyContext>(
+        let addTool = try Tool<AddParams, AddOutput, EmptyContext>(
             name: "add",
             description: "Add two numbers together",
             executor: { params, _ in AddOutput(sum: params.lhs + params.rhs) }
@@ -200,7 +200,7 @@ struct AutoSchemaIntegrationTests {
             baseURL: OpenAIClient.openRouterBaseURL
         )
 
-        let echoTool = Tool<AutoSchemaParams, EchoOutput, EmptyContext>(
+        let echoTool = try Tool<AutoSchemaParams, EchoOutput, EmptyContext>(
             name: "echo",
             description: "Echo the provided text the specified number of times if enabled",
             executor: { params, _ in
@@ -275,7 +275,7 @@ struct ParallelExecutionIntegrationTests {
 
         let tracker = ExecutionTimeTracker()
 
-        let slowTool = Tool<SlowParams, SlowOutput, EmptyContext>(
+        let slowTool = try Tool<SlowParams, SlowOutput, EmptyContext>(
             name: "slow_task",
             description: "Perform a slow task with given id. Call multiple times with different ids.",
             executor: { params, _ in

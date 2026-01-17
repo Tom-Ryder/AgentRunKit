@@ -72,8 +72,8 @@ struct MockLLMClientTests {
 @Suite
 struct ToolDefinitionTests {
     @Test
-    func createsFromTool() {
-        let tool = Tool<TestParams, TestOutput, EmptyContext>(
+    func createsFromTool() throws {
+        let tool = try Tool<TestParams, TestOutput, EmptyContext>(
             name: "double",
             description: "Doubles a value",
             executor: { params, _ in TestOutput(result: params.value * 2) }
@@ -247,9 +247,9 @@ struct TransportErrorTests {
 @Suite
 struct OpenAIClientInitTests {
     @Test
-    func defaultMaxTokensIs128k() {
+    func defaultMaxTokensIs16k() {
         let client = OpenAIClient(apiKey: "test", model: "test", baseURL: OpenAIClient.openAIBaseURL)
-        #expect(client.maxTokens == 128_000)
+        #expect(client.maxTokens == 16384)
     }
 
     @Test
@@ -385,5 +385,176 @@ struct OpenAIClientURLRequestTests {
         #expect(parts.count == 2)
         #expect(multipartPart(named: "model", parts: parts)?.body == "whisper-1")
         #expect(multipartPart(named: "file", parts: parts)?.body == "audio-data")
+    }
+}
+
+@Suite
+struct ReasoningConfigTests {
+    @Test
+    func initialization() {
+        let config = ReasoningConfig(effort: .high)
+        #expect(config.effort == .high)
+    }
+
+    @Test
+    func staticFactories() {
+        #expect(ReasoningConfig.high.effort == .high)
+        #expect(ReasoningConfig.medium.effort == .medium)
+        #expect(ReasoningConfig.low.effort == .low)
+    }
+
+    @Test
+    func effortRawValues() {
+        #expect(ReasoningConfig.Effort.xhigh.rawValue == "xhigh")
+        #expect(ReasoningConfig.Effort.high.rawValue == "high")
+        #expect(ReasoningConfig.Effort.medium.rawValue == "medium")
+        #expect(ReasoningConfig.Effort.low.rawValue == "low")
+        #expect(ReasoningConfig.Effort.minimal.rawValue == "minimal")
+        #expect(ReasoningConfig.Effort.none.rawValue == "none")
+    }
+
+    @Test
+    func equatability() {
+        let config1 = ReasoningConfig(effort: .high)
+        let config2 = ReasoningConfig(effort: .high)
+        let config3 = ReasoningConfig(effort: .low)
+        #expect(config1 == config2)
+        #expect(config1 != config3)
+    }
+}
+
+@Suite
+struct ReasoningRequestEncodingTests {
+    @Test
+    func requestIncludesReasoningEffort() throws {
+        let client = OpenAIClient(
+            apiKey: "test-key",
+            model: "test/model",
+            baseURL: OpenAIClient.openRouterBaseURL,
+            reasoningConfig: .high
+        )
+        let messages: [ChatMessage] = [.user("Hello")]
+        let request = client.buildRequest(messages: messages, tools: [])
+
+        let encoder = JSONEncoder()
+        encoder.keyEncodingStrategy = .convertToSnakeCase
+        let data = try encoder.encode(request)
+        let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+
+        #expect(json?["reasoning_effort"] as? String == "high")
+    }
+
+    @Test
+    func requestOmitsReasoningEffortWhenNil() throws {
+        let client = OpenAIClient(
+            apiKey: "test-key",
+            model: "test/model",
+            baseURL: OpenAIClient.openRouterBaseURL
+        )
+        let messages: [ChatMessage] = [.user("Hello")]
+        let request = client.buildRequest(messages: messages, tools: [])
+
+        let encoder = JSONEncoder()
+        encoder.keyEncodingStrategy = .convertToSnakeCase
+        let data = try encoder.encode(request)
+        let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+
+        #expect(json?["reasoning_effort"] == nil)
+    }
+
+    @Test
+    func requestEncodesAllEffortLevels() throws {
+        for effort in [ReasoningConfig.Effort.xhigh, .high, .medium, .low, .minimal, .none] {
+            let config = ReasoningConfig(effort: effort)
+            let client = OpenAIClient(
+                apiKey: "test-key",
+                model: "test/model",
+                baseURL: OpenAIClient.openRouterBaseURL,
+                reasoningConfig: config
+            )
+            let messages: [ChatMessage] = [.user("Hello")]
+            let request = client.buildRequest(messages: messages, tools: [])
+
+            let encoder = JSONEncoder()
+            encoder.keyEncodingStrategy = .convertToSnakeCase
+            let data = try encoder.encode(request)
+            let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+
+            #expect(json?["reasoning_effort"] as? String == effort.rawValue)
+        }
+    }
+}
+
+@Suite
+struct ReasoningMultiTurnTests {
+    @Test
+    func assistantMessageWithReasoningEncodes() throws {
+        let reasoning = ReasoningContent(content: "Let me think about this...")
+        let assistantMsg = AssistantMessage(content: "The answer is 42", reasoning: reasoning)
+        let client = OpenAIClient(
+            apiKey: "test-key",
+            model: "test/model",
+            baseURL: OpenAIClient.openRouterBaseURL
+        )
+        let messages: [ChatMessage] = [.assistant(assistantMsg)]
+        let request = client.buildRequest(messages: messages, tools: [])
+
+        let encoder = JSONEncoder()
+        let data = try encoder.encode(request)
+        let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+
+        let jsonMessages = json?["messages"] as? [[String: Any]]
+        let msg = jsonMessages?[0]
+        #expect(msg?["role"] as? String == "assistant")
+        #expect(msg?["content"] as? String == "The answer is 42")
+        #expect(msg?["reasoning_content"] as? String == "Let me think about this...")
+    }
+
+    @Test
+    func assistantMessageWithoutReasoningOmitsField() throws {
+        let assistantMsg = AssistantMessage(content: "The answer is 42")
+        let client = OpenAIClient(
+            apiKey: "test-key",
+            model: "test/model",
+            baseURL: OpenAIClient.openRouterBaseURL
+        )
+        let messages: [ChatMessage] = [.assistant(assistantMsg)]
+        let request = client.buildRequest(messages: messages, tools: [])
+
+        let encoder = JSONEncoder()
+        let data = try encoder.encode(request)
+        let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+
+        let jsonMessages = json?["messages"] as? [[String: Any]]
+        let msg = jsonMessages?[0]
+        #expect(msg?["reasoning_content"] == nil)
+    }
+
+    @Test
+    func assistantMessageWithToolCallsAndReasoningEncodes() throws {
+        let reasoning = ReasoningContent(content: "I need to check the weather...")
+        let toolCall = ToolCall(id: "call_123", name: "get_weather", arguments: "{\"city\":\"NYC\"}")
+        let assistantMsg = AssistantMessage(
+            content: "Let me check",
+            toolCalls: [toolCall],
+            reasoning: reasoning
+        )
+        let client = OpenAIClient(
+            apiKey: "test-key",
+            model: "test/model",
+            baseURL: OpenAIClient.openRouterBaseURL
+        )
+        let messages: [ChatMessage] = [.assistant(assistantMsg)]
+        let request = client.buildRequest(messages: messages, tools: [])
+
+        let encoder = JSONEncoder()
+        let data = try encoder.encode(request)
+        let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+
+        let jsonMessages = json?["messages"] as? [[String: Any]]
+        let msg = jsonMessages?[0]
+        #expect(msg?["reasoning_content"] as? String == "I need to check the weather...")
+        let jsonToolCalls = msg?["tool_calls"] as? [[String: Any]]
+        #expect(jsonToolCalls?.count == 1)
     }
 }

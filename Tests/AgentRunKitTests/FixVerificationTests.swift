@@ -202,7 +202,7 @@ struct OptionalArrayElementSchemaTests {
 struct InterleavedOutOfOrderDeltaTests {
     @Test
     func interleavedDeltasForMultipleToolCalls() async throws {
-        let echoTool = Tool<InterleavedEchoParams, InterleavedEchoOutput, EmptyContext>(
+        let echoTool = try Tool<InterleavedEchoParams, InterleavedEchoOutput, EmptyContext>(
             name: "echo",
             description: "Echoes input",
             executor: { params, _ in InterleavedEchoOutput(echoed: "Echo: \(params.message)") }
@@ -241,7 +241,7 @@ struct InterleavedOutOfOrderDeltaTests {
 
     @Test
     func allDeltasBeforeStartAreBuffered() async throws {
-        let echoTool = Tool<InterleavedEchoParams, InterleavedEchoOutput, EmptyContext>(
+        let echoTool = try Tool<InterleavedEchoParams, InterleavedEchoOutput, EmptyContext>(
             name: "echo",
             description: "Echoes input",
             executor: { params, _ in InterleavedEchoOutput(echoed: "Got: \(params.message)") }
@@ -278,7 +278,7 @@ struct InterleavedOutOfOrderDeltaTests {
 
     @Test
     func outOfOrderWithThreeToolCalls() async throws {
-        let addTool = Tool<InterleavedAddParams, InterleavedAddOutput, EmptyContext>(
+        let addTool = try Tool<InterleavedAddParams, InterleavedAddOutput, EmptyContext>(
             name: "add",
             description: "Adds numbers",
             executor: { params, _ in InterleavedAddOutput(sum: params.lhs + params.rhs) }
@@ -400,7 +400,7 @@ struct OrphanedStreamDeltaTests {
 
     @Test
     func mixedOrphanedAndValidDeltasThrows() async throws {
-        let echoTool = Tool<InterleavedEchoParams, InterleavedEchoOutput, EmptyContext>(
+        let echoTool = try Tool<InterleavedEchoParams, InterleavedEchoOutput, EmptyContext>(
             name: "echo",
             description: "Echoes input",
             executor: { params, _ in InterleavedEchoOutput(echoed: "Echo: \(params.message)") }

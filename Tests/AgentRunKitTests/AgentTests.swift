@@ -43,7 +43,7 @@ struct AgentTests {
 
     @Test
     func multiTurnWithToolCalls() async throws {
-        let echoTool = Tool<EchoParams, EchoOutput, EmptyContext>(
+        let echoTool = try Tool<EchoParams, EchoOutput, EmptyContext>(
             name: "echo",
             description: "Echoes input",
             executor: { params, _ in EchoOutput(echoed: "Echo: \(params.message)") }
@@ -85,7 +85,7 @@ struct AgentTests {
 
     @Test
     func multipleToolCallsInOneResponse() async throws {
-        let addTool = Tool<AddParams, AddOutput, EmptyContext>(
+        let addTool = try Tool<AddParams, AddOutput, EmptyContext>(
             name: "add",
             description: "Adds numbers",
             executor: { params, _ in AddOutput(sum: params.lhs + params.rhs) }
@@ -109,7 +109,7 @@ struct AgentTests {
     @Test
     func maxIterationsReached() async throws {
         let toolCall = ToolCall(id: "call_1", name: "noop", arguments: "{}")
-        let noopTool = Tool<NoopParams, NoopOutput, EmptyContext>(
+        let noopTool = try Tool<NoopParams, NoopOutput, EmptyContext>(
             name: "noop",
             description: "Does nothing",
             executor: { _, _ in NoopOutput() }
@@ -138,7 +138,7 @@ struct AgentTests {
 
     @Test
     func cancellationRespected() async throws {
-        let slowTool = Tool<NoopParams, NoopOutput, EmptyContext>(
+        let slowTool = try Tool<NoopParams, NoopOutput, EmptyContext>(
             name: "slow",
             description: "Slow tool",
             executor: { _, _ in
@@ -170,7 +170,7 @@ struct AgentTests {
 
     @Test
     func toolTimeoutFeedsErrorToLLM() async throws {
-        let slowTool = Tool<NoopParams, NoopOutput, EmptyContext>(
+        let slowTool = try Tool<NoopParams, NoopOutput, EmptyContext>(
             name: "slow",
             description: "Slow tool",
             executor: { _, _ in

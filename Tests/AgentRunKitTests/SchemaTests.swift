@@ -129,6 +129,39 @@ struct JSONSchemaTests {
         let idProp = userProps?["id"] as? [String: Any]
         #expect(idProp?["type"] as? String == "string")
     }
+
+    @Test
+    func stringSchemaWithEnumValues() throws {
+        let schema = JSONSchema.string(enumValues: ["a", "b", "c"])
+        let json = try encodeToJSON(schema)
+        #expect(json["type"] as? String == "string")
+        #expect(json["enum"] as? [String] == ["a", "b", "c"])
+    }
+
+    @Test
+    func stringSchemaWithEmptyEnumValues() throws {
+        let schema = JSONSchema.string(enumValues: [])
+        let json = try encodeToJSON(schema)
+        #expect(json["type"] as? String == "string")
+        #expect(json["enum"] as? [String] == [])
+    }
+
+    @Test
+    func stringSchemaWithNilEnumValuesOmitsField() throws {
+        let schema = JSONSchema.string(enumValues: nil)
+        let json = try encodeToJSON(schema)
+        #expect(json["type"] as? String == "string")
+        #expect(json["enum"] == nil)
+    }
+
+    @Test
+    func stringSchemaWithDescriptionAndEnumValues() throws {
+        let schema = JSONSchema.string(description: "Status code", enumValues: ["pending", "complete"])
+        let json = try encodeToJSON(schema)
+        #expect(json["type"] as? String == "string")
+        #expect(json["description"] as? String == "Status code")
+        #expect(json["enum"] as? [String] == ["pending", "complete"])
+    }
 }
 
 private enum SchemaTestError: Error {

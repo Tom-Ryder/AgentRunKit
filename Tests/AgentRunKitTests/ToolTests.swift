@@ -23,7 +23,7 @@ enum TestExecutorError: Error {
 struct ToolTests {
     @Test
     func executeWithValidArguments() async throws {
-        let tool = Tool<TestParams, TestOutput, EmptyContext>(
+        let tool = try Tool<TestParams, TestOutput, EmptyContext>(
             name: "double",
             description: "Doubles a number",
             executor: { params, _ in TestOutput(result: params.value * 2) }
@@ -39,7 +39,7 @@ struct ToolTests {
 
     @Test
     func executeWithInvalidArguments() async throws {
-        let tool = Tool<TestParams, TestOutput, EmptyContext>(
+        let tool = try Tool<TestParams, TestOutput, EmptyContext>(
             name: "double",
             description: "Doubles a number",
             executor: { params, _ in TestOutput(result: params.value * 2) }
@@ -61,8 +61,8 @@ struct ToolTests {
     }
 
     @Test
-    func toolProvidesSchema() {
-        let tool = Tool<TestParams, TestOutput, EmptyContext>(
+    func toolProvidesSchema() throws {
+        let tool = try Tool<TestParams, TestOutput, EmptyContext>(
             name: "test",
             description: "Test tool",
             executor: { _, _ in TestOutput(result: 0) }
@@ -81,7 +81,7 @@ struct ToolTests {
 
     @Test
     func asyncExecutor() async throws {
-        let tool = Tool<TestParams, TestOutput, EmptyContext>(
+        let tool = try Tool<TestParams, TestOutput, EmptyContext>(
             name: "async_tool",
             description: "Async operation",
             executor: { params, _ in
@@ -98,7 +98,7 @@ struct ToolTests {
 
     @Test
     func executorCanThrow() async throws {
-        let tool = Tool<TestParams, TestOutput, EmptyContext>(
+        let tool = try Tool<TestParams, TestOutput, EmptyContext>(
             name: "failing",
             description: "Always fails",
             executor: { _, _ in throw TestExecutorError.intentionalFailure }
@@ -121,7 +121,7 @@ struct ToolTests {
 
     @Test
     func encodingFailureWrapped() async throws {
-        let tool = Tool<TestParams, UnencodableOutput, EmptyContext>(
+        let tool = try Tool<TestParams, UnencodableOutput, EmptyContext>(
             name: "bad_encoder",
             description: "Returns unencodable output",
             executor: { _, _ in UnencodableOutput(value: 42) }
@@ -140,6 +140,24 @@ struct ToolTests {
             Issue.record("Expected AgentError, got \(error)")
         }
     }
+
+    @Test
+    func schemaInferenceFailureThrows() throws {
+        do {
+            _ = try Tool<UnsupportedFieldParams, TestOutput, EmptyContext>(
+                name: "bad_schema",
+                description: "Has unsupported field type",
+                executor: { _, _ in TestOutput(result: 0) }
+            )
+            Issue.record("Expected error to be thrown")
+        } catch let error as AgentError {
+            guard case let .schemaInferenceFailed(typeName, _) = error else {
+                Issue.record("Expected schemaInferenceFailed, got \(error)")
+                return
+            }
+            #expect(typeName == "UnsupportedFieldParams")
+        }
+    }
 }
 
 struct UnencodableOutput: Codable, Sendable {
@@ -155,6 +173,19 @@ struct UnencodableOutput: Codable, Sendable {
 
     init(value: Double) {
         self.value = value
+    }
+}
+
+struct UnsupportedFieldParams: Codable, SchemaProviding, Sendable {
+    init() {}
+
+    init(from decoder: any Decoder) throws {
+        _ = try decoder.singleValueContainer()
+    }
+
+    func encode(to encoder: any Encoder) throws {
+        var container = encoder.singleValueContainer()
+        try container.encode("placeholder")
     }
 }
 

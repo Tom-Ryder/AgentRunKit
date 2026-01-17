@@ -23,12 +23,19 @@ struct ChatTests {
         #expect(events.count == 3)
         #expect(events[0] == .delta("Hello "))
         #expect(events[1] == .delta("world!"))
-        #expect(events[2] == .finished(tokenUsage: TokenUsage(input: 10, output: 5), content: nil, reason: nil))
+        guard case let .finished(tokenUsage, content, reason, history) = events[2] else {
+            Issue.record("Expected finished event")
+            return
+        }
+        #expect(tokenUsage == TokenUsage(input: 10, output: 5))
+        #expect(content == nil)
+        #expect(reason == nil)
+        #expect(history.count == 2)
     }
 
     @Test
     func streamWithToolCallAndContinuation() async throws {
-        let echoTool = Tool<EchoParams, EchoOutput, EmptyContext>(
+        let echoTool = try Tool<EchoParams, EchoOutput, EmptyContext>(
             name: "echo",
             description: "Echoes input",
             executor: { params, _ in EchoOutput(echoed: "Echo: \(params.message)") }
@@ -68,7 +75,7 @@ struct ChatTests {
 
         #expect(events.contains(.delta("The echo result was: Echo: hello")))
 
-        guard case let .finished(tokenUsage, _, _) = events.last else {
+        guard case let .finished(tokenUsage, _, _, _) = events.last else {
             Issue.record("Expected finished event")
             return
         }
@@ -78,7 +85,7 @@ struct ChatTests {
 
     @Test
     func handleToolExecutionErrorGracefully() async throws {
-        let failingTool = Tool<NoopParams, NoopOutput, EmptyContext>(
+        let failingTool = try Tool<NoopParams, NoopOutput, EmptyContext>(
             name: "failing",
             description: "Always fails",
             executor: { _, _ in throw TestToolError.intentional }
@@ -188,7 +195,7 @@ struct ChatTests {
         ])
         let chat = Chat<EmptyContext>(client: client)
 
-        let response = try await chat.send("Hi")
+        let (response, _) = try await chat.send("Hi")
 
         #expect(response.content == "Hello from send!")
         #expect(response.tokenUsage?.input == 5)
@@ -221,13 +228,131 @@ struct ChatTests {
         }
         #expect(content == "Hi")
     }
+
+    @Test
+    func sendReturnsHistoryWithResponse() async throws {
+        let client = GenerateOnlyMockLLMClient(responses: [
+            AssistantMessage(content: "Response", tokenUsage: TokenUsage(input: 5, output: 3))
+        ])
+        let chat = Chat<EmptyContext>(client: client, systemPrompt: "System")
+
+        let (response, history) = try await chat.send("Hello")
+
+        #expect(response.content == "Response")
+        #expect(history.count == 3)
+        guard case .system = history[0] else {
+            Issue.record("Expected system message first")
+            return
+        }
+        guard case .user = history[1] else {
+            Issue.record("Expected user message second")
+            return
+        }
+        guard case .assistant = history[2] else {
+            Issue.record("Expected assistant message third")
+            return
+        }
+    }
+
+    @Test
+    func streamReasoningDeltasEmittedAndAccumulated() async throws {
+        let deltas: [StreamDelta] = [
+            .reasoning("Let me think..."),
+            .reasoning(" Yes, I see."),
+            .content("Here is my answer."),
+            .finished(usage: TokenUsage(input: 10, output: 5))
+        ]
+        let client = StreamingMockLLMClient(streamSequences: [deltas])
+        let chat = Chat<EmptyContext>(client: client)
+
+        var events: [StreamEvent] = []
+        var finalHistory: [ChatMessage] = []
+        for try await event in chat.stream("Hi", context: EmptyContext()) {
+            events.append(event)
+            if case let .finished(_, _, _, history) = event {
+                finalHistory = history
+            }
+        }
+
+        #expect(events.contains(.reasoningDelta("Let me think...")))
+        #expect(events.contains(.reasoningDelta(" Yes, I see.")))
+        #expect(events.contains(.delta("Here is my answer.")))
+
+        let assistantMessage = finalHistory.compactMap { msg -> AssistantMessage? in
+            if case let .assistant(assistant) = msg { return assistant }
+            return nil
+        }.first
+        #expect(assistantMessage?.reasoning?.content == "Let me think... Yes, I see.")
+    }
+
+    @Test
+    func sendWithHistoryIncludesPreviousMessages() async throws {
+        let client = ChatCapturingMockLLMClient(responses: [
+            AssistantMessage(content: "Second response")
+        ])
+        let chat = Chat<EmptyContext>(client: client)
+        let previousHistory: [ChatMessage] = [
+            .user("First message"),
+            .assistant(AssistantMessage(content: "First response"))
+        ]
+
+        let (_, newHistory) = try await chat.send("Second message", history: previousHistory)
+
+        let capturedMessages = await client.capturedMessages
+        #expect(capturedMessages.count == 3)
+        guard case let .user(first) = capturedMessages[0] else {
+            Issue.record("Expected first user message")
+            return
+        }
+        #expect(first == "First message")
+        guard case .assistant = capturedMessages[1] else {
+            Issue.record("Expected assistant message second")
+            return
+        }
+        guard case let .user(second) = capturedMessages[2] else {
+            Issue.record("Expected second user message")
+            return
+        }
+        #expect(second == "Second message")
+        #expect(newHistory.count == 4)
+    }
+}
+
+private actor ChatCapturingMockLLMClient: LLMClient {
+    private let responses: [AssistantMessage]
+    private var callIndex = 0
+    private(set) var capturedMessages: [ChatMessage] = []
+
+    init(responses: [AssistantMessage]) {
+        self.responses = responses
+    }
+
+    func generate(
+        messages: [ChatMessage],
+        tools _: [ToolDefinition],
+        responseFormat _: ResponseFormat?
+    ) async throws -> AssistantMessage {
+        capturedMessages = messages
+        defer { callIndex += 1 }
+        guard callIndex < responses.count else {
+            throw AgentError.llmError(.other("No more mock responses"))
+        }
+        return responses[callIndex]
+    }
+
+    nonisolated func stream(
+        messages _: [ChatMessage],
+        tools _: [ToolDefinition]
+    ) -> AsyncThrowingStream<StreamDelta, Error> {
+        AsyncThrowingStream { $0.finish() }
+    }
 }
 
 @Suite
 struct ChatStreamingEdgeTests {
     @Test
     func outOfOrderDeltasBuffered() async throws {
-        let echoTool = Tool<EchoParams, EchoOutput, EmptyContext>(
+        let echoTool = try Tool<EchoParams, EchoOutput, EmptyContext>(
             name: "echo",
             description: "Echoes input",
             executor: { params, _ in EchoOutput(echoed: "Echo: \(params.message)") }
@@ -278,7 +403,7 @@ struct ChatStreamingEdgeTests {
         }
 
         #expect(events.count == 1)
-        guard case let .finished(tokenUsage, _, _) = events.first else {
+        guard case let .finished(tokenUsage, _, _, _) = events.first else {
             Issue.record("Expected finished event")
             return
         }
@@ -288,7 +413,7 @@ struct ChatStreamingEdgeTests {
 
     @Test
     func multipleToolCallsExecutedInOrder() async throws {
-        let addTool = Tool<AddParams, AddOutput, EmptyContext>(
+        let addTool = try Tool<AddParams, AddOutput, EmptyContext>(
             name: "add",
             description: "Adds numbers",
             executor: { params, _ in AddOutput(sum: params.lhs + params.rhs) }

@@ -50,7 +50,7 @@ struct StructuredOutputIntegrationTests {
     func structuredOutputReturnsTypedResponse() async throws {
         let chat = Chat<EmptyContext>(client: client)
 
-        let workout: TestWorkout = try await chat.send(
+        let (workout, history) = try await chat.send(
             "Give me a few exercises for upper body",
             returning: TestWorkout.self
         )
@@ -60,5 +60,6 @@ struct StructuredOutputIntegrationTests {
             #expect(!exercise.name.isEmpty)
             #expect(exercise.sets > 0)
         }
+        #expect(history.count >= 2)
     }
 }

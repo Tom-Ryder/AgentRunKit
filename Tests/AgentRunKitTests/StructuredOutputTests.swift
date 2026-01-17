@@ -140,10 +140,11 @@ struct ChatStructuredOutputTests {
         let client = StructuredOutputMockLLMClient(jsonContent: "{\"name\":\"test\",\"count\":42}")
         let chat = Chat<EmptyContext>(client: client)
 
-        let result = try await chat.send("Extract", returning: TestStructuredOutput.self)
+        let (result, history) = try await chat.send("Extract", returning: TestStructuredOutput.self)
 
         #expect(result.name == "test")
         #expect(result.count == 42)
+        #expect(history.count == 2)
     }
 
     @Test

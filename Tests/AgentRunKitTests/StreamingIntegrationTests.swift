@@ -114,7 +114,7 @@ struct StreamingIntegrationTests {
 
     @Test
     func agentStreamingWithToolExecution() async throws {
-        let addTool = Tool<StreamingAddParams, StreamingAddOutput, EmptyContext>(
+        let addTool = try Tool<StreamingAddParams, StreamingAddOutput, EmptyContext>(
             name: "add",
             description: "Add two numbers together",
             executor: { params, _ in StreamingAddOutput(sum: params.lhs + params.rhs) }
@@ -159,7 +159,7 @@ struct StreamingIntegrationTests {
 
     @Test
     func chatStreamingWithTools() async throws {
-        let echoTool = Tool<StreamingEchoParams, StreamingEchoOutput, EmptyContext>(
+        let echoTool = try Tool<StreamingEchoParams, StreamingEchoOutput, EmptyContext>(
             name: "echo",
             description: "Echo back the message",
             executor: { params, _ in StreamingEchoOutput(echoed: "Echo: \(params.message)") }
@@ -215,4 +215,144 @@ private struct StreamingEchoParams: Codable, SchemaProviding, Sendable {
 
 private struct StreamingEchoOutput: Codable, Sendable {
     let echoed: String
+}
+
+@Suite(.enabled(if: hasAPIKey, "Requires OPENROUTER_API_KEY environment variable"))
+struct ReasoningIntegrationTests {
+    @Test
+    func streamingWithReasoningConfigWorks() async throws {
+        let client = OpenAIClient(
+            apiKey: apiKey,
+            model: defaultModel,
+            maxTokens: 2048,
+            baseURL: OpenAIClient.openRouterBaseURL,
+            reasoningConfig: .medium
+        )
+
+        let messages: [ChatMessage] = [
+            .system("You are a helpful assistant. Think step by step."),
+            .user("What is 17 * 23? Show your reasoning.")
+        ]
+
+        var reasoningChunks: [String] = []
+        var contentChunks: [String] = []
+        var hasFinished = false
+
+        for try await delta in client.stream(messages: messages, tools: []) {
+            switch delta {
+            case let .reasoning(text):
+                reasoningChunks.append(text)
+            case let .content(text):
+                contentChunks.append(text)
+            case .finished:
+                hasFinished = true
+            default:
+                break
+            }
+        }
+
+        let fullContent = contentChunks.joined()
+
+        #expect(hasFinished, "Should receive finished event")
+        #expect(fullContent.contains("391"), "Answer should contain 391")
+
+        if !reasoningChunks.isEmpty {
+            let fullReasoning = reasoningChunks.joined()
+            #expect(fullReasoning.count > 10, "Reasoning should have substantial content")
+        }
+    }
+
+    @Test
+    func agentStreamingAccumulatesReasoningInHistory() async throws {
+        let client = OpenAIClient(
+            apiKey: apiKey,
+            model: defaultModel,
+            maxTokens: 2048,
+            baseURL: OpenAIClient.openRouterBaseURL,
+            reasoningConfig: .low
+        )
+
+        let config = AgentConfiguration(
+            maxIterations: 3,
+            systemPrompt: """
+            You are a calculator assistant. Answer math questions directly.
+            After computing the answer, immediately use the finish tool with the result.
+            """
+        )
+
+        let agent = Agent<EmptyContext>(client: client, tools: [], configuration: config)
+
+        var reasoningDeltas: [String] = []
+        var finalHistory: [ChatMessage] = []
+
+        for try await event in agent.stream(
+            userMessage: "What is 12 + 15? Use the finish tool with the answer.",
+            context: EmptyContext()
+        ) {
+            switch event {
+            case let .reasoningDelta(text):
+                reasoningDeltas.append(text)
+            case let .finished(_, _, _, history):
+                finalHistory = history
+            default:
+                break
+            }
+        }
+
+        #expect(!finalHistory.isEmpty, "Should have history")
+
+        let assistantMessages = finalHistory.compactMap { msg -> AssistantMessage? in
+            if case let .assistant(assistant) = msg { return assistant }
+            return nil
+        }
+
+        #expect(!assistantMessages.isEmpty, "Should have assistant message in history")
+
+        if !reasoningDeltas.isEmpty {
+            let accumulatedReasoning = reasoningDeltas.joined()
+            let historyReasoning = assistantMessages.first?.reasoning?.content ?? ""
+            #expect(historyReasoning == accumulatedReasoning,
+                    "History reasoning should match accumulated deltas")
+        }
+    }
+
+    @Test
+    func nonStreamingReasoningParsesCorrectly() async throws {
+        let client = OpenAIClient(
+            apiKey: apiKey,
+            model: defaultModel,
+            maxTokens: 2048,
+            baseURL: OpenAIClient.openRouterBaseURL,
+            reasoningConfig: .low
+        )
+
+        let messages: [ChatMessage] = [
+            .system("You are a helpful assistant."),
+            .user("What is 5 + 7?")
+        ]
+
+        let response = try await client.generate(messages: messages, tools: [])
+
+        #expect(response.content.contains("12"), "Response should contain 12")
+        #expect(response.tokenUsage != nil, "Should have token usage")
+    }
+
+    @Test
+    func reasoningConfigEncodesInRequest() async throws {
+        let client = OpenAIClient(
+            apiKey: apiKey,
+            model: defaultModel,
+            maxTokens: 1024,
+            baseURL: OpenAIClient.openRouterBaseURL,
+            reasoningConfig: .high
+        )
+
+        let messages: [ChatMessage] = [
+            .user("Hello")
+        ]
+
+        let response = try await client.generate(messages: messages, tools: [])
+
+        #expect(!response.content.isEmpty, "Should get a response")
+    }
 }
