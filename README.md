@@ -72,6 +72,17 @@ print(result.content)
 print("Tokens used: \(result.totalTokenUsage.total)")
 ```
 
+## When to Use What
+
+| Interface | Use Case |
+|-----------|----------|
+| `Agent` | Tool-calling workflows. Injects a `finish` tool and loops until the model calls it. |
+| `Chat` | Simple multi-turn conversations without the agent loop overhead. |
+| `client.stream()` | Raw streaming when you need direct control over deltas. |
+| `client.generate()` | Single request/response without streaming. |
+
+**Important:** `Agent` requires the model to call its `finish` tool to complete. If you're doing simple chat without tools, use `Chat` or the client directly to avoid `maxIterationsReached` errors.
+
 ## Defining Tools
 
 Tools are defined with strongly-typed parameters and outputs. The framework handles JSON encoding/decoding automatically.
@@ -158,6 +169,53 @@ print("Iterations: \(result.iterations)")
 print("Finish reason: \(result.finishReason)")
 ```
 
+## Conversation History
+
+Pass conversation history for multi-turn interactions. Each `run()`, `send()`, or `stream()` returns the updated history.
+
+```swift
+// First turn
+let result1 = try await agent.run(
+    userMessage: "Remember the number 42.",
+    context: EmptyContext()
+)
+
+// Second turn - pass history from previous result
+let result2 = try await agent.run(
+    userMessage: "What number did I ask you to remember?",
+    history: result1.history,
+    context: EmptyContext()
+)
+
+print(result2.content)  // "42"
+```
+
+Works the same with `Chat`:
+
+```swift
+let chat = Chat<EmptyContext>(client: client)
+
+let (response1, history1) = try await chat.send("My name is Alice.")
+let (response2, _) = try await chat.send("What's my name?", history: history1)
+
+print(response2.content)  // "Alice"
+```
+
+And with streaming:
+
+```swift
+var history: [ChatMessage] = []
+for try await event in agent.stream(
+    userMessage: "Continue our conversation",
+    history: history,
+    context: EmptyContext()
+) {
+    if case let .finished(_, _, _, newHistory) = event {
+        history = newHistory
+    }
+}
+```
+
 ## Tool Context
 
 Inject app-specific dependencies (database, user session, etc.) via a custom context:
@@ -183,7 +241,9 @@ let result = try await agent.run(userMessage: "Get user 456", context: context)
 
 ## Streaming
 
-Stream responses for real-time UI updates:
+### Agent Streaming (StreamEvent)
+
+Use `agent.stream()` or `chat.stream()` for high-level streaming with tool execution:
 
 ```swift
 for try await event in agent.stream(userMessage: "Write a poem", context: EmptyContext()) {
@@ -191,14 +251,103 @@ for try await event in agent.stream(userMessage: "Write a poem", context: EmptyC
     case .delta(let text):
         print(text, terminator: "")
 
+    case .reasoningDelta(let text):
+        print("[Thinking] \(text)", terminator: "")
+
     case .toolCallStarted(let name, let id):
         print("\n[Executing \(name)...]")
 
     case .toolCallCompleted(let id, let name, let result):
         print("[Completed \(name)]")
 
-    case .finished(let tokenUsage, let content, let reason):
+    case .finished(let tokenUsage, let content, let reason, let history):
         print("\nDone. Tokens: \(tokenUsage.total)")
+    }
+}
+```
+
+### Client Streaming (StreamDelta)
+
+Use `client.stream()` for raw streaming without agent overhead:
+
+```swift
+for try await delta in client.stream(messages: messages, tools: []) {
+    switch delta {
+    case .content(let text):
+        print(text, terminator: "")
+
+    case .reasoning(let text):
+        print("[Thinking] \(text)", terminator: "")
+
+    case .toolCallStart(let index, let id, let name):
+        print("\n[Tool: \(name)]")
+
+    case .toolCallDelta(let index, let arguments):
+        // Accumulate tool arguments
+        break
+
+    case .finished(let usage):
+        if let usage {
+            print("\nTokens: \(usage.total)")
+        }
+    }
+}
+```
+
+### StreamEvent vs StreamDelta
+
+| StreamEvent (Agent/Chat) | StreamDelta (Client) |
+|--------------------------|----------------------|
+| `.delta(String)` | `.content(String)` |
+| `.reasoningDelta(String)` | `.reasoning(String)` |
+| `.toolCallStarted(name:id:)` | `.toolCallStart(index:id:name:)` |
+| `.toolCallCompleted(id:name:result:)` | `.toolCallDelta(index:arguments:)` |
+| `.finished(tokenUsage:content:reason:history:)` | `.finished(usage:)` |
+
+## Reasoning
+
+For models that support extended thinking, configure the reasoning effort level:
+
+```swift
+let client = OpenAIClient(
+    apiKey: apiKey,
+    model: "your-model",
+    baseURL: OpenAIClient.openRouterBaseURL,
+    reasoningConfig: .medium  // .high, .medium, .low
+)
+```
+
+### Non-Streaming
+
+Access reasoning content from responses:
+
+```swift
+let response = try await client.generate(messages: messages, tools: [])
+
+if let reasoning = response.reasoning {
+    print("Thinking: \(reasoning.content)")
+}
+print("Answer: \(response.content)")
+```
+
+### Streaming
+
+Receive reasoning deltas in real-time:
+
+```swift
+for try await event in agent.stream(userMessage: "Solve this problem", context: EmptyContext()) {
+    switch event {
+    case .reasoningDelta(let text):
+        // Model's thinking process
+        print(text, terminator: "")
+    case .delta(let text):
+        // Final answer
+        print(text, terminator: "")
+    case .finished(_, _, _, let history):
+        // Reasoning is preserved in history for multi-turn
+        break
+    default:
+        break
     }
 }
 ```
@@ -210,10 +359,13 @@ for try await event in agent.stream(userMessage: "Write a poem", context: EmptyC
 ```swift
 let config = AgentConfiguration(
     maxIterations: 10,          // Maximum tool-calling rounds
+    maxMessages: 50,            // Truncate context to 50 messages
     toolTimeout: .seconds(30),  // Per-tool timeout
     systemPrompt: "You are a helpful assistant."
 )
 ```
+
+Context truncation (`maxMessages`) removes the oldest messages when the conversation exceeds the limit. The system prompt is always preserved, and tool call/result pairs are kept together to maintain conversation coherence.
 
 ### Retry Policy
 
@@ -452,15 +604,17 @@ public protocol LLMClient: Sendable {
 | `OpenAIClient` | OpenAI-compatible client |
 | `ResponseFormat` | Structured output configuration |
 | `RetryPolicy` | Exponential backoff settings |
+| `ReasoningConfig` | Reasoning effort configuration for thinking models |
 
 ### Message Types
 
 | Type | Description |
 |------|-------------|
 | `ChatMessage` | Conversation message enum |
-| `AssistantMessage` | LLM response with tool calls |
-| `TokenUsage` | Token accounting with overflow protection |
+| `AssistantMessage` | LLM response with tool calls and reasoning |
+| `TokenUsage` | Token accounting (`.input`, `.output`, `.reasoning`, `.total`) |
 | `ContentPart` | Multimodal content element |
+| `ReasoningContent` | Reasoning/thinking content from models |
 
 ### Error Types
 
