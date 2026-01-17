@@ -5,6 +5,8 @@ public struct OpenAIClient: LLMClient, Sendable {
     public let maxTokens: Int
     let apiKey: String
     let baseURL: URL
+    let chatCompletionPath: String
+    let additionalHeaders: [String: String]
     let session: URLSession
     let retryPolicy: RetryPolicy
     let reasoningConfig: ReasoningConfig?
@@ -14,6 +16,8 @@ public struct OpenAIClient: LLMClient, Sendable {
         model: String,
         maxTokens: Int = 16384,
         baseURL: URL,
+        chatCompletionPath: String = "chat/completions",
+        additionalHeaders: [String: String] = [:],
         session: URLSession = .shared,
         retryPolicy: RetryPolicy = .default,
         reasoningConfig: ReasoningConfig? = nil
@@ -22,6 +26,8 @@ public struct OpenAIClient: LLMClient, Sendable {
         modelIdentifier = model
         self.maxTokens = maxTokens
         self.baseURL = baseURL
+        self.chatCompletionPath = chatCompletionPath
+        self.additionalHeaders = additionalHeaders
         self.session = session
         self.retryPolicy = retryPolicy
         self.reasoningConfig = reasoningConfig
@@ -119,11 +125,14 @@ extension OpenAIClient {
     }
 
     func buildURLRequest(_ request: ChatCompletionRequest) throws -> URLRequest {
-        let url = baseURL.appendingPathComponent("chat/completions")
+        let url = baseURL.appendingPathComponent(chatCompletionPath)
         var urlRequest = URLRequest(url: url)
         urlRequest.httpMethod = "POST"
         urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
         urlRequest.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+        for (field, value) in additionalHeaders {
+            urlRequest.setValue(value, forHTTPHeaderField: field)
+        }
 
         let encoder = JSONEncoder()
         do {
@@ -164,6 +173,9 @@ extension OpenAIClient {
         urlRequest.httpMethod = "POST"
         urlRequest.setValue(formData.contentType, forHTTPHeaderField: "Content-Type")
         urlRequest.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+        for (field, value) in additionalHeaders {
+            urlRequest.setValue(value, forHTTPHeaderField: field)
+        }
         urlRequest.httpBody = formData.encoded()
         return urlRequest
     }
@@ -198,6 +210,9 @@ extension OpenAIClient {
         urlRequest.httpMethod = "POST"
         urlRequest.setValue(formData.contentType, forHTTPHeaderField: "Content-Type")
         urlRequest.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+        for (field, value) in additionalHeaders {
+            urlRequest.setValue(value, forHTTPHeaderField: field)
+        }
 
         let contentLength: Int
         do {
