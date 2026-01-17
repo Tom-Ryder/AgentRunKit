@@ -17,6 +17,7 @@ struct ChatCompletionRequest: Encodable, Sendable {
     let stream: Bool?
     let streamOptions: StreamOptions?
     let responseFormat: ResponseFormat?
+    let reasoningEffort: String?
 
     enum CodingKeys: String, CodingKey {
         case model, messages, tools
@@ -25,6 +26,7 @@ struct ChatCompletionRequest: Encodable, Sendable {
         case stream
         case streamOptions = "stream_options"
         case responseFormat = "response_format"
+        case reasoningEffort = "reasoning_effort"
     }
 }
 
@@ -34,11 +36,13 @@ struct RequestMessage: Encodable, Sendable {
     let toolCalls: [RequestToolCall]?
     let toolCallId: String?
     let name: String?
+    let reasoningContent: String?
 
     enum CodingKeys: String, CodingKey {
         case role, content, name
         case toolCalls = "tool_calls"
         case toolCallId = "tool_call_id"
+        case reasoningContent = "reasoning_content"
     }
 
     enum MessageContent: Encodable, Sendable {
@@ -64,30 +68,35 @@ struct RequestMessage: Encodable, Sendable {
             toolCalls = nil
             toolCallId = nil
             name = nil
+            reasoningContent = nil
         case let .user(text):
             role = "user"
             content = .text(text)
             toolCalls = nil
             toolCallId = nil
             name = nil
+            reasoningContent = nil
         case let .userMultimodal(parts):
             role = "user"
             content = .multimodal(parts)
             toolCalls = nil
             toolCallId = nil
             name = nil
+            reasoningContent = nil
         case let .assistant(msg):
             role = "assistant"
             content = msg.content.isEmpty ? nil : .text(msg.content)
             toolCalls = msg.toolCalls.isEmpty ? nil : msg.toolCalls.map(RequestToolCall.init)
             toolCallId = nil
             name = nil
+            reasoningContent = msg.reasoning?.content
         case let .tool(id, toolName, resultContent):
             role = "tool"
             content = .text(resultContent)
             toolCalls = nil
             toolCallId = id
             name = toolName
+            reasoningContent = nil
         }
     }
 }
@@ -145,6 +154,8 @@ struct ResponseMessage: Decodable, Sendable {
     let role: String
     let content: String?
     let toolCalls: [ResponseToolCall]?
+    let reasoning: String?
+    let reasoningContent: String?
 }
 
 struct ResponseToolCall: Decodable, Sendable {
@@ -212,6 +223,8 @@ struct StreamingChoice: Decodable, Sendable {
 struct StreamingDelta: Decodable, Sendable {
     let content: String?
     let toolCalls: [StreamingToolCall]?
+    let reasoning: String?
+    let reasoningContent: String?
 }
 
 struct StreamingToolCall: Decodable, Sendable {
