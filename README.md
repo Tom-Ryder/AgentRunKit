@@ -415,6 +415,15 @@ let custom = OpenAIClient(
     model: "your-model",
     baseURL: URL(string: "https://your-api.com/v1")!
 )
+
+// Enterprise proxy with custom headers
+let proxy = OpenAIClient(
+    apiKey: "your-key",
+    model: "gpt-4o",
+    baseURL: URL(string: "https://proxy.internal.corp/v1")!,
+    chatCompletionPath: "llm/chat",
+    additionalHeaders: ["X-User-Id": "alice", "X-Team": "platform"]
+)
 ```
 
 ## Multimodal Input
