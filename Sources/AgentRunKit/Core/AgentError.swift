@@ -31,6 +31,7 @@ public enum AgentError: Error, Sendable, Equatable, LocalizedError {
     case toolExecutionFailed(tool: String, message: String)
     case llmError(TransportError)
     case malformedStream(MalformedStreamReason)
+    case schemaInferenceFailed(type: String, message: String)
 
     public var errorDescription: String? {
         switch self {
@@ -54,6 +55,8 @@ public enum AgentError: Error, Sendable, Equatable, LocalizedError {
             "LLM request failed: \(transportError)"
         case let .malformedStream(reason):
             "Malformed stream: \(reason)"
+        case let .schemaInferenceFailed(type, message):
+            "Schema inference failed for '\(type)': \(message)"
         }
     }
 
@@ -69,6 +72,7 @@ public enum AgentError: Error, Sendable, Equatable, LocalizedError {
         case let .structuredOutputDecodingFailed(message): "Error: Failed to decode structured output: \(message)"
         case let .llmError(transportError): "Error: LLM request failed: \(transportError)"
         case let .malformedStream(reason): "Error: Malformed stream: \(reason)"
+        case let .schemaInferenceFailed(type, message): "Error: Schema inference failed for '\(type)': \(message)"
         }
     }
 }

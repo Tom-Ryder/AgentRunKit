@@ -5,17 +5,18 @@ public struct Tool<P: Codable & SchemaProviding & Sendable, O: Codable & Sendabl
 
     public let name: String
     public let description: String
+    public let parametersSchema: JSONSchema
     private let executor: @Sendable (P, C) async throws -> O
-
-    public var parametersSchema: JSONSchema { P.jsonSchema }
 
     public init(
         name: String,
         description: String,
         executor: @escaping @Sendable (P, C) async throws -> O
-    ) {
+    ) throws {
+        try P.validateSchema()
         self.name = name
         self.description = description
+        parametersSchema = P.jsonSchema
         self.executor = executor
     }
 

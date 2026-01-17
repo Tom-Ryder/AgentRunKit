@@ -1,13 +1,22 @@
 public protocol SchemaProviding: Sendable {
     static var jsonSchema: JSONSchema { get }
+    static func validateSchema() throws(AgentError)
+}
+
+public extension SchemaProviding {
+    static func validateSchema() throws(AgentError) {}
 }
 
 public extension SchemaProviding where Self: Decodable {
     static var jsonSchema: JSONSchema {
+        (try? SchemaDecoder.decode(Self.self)) ?? .string()
+    }
+
+    static func validateSchema() throws(AgentError) {
         do {
-            return try SchemaDecoder.decode(Self.self)
+            _ = try SchemaDecoder.decode(Self.self)
         } catch {
-            preconditionFailure("Failed to generate schema for \(Self.self): \(error)")
+            throw AgentError.schemaInferenceFailed(type: String(describing: Self.self), message: String(describing: error))
         }
     }
 }
