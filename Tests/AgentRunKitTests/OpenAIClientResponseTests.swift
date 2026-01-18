@@ -408,3 +408,181 @@ struct StreamingChunkParsingTests {
         #expect(deltas[1] == .content("Response"))
     }
 }
+
+@Suite
+struct ResponseValidationTests {
+    @Test
+    func emptyToolCallIdThrows() throws {
+        let json = """
+        {
+            "choices": [{
+                "message": {
+                    "role": "assistant",
+                    "content": null,
+                    "tool_calls": [{
+                        "id": "",
+                        "type": "function",
+                        "function": {
+                            "name": "get_weather",
+                            "arguments": "{}"
+                        }
+                    }]
+                },
+                "finish_reason": "tool_calls"
+            }],
+            "usage": { "prompt_tokens": 10, "completion_tokens": 5 }
+        }
+        """
+        let client = OpenAIClient(apiKey: "test", model: "test", baseURL: OpenAIClient.openRouterBaseURL)
+        do {
+            _ = try client.parseResponse(Data(json.utf8))
+            Issue.record("Expected decoding error for empty tool call id")
+        } catch let error as AgentError {
+            guard case let .llmError(transport) = error,
+                  case let .decodingFailed(desc) = transport
+            else {
+                Issue.record("Expected decodingFailed, got \(error)")
+                return
+            }
+            #expect(desc.contains("empty"))
+        } catch {
+            Issue.record("Unexpected error: \(error)")
+        }
+    }
+
+    @Test
+    func emptyFunctionNameThrows() throws {
+        let json = """
+        {
+            "choices": [{
+                "message": {
+                    "role": "assistant",
+                    "content": null,
+                    "tool_calls": [{
+                        "id": "call_123",
+                        "type": "function",
+                        "function": {
+                            "name": "",
+                            "arguments": "{}"
+                        }
+                    }]
+                },
+                "finish_reason": "tool_calls"
+            }],
+            "usage": { "prompt_tokens": 10, "completion_tokens": 5 }
+        }
+        """
+        let client = OpenAIClient(apiKey: "test", model: "test", baseURL: OpenAIClient.openRouterBaseURL)
+        do {
+            _ = try client.parseResponse(Data(json.utf8))
+            Issue.record("Expected decoding error for empty function name")
+        } catch let error as AgentError {
+            guard case let .llmError(transport) = error,
+                  case let .decodingFailed(desc) = transport
+            else {
+                Issue.record("Expected decodingFailed, got \(error)")
+                return
+            }
+            #expect(desc.contains("empty"))
+        } catch {
+            Issue.record("Unexpected error: \(error)")
+        }
+    }
+
+    @Test
+    func nullContentInResponseDecodesToEmptyString() throws {
+        let json = """
+        {
+            "choices": [{
+                "message": {
+                    "role": "assistant",
+                    "content": null
+                },
+                "finish_reason": "stop"
+            }],
+            "usage": { "prompt_tokens": 10, "completion_tokens": 5 }
+        }
+        """
+        let client = OpenAIClient(apiKey: "test", model: "test", baseURL: OpenAIClient.openRouterBaseURL)
+        let msg = try client.parseResponse(Data(json.utf8))
+        #expect(msg.content == "")
+    }
+
+    @Test
+    func missingContentInResponseDecodesToEmptyString() throws {
+        let json = """
+        {
+            "choices": [{
+                "message": {
+                    "role": "assistant"
+                },
+                "finish_reason": "stop"
+            }],
+            "usage": { "prompt_tokens": 10, "completion_tokens": 5 }
+        }
+        """
+        let client = OpenAIClient(apiKey: "test", model: "test", baseURL: OpenAIClient.openRouterBaseURL)
+        let msg = try client.parseResponse(Data(json.utf8))
+        #expect(msg.content == "")
+    }
+
+    @Test
+    func toolCallWithMalformedArgumentsStillDecodes() throws {
+        let json = """
+        {
+            "choices": [{
+                "message": {
+                    "role": "assistant",
+                    "content": null,
+                    "tool_calls": [{
+                        "id": "call_123",
+                        "type": "function",
+                        "function": {
+                            "name": "search",
+                            "arguments": "not valid json {"
+                        }
+                    }]
+                },
+                "finish_reason": "tool_calls"
+            }],
+            "usage": { "prompt_tokens": 10, "completion_tokens": 5 }
+        }
+        """
+        let client = OpenAIClient(apiKey: "test", model: "test", baseURL: OpenAIClient.openRouterBaseURL)
+        let msg = try client.parseResponse(Data(json.utf8))
+        #expect(msg.toolCalls.count == 1)
+        #expect(msg.toolCalls[0].arguments == "not valid json {")
+    }
+
+    @Test
+    func multipleToolCallsAllValidated() throws {
+        let json = """
+        {
+            "choices": [{
+                "message": {
+                    "role": "assistant",
+                    "content": null,
+                    "tool_calls": [
+                        {"id": "call_1", "type": "function", "function": {"name": "a", "arguments": "{}"}},
+                        {"id": "", "type": "function", "function": {"name": "b", "arguments": "{}"}}
+                    ]
+                },
+                "finish_reason": "tool_calls"
+            }],
+            "usage": { "prompt_tokens": 10, "completion_tokens": 5 }
+        }
+        """
+        let client = OpenAIClient(apiKey: "test", model: "test", baseURL: OpenAIClient.openRouterBaseURL)
+        do {
+            _ = try client.parseResponse(Data(json.utf8))
+            Issue.record("Expected decoding error for empty tool call id in second call")
+        } catch let error as AgentError {
+            guard case .llmError = error else {
+                Issue.record("Expected llmError, got \(error)")
+                return
+            }
+        } catch {
+            Issue.record("Unexpected error: \(error)")
+        }
+    }
+}

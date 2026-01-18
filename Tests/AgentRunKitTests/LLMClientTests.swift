@@ -210,6 +210,120 @@ struct OpenAIClientRequestTests {
     }
 
     @Test
+    func assistantMessageWithEmptyContentEncodesAsEmptyString() throws {
+        let assistantMsg = AssistantMessage(content: "")
+        let client = OpenAIClient(apiKey: "test-key", model: "test/model", baseURL: OpenAIClient.openRouterBaseURL)
+        let messages: [ChatMessage] = [.assistant(assistantMsg)]
+        let request = client.buildRequest(messages: messages, tools: [])
+
+        let encoder = JSONEncoder()
+        encoder.keyEncodingStrategy = .convertToSnakeCase
+        let data = try encoder.encode(request)
+        let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+
+        let jsonMessages = json?["messages"] as? [[String: Any]]
+        let msg = jsonMessages?[0]
+        #expect(msg?["content"] as? String == "")
+        #expect(msg?["content"] is String)
+    }
+
+    @Test
+    func assistantMessageWithToolCallsAndEmptyContentEncodesAsEmptyString() throws {
+        let toolCall = ToolCall(id: "call_abc", name: "list_gyms", arguments: "{}")
+        let assistantMsg = AssistantMessage(content: "", toolCalls: [toolCall])
+        let client = OpenAIClient(apiKey: "test-key", model: "test/model", baseURL: OpenAIClient.openRouterBaseURL)
+        let messages: [ChatMessage] = [.assistant(assistantMsg)]
+        let request = client.buildRequest(messages: messages, tools: [])
+
+        let encoder = JSONEncoder()
+        encoder.keyEncodingStrategy = .convertToSnakeCase
+        let data = try encoder.encode(request)
+        let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+
+        let jsonMessages = json?["messages"] as? [[String: Any]]
+        let msg = jsonMessages?[0]
+        #expect(msg?["content"] as? String == "")
+        #expect(msg?["content"] is String)
+        let jsonToolCalls = msg?["tool_calls"] as? [[String: Any]]
+        #expect(jsonToolCalls?.count == 1)
+    }
+
+    @Test
+    func assistantContentNeverEncodesAsNull() throws {
+        let toolCall = ToolCall(id: "call_xyz", name: "search", arguments: "{\"q\":\"test\"}")
+        let assistantMsg = AssistantMessage(content: "", toolCalls: [toolCall])
+        let client = OpenAIClient(apiKey: "test-key", model: "test/model", baseURL: OpenAIClient.openRouterBaseURL)
+        let messages: [ChatMessage] = [.assistant(assistantMsg)]
+        let request = client.buildRequest(messages: messages, tools: [])
+
+        let encoder = JSONEncoder()
+        encoder.keyEncodingStrategy = .convertToSnakeCase
+        let data = try encoder.encode(request)
+        let jsonString = String(data: data, encoding: .utf8)!
+
+        #expect(!jsonString.contains("\"content\":null"))
+        #expect(jsonString.contains("\"content\":\"\""))
+    }
+
+    @Test
+    func fullToolCallConversationEncodesCorrectly() throws {
+        let toolCall = ToolCall(id: "call_abc123", name: "list_gyms", arguments: "{}")
+        let client = OpenAIClient(apiKey: "test-key", model: "test/model", baseURL: OpenAIClient.openRouterBaseURL)
+        let messages: [ChatMessage] = [
+            .system("You are a helpful assistant."),
+            .user("What gyms do I have?"),
+            .assistant(AssistantMessage(content: "", toolCalls: [toolCall])),
+            .tool(id: "call_abc123", name: "list_gyms", content: "[{\"id\":\"gym1\",\"name\":\"My Gym\"}]")
+        ]
+        let request = client.buildRequest(messages: messages, tools: [])
+
+        let encoder = JSONEncoder()
+        encoder.keyEncodingStrategy = .convertToSnakeCase
+        let data = try encoder.encode(request)
+        let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+
+        let jsonMessages = json?["messages"] as? [[String: Any]]
+        #expect(jsonMessages?.count == 4)
+
+        let assistantMsg = jsonMessages?[2]
+        #expect(assistantMsg?["role"] as? String == "assistant")
+        #expect(assistantMsg?["content"] as? String == "")
+        #expect(assistantMsg?["content"] is String)
+
+        let toolMsg = jsonMessages?[3]
+        #expect(toolMsg?["role"] as? String == "tool")
+        #expect(toolMsg?["tool_call_id"] as? String == "call_abc123")
+    }
+
+    @Test
+    func multipleToolCallsWithEmptyContentEncodes() throws {
+        let call1 = ToolCall(id: "call_1", name: "get_weather", arguments: "{\"city\":\"NYC\"}")
+        let call2 = ToolCall(id: "call_2", name: "get_time", arguments: "{\"tz\":\"EST\"}")
+        let assistantMsg = AssistantMessage(content: "", toolCalls: [call1, call2])
+        let client = OpenAIClient(apiKey: "test-key", model: "test/model", baseURL: OpenAIClient.openRouterBaseURL)
+        let messages: [ChatMessage] = [
+            .user("What's the weather and time in NYC?"),
+            .assistant(assistantMsg),
+            .tool(id: "call_1", name: "get_weather", content: "{\"temp\":72}"),
+            .tool(id: "call_2", name: "get_time", content: "{\"time\":\"3:00 PM\"}")
+        ]
+        let request = client.buildRequest(messages: messages, tools: [])
+
+        let encoder = JSONEncoder()
+        encoder.keyEncodingStrategy = .convertToSnakeCase
+        let data = try encoder.encode(request)
+        let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+
+        let jsonMessages = json?["messages"] as? [[String: Any]]
+        #expect(jsonMessages?.count == 4)
+
+        let assistantMsgJson = jsonMessages?[1]
+        #expect(assistantMsgJson?["content"] as? String == "")
+        let toolCalls = assistantMsgJson?["tool_calls"] as? [[String: Any]]
+        #expect(toolCalls?.count == 2)
+    }
+
+    @Test
     func toolResultMessageEncodes() throws {
         let client = OpenAIClient(apiKey: "test-key", model: "test/model", baseURL: OpenAIClient.openRouterBaseURL)
         let messages: [ChatMessage] = [
