@@ -9,12 +9,14 @@ extension OpenAIClient {
     func performStreamRequest(
         messages: [ChatMessage],
         tools: [ToolDefinition],
+        extraFields: [String: JSONValue],
+        onResponse: (@Sendable (HTTPURLResponse) -> Void)?,
         continuation: AsyncThrowingStream<StreamDelta, Error>.Continuation
     ) async throws {
-        let request = buildRequest(messages: messages, tools: tools, stream: true)
+        let request = buildRequest(messages: messages, tools: tools, stream: true, extraFields: extraFields)
         let urlRequest = try buildURLRequest(request)
 
-        try await performStreamWithRetry(urlRequest: urlRequest) { bytes in
+        try await performStreamWithRetry(urlRequest: urlRequest, onResponse: onResponse) { bytes in
             for try await line in bytes.lines {
                 try Task.checkCancellation()
                 guard let payload = Self.extractSSEPayload(from: line) else { continue }
@@ -33,6 +35,7 @@ extension OpenAIClient {
 
     func performWithRetry<T>(
         urlRequest: URLRequest,
+        onResponse: (@Sendable (HTTPURLResponse) -> Void)? = nil,
         onSuccess: (Data, HTTPURLResponse) throws -> T
     ) async throws -> T {
         var lastError: (any Error)?
@@ -59,6 +62,7 @@ extension OpenAIClient {
             }
 
             if (200 ... 299).contains(httpResponse.statusCode) {
+                onResponse?(httpResponse)
                 return try onSuccess(data, httpResponse)
             }
 
@@ -85,6 +89,7 @@ extension OpenAIClient {
     func performUploadWithRetry<T>(
         urlRequest: URLRequest,
         bodyFileURL: URL,
+        onResponse: (@Sendable (HTTPURLResponse) -> Void)? = nil,
         onSuccess: (Data, HTTPURLResponse) throws -> T
     ) async throws -> T {
         var lastError: (any Error)?
@@ -111,6 +116,7 @@ extension OpenAIClient {
             }
 
             if (200 ... 299).contains(httpResponse.statusCode) {
+                onResponse?(httpResponse)
                 return try onSuccess(data, httpResponse)
             }
 
@@ -136,6 +142,7 @@ extension OpenAIClient {
 
     func performStreamWithRetry(
         urlRequest: URLRequest,
+        onResponse: (@Sendable (HTTPURLResponse) -> Void)? = nil,
         onSuccess: (URLSession.AsyncBytes) async throws -> Void
     ) async throws {
         var lastError: (any Error)?
@@ -162,6 +169,7 @@ extension OpenAIClient {
             }
 
             if (200 ... 299).contains(httpResponse.statusCode) {
+                onResponse?(httpResponse)
                 try await onSuccess(bytes)
                 return
             }

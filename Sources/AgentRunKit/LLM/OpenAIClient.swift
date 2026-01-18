@@ -36,11 +36,25 @@ public struct OpenAIClient: LLMClient, Sendable {
     public func generate(
         messages: [ChatMessage],
         tools: [ToolDefinition],
-        responseFormat: ResponseFormat? = nil
+        responseFormat: ResponseFormat?
     ) async throws -> AssistantMessage {
-        let request = buildRequest(messages: messages, tools: tools, responseFormat: responseFormat)
+        try await generate(messages: messages, tools: tools, responseFormat: responseFormat, context: nil)
+    }
+
+    public func generate(
+        messages: [ChatMessage],
+        tools: [ToolDefinition],
+        responseFormat: ResponseFormat?,
+        context: RequestContext?
+    ) async throws -> AssistantMessage {
+        let request = buildRequest(
+            messages: messages,
+            tools: tools,
+            responseFormat: responseFormat,
+            extraFields: context?.extraFields ?? [:]
+        )
         let urlRequest = try buildURLRequest(request)
-        return try await performWithRetry(urlRequest: urlRequest) { data, _ in
+        return try await performWithRetry(urlRequest: urlRequest, onResponse: context?.onResponse) { data, _ in
             try parseResponse(data)
         }
     }
@@ -49,12 +63,22 @@ public struct OpenAIClient: LLMClient, Sendable {
         messages: [ChatMessage],
         tools: [ToolDefinition]
     ) -> AsyncThrowingStream<StreamDelta, Error> {
+        stream(messages: messages, tools: tools, context: nil)
+    }
+
+    public func stream(
+        messages: [ChatMessage],
+        tools: [ToolDefinition],
+        context: RequestContext?
+    ) -> AsyncThrowingStream<StreamDelta, Error> {
         AsyncThrowingStream { continuation in
             let task = Task {
                 do {
                     try await performStreamRequest(
                         messages: messages,
                         tools: tools,
+                        extraFields: context?.extraFields ?? [:],
+                        onResponse: context?.onResponse,
                         continuation: continuation
                     )
                 } catch {
@@ -109,7 +133,8 @@ extension OpenAIClient {
         messages: [ChatMessage],
         tools: [ToolDefinition],
         stream: Bool = false,
-        responseFormat: ResponseFormat? = nil
+        responseFormat: ResponseFormat? = nil,
+        extraFields: [String: JSONValue] = [:]
     ) -> ChatCompletionRequest {
         ChatCompletionRequest(
             model: modelIdentifier,
@@ -120,7 +145,8 @@ extension OpenAIClient {
             stream: stream ? true : nil,
             streamOptions: stream ? StreamOptions(includeUsage: true) : nil,
             responseFormat: responseFormat,
-            reasoningEffort: reasoningConfig?.effort.rawValue
+            reasoningEffort: reasoningConfig?.effort.rawValue,
+            extraFields: extraFields
         )
     }
 

@@ -1,5 +1,49 @@
 import Foundation
 
+public enum JSONValue: Sendable, Equatable, Encodable {
+    case string(String)
+    case int(Int)
+    case double(Double)
+    case bool(Bool)
+    case null
+    case array([JSONValue])
+    case object([String: JSONValue])
+
+    public func encode(to encoder: any Encoder) throws {
+        var container = encoder.singleValueContainer()
+        switch self {
+        case let .string(str): try container.encode(str)
+        case let .int(num): try container.encode(num)
+        case let .double(num): try container.encode(num)
+        case let .bool(flag): try container.encode(flag)
+        case .null: try container.encodeNil()
+        case let .array(arr): try container.encode(arr)
+        case let .object(obj): try container.encode(obj)
+        }
+    }
+}
+
+public struct RequestContext: Sendable {
+    public let extraFields: [String: JSONValue]
+    public let onResponse: (@Sendable (HTTPURLResponse) -> Void)?
+
+    public init(
+        extraFields: [String: JSONValue] = [:],
+        onResponse: (@Sendable (HTTPURLResponse) -> Void)? = nil
+    ) {
+        self.extraFields = extraFields
+        self.onResponse = onResponse
+    }
+}
+
+private struct DynamicCodingKey: CodingKey {
+    var stringValue: String
+    var intValue: Int? { nil }
+    init(_ key: String) { stringValue = key }
+    init?(stringValue: String) { self.stringValue = stringValue }
+    init?(intValue _: Int) { nil }
+}
+
 struct StreamOptions: Encodable, Sendable {
     let includeUsage: Bool
 
@@ -18,6 +62,7 @@ struct ChatCompletionRequest: Encodable, Sendable {
     let streamOptions: StreamOptions?
     let responseFormat: ResponseFormat?
     let reasoningEffort: String?
+    let extraFields: [String: JSONValue]
 
     enum CodingKeys: String, CodingKey {
         case model, messages, tools
@@ -27,6 +72,26 @@ struct ChatCompletionRequest: Encodable, Sendable {
         case streamOptions = "stream_options"
         case responseFormat = "response_format"
         case reasoningEffort = "reasoning_effort"
+    }
+
+    func encode(to encoder: any Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(model, forKey: .model)
+        try container.encode(messages, forKey: .messages)
+        try container.encodeIfPresent(tools, forKey: .tools)
+        try container.encodeIfPresent(toolChoice, forKey: .toolChoice)
+        try container.encode(maxTokens, forKey: .maxTokens)
+        try container.encodeIfPresent(stream, forKey: .stream)
+        try container.encodeIfPresent(streamOptions, forKey: .streamOptions)
+        try container.encodeIfPresent(responseFormat, forKey: .responseFormat)
+        try container.encodeIfPresent(reasoningEffort, forKey: .reasoningEffort)
+
+        if !extraFields.isEmpty {
+            var dynamicContainer = encoder.container(keyedBy: DynamicCodingKey.self)
+            for (key, value) in extraFields {
+                try dynamicContainer.encode(value, forKey: DynamicCodingKey(key))
+            }
+        }
     }
 }
 
