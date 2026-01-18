@@ -85,7 +85,7 @@ struct RequestMessage: Encodable, Sendable {
             reasoningContent = nil
         case let .assistant(msg):
             role = "assistant"
-            content = msg.content.isEmpty ? nil : .text(msg.content)
+            content = .text(msg.content)
             toolCalls = msg.toolCalls.isEmpty ? nil : msg.toolCalls.map(RequestToolCall.init)
             toolCallId = nil
             name = nil
