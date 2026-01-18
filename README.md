@@ -382,6 +382,37 @@ let client = OpenAIClient(
 )
 ```
 
+### Per-Request Customization
+
+Inject extra fields into the request body and access response headers via `RequestContext`:
+
+```swift
+var conversationId: String?
+
+let context = RequestContext(
+    extraFields: conversationId.map {
+        ["conversationId": .string($0), "conversationType": .string("coaching")]
+    } ?? [:],
+    onResponse: { response in
+        if let id = response.value(forHTTPHeaderField: "X-Conversation-Id") {
+            conversationId = id
+        }
+    }
+)
+
+let stream = client.stream(messages: messages, tools: [], context: context)
+```
+
+`extraFields` accepts any JSON structure via the type-safe `JSONValue` enum:
+
+```swift
+let context = RequestContext(extraFields: [
+    "temperature": .double(0.7),
+    "metadata": .object(["user_id": .string("123")]),
+    "stop": .array([.string("END"), .string("STOP")])
+])
+```
+
 ## LLM Providers
 
 AgentRunKit works with any OpenAI-compatible API:
@@ -614,6 +645,8 @@ public protocol LLMClient: Sendable {
 | `ResponseFormat` | Structured output configuration |
 | `RetryPolicy` | Exponential backoff settings |
 | `ReasoningConfig` | Reasoning effort configuration for thinking models |
+| `RequestContext` | Per-request extra fields and response callback |
+| `JSONValue` | Type-safe JSON value (string, int, double, bool, null, array, object) |
 
 ### Message Types
 
