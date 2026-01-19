@@ -17,7 +17,7 @@ extension OpenAIClient {
         let urlRequest = try buildURLRequest(request)
 
         try await performStreamWithRetry(urlRequest: urlRequest, onResponse: onResponse) { bytes in
-            for try await line in bytes.lines {
+            for try await line in UnboundedLines(source: bytes) {
                 try Task.checkCancellation()
                 guard let payload = Self.extractSSEPayload(from: line) else { continue }
                 if payload == "[DONE]" {
@@ -318,6 +318,42 @@ extension OpenAIClient {
             }
             group.cancelAll()
             return "(error body read timed out)"
+        }
+    }
+}
+
+struct UnboundedLines<Source: AsyncSequence>: AsyncSequence where Source.Element == UInt8 {
+    typealias Element = String
+    let source: Source
+
+    func makeAsyncIterator() -> AsyncIterator {
+        AsyncIterator(sourceIterator: source.makeAsyncIterator())
+    }
+
+    struct AsyncIterator: AsyncIteratorProtocol {
+        var sourceIterator: Source.AsyncIterator
+        var buffer = Data(capacity: 4096)
+
+        mutating func next() async throws -> String? {
+            while true {
+                guard let byte = try await sourceIterator.next() else {
+                    if buffer.isEmpty { return nil }
+                    return try decodeAndClear()
+                }
+                if byte == 0x0A {
+                    return try decodeAndClear()
+                }
+                buffer.append(byte)
+            }
+        }
+
+        private mutating func decodeAndClear() throws -> String {
+            defer { buffer.removeAll(keepingCapacity: true) }
+            if buffer.last == 0x0D { buffer.removeLast() }
+            guard let line = String(data: buffer, encoding: .utf8) else {
+                throw AgentError.llmError(.decodingFailed(description: "Invalid UTF-8 in SSE stream"))
+            }
+            return line
         }
     }
 }
