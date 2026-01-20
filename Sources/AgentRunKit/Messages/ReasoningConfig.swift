@@ -6,9 +6,13 @@ public struct ReasoningConfig: Sendable, Equatable {
     }
 
     public let effort: Effort
+    public let maxTokens: Int?
+    public let exclude: Bool?
 
-    public init(effort: Effort) {
+    public init(effort: Effort, maxTokens: Int? = nil, exclude: Bool? = nil) {
         self.effort = effort
+        self.maxTokens = maxTokens
+        self.exclude = exclude
     }
 
     public static let xhigh = ReasoningConfig(effort: .xhigh)

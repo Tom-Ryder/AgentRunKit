@@ -306,14 +306,22 @@ for try await delta in client.stream(messages: messages, tools: []) {
 
 ## Reasoning
 
-For models that support extended thinking, configure the reasoning effort level:
+For models that support extended thinking, configure reasoning behavior:
 
 ```swift
 let client = OpenAIClient(
     apiKey: apiKey,
     model: "your-model",
     baseURL: OpenAIClient.openRouterBaseURL,
-    reasoningConfig: .medium  // .high, .medium, .low
+    reasoningConfig: .high  // .xhigh, .high, .medium, .low, .minimal, .none
+)
+
+// Or with fine-grained control
+let client = OpenAIClient(
+    apiKey: apiKey,
+    model: "your-model",
+    baseURL: OpenAIClient.openRouterBaseURL,
+    reasoningConfig: ReasoningConfig(effort: .high, maxTokens: 16000, exclude: false)
 )
 ```
 

@@ -52,6 +52,31 @@ struct StreamOptions: Encodable, Sendable {
     }
 }
 
+struct RequestReasoning: Encodable, Sendable {
+    let effort: String
+    let maxTokens: Int?
+    let exclude: Bool?
+
+    enum CodingKeys: String, CodingKey {
+        case effort
+        case maxTokens = "max_tokens"
+        case exclude
+    }
+
+    func encode(to encoder: any Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(effort, forKey: .effort)
+        try container.encodeIfPresent(maxTokens, forKey: .maxTokens)
+        try container.encodeIfPresent(exclude, forKey: .exclude)
+    }
+
+    init(_ config: ReasoningConfig) {
+        effort = config.effort.rawValue
+        maxTokens = config.maxTokens
+        exclude = config.exclude
+    }
+}
+
 struct ChatCompletionRequest: Encodable, Sendable {
     let model: String
     let messages: [RequestMessage]
@@ -61,17 +86,16 @@ struct ChatCompletionRequest: Encodable, Sendable {
     let stream: Bool?
     let streamOptions: StreamOptions?
     let responseFormat: ResponseFormat?
-    let reasoningEffort: String?
+    let reasoning: RequestReasoning?
     let extraFields: [String: JSONValue]
 
     enum CodingKeys: String, CodingKey {
-        case model, messages, tools
+        case model, messages, tools, reasoning
         case toolChoice = "tool_choice"
         case maxTokens = "max_tokens"
         case stream
         case streamOptions = "stream_options"
         case responseFormat = "response_format"
-        case reasoningEffort = "reasoning_effort"
     }
 
     func encode(to encoder: any Encoder) throws {
@@ -84,7 +108,7 @@ struct ChatCompletionRequest: Encodable, Sendable {
         try container.encodeIfPresent(stream, forKey: .stream)
         try container.encodeIfPresent(streamOptions, forKey: .streamOptions)
         try container.encodeIfPresent(responseFormat, forKey: .responseFormat)
-        try container.encodeIfPresent(reasoningEffort, forKey: .reasoningEffort)
+        try container.encodeIfPresent(reasoning, forKey: .reasoning)
 
         if !extraFields.isEmpty {
             var dynamicContainer = encoder.container(keyedBy: DynamicCodingKey.self)

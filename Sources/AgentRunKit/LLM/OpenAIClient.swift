@@ -145,7 +145,7 @@ extension OpenAIClient {
             stream: stream ? true : nil,
             streamOptions: stream ? StreamOptions(includeUsage: true) : nil,
             responseFormat: responseFormat,
-            reasoningEffort: reasoningConfig?.effort.rawValue,
+            reasoning: reasoningConfig.map(RequestReasoning.init),
             extraFields: extraFields
         )
     }

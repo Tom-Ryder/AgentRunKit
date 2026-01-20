@@ -155,7 +155,7 @@ struct ChatCompletionRequestExtraFieldsTests {
     func requestWithExtraFieldsIncludesThem() throws {
         let client = OpenAIClient(
             apiKey: "test-key",
-            model: "test/model",
+            model: "openai/gpt-oss-120b",
             baseURL: OpenAIClient.openRouterBaseURL
         )
         let messages: [ChatMessage] = [.user("Hello")]
@@ -168,7 +168,7 @@ struct ChatCompletionRequestExtraFieldsTests {
         let data = try JSONEncoder().encode(request)
         let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
 
-        #expect(json?["model"] as? String == "test/model")
+        #expect(json?["model"] as? String == "openai/gpt-oss-120b")
         #expect(json?["temperature"] as? Double == 0.7)
         #expect(json?["top_p"] as? Double == 0.9)
     }
@@ -177,7 +177,7 @@ struct ChatCompletionRequestExtraFieldsTests {
     func requestWithEmptyExtraFieldsProducesNormalJSON() throws {
         let client = OpenAIClient(
             apiKey: "test-key",
-            model: "test/model",
+            model: "openai/gpt-oss-120b",
             baseURL: OpenAIClient.openRouterBaseURL
         )
         let messages: [ChatMessage] = [.user("Hello")]
@@ -186,7 +186,7 @@ struct ChatCompletionRequestExtraFieldsTests {
         let data = try JSONEncoder().encode(request)
         let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
 
-        #expect(json?["model"] as? String == "test/model")
+        #expect(json?["model"] as? String == "openai/gpt-oss-120b")
         #expect(json?["temperature"] == nil)
     }
 
@@ -194,7 +194,7 @@ struct ChatCompletionRequestExtraFieldsTests {
     func extraFieldsWithNestedStructures() throws {
         let client = OpenAIClient(
             apiKey: "test-key",
-            model: "test/model",
+            model: "openai/gpt-oss-120b",
             baseURL: OpenAIClient.openRouterBaseURL
         )
         let messages: [ChatMessage] = [.user("Hello")]
@@ -221,7 +221,7 @@ struct ChatCompletionRequestExtraFieldsTests {
     func extraFieldsWithAllValueTypes() throws {
         let client = OpenAIClient(
             apiKey: "test-key",
-            model: "test/model",
+            model: "openai/gpt-oss-120b",
             baseURL: OpenAIClient.openRouterBaseURL
         )
         let messages: [ChatMessage] = [.user("Hello")]
@@ -245,5 +245,130 @@ struct ChatCompletionRequestExtraFieldsTests {
         #expect(json?["double_field"] as? Double == 3.14)
         #expect(json?["bool_field"] as? Bool == true)
         #expect(json?["null_field"] is NSNull)
+    }
+}
+
+@Suite
+struct ReasoningConfigEncodingTests {
+    @Test
+    func reasoningEffortEncodesAsNestedObject() throws {
+        let client = OpenAIClient(
+            apiKey: "test-key",
+            model: "openai/gpt-oss-120b",
+            baseURL: OpenAIClient.openRouterBaseURL,
+            reasoningConfig: .high
+        )
+        let messages: [ChatMessage] = [.user("Hello")]
+        let request = client.buildRequest(messages: messages, tools: [])
+
+        let data = try JSONEncoder().encode(request)
+        let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+
+        let reasoning = json?["reasoning"] as? [String: Any]
+        #expect(reasoning?["effort"] as? String == "high")
+        #expect(reasoning?["max_tokens"] == nil)
+        #expect(reasoning?["exclude"] == nil)
+
+        #expect(json?["reasoning_effort"] == nil)
+    }
+
+    @Test
+    func withoutReasoningConfigOmitsReasoningField() throws {
+        let client = OpenAIClient(
+            apiKey: "test-key",
+            model: "openai/gpt-oss-120b",
+            baseURL: OpenAIClient.openRouterBaseURL
+        )
+        let messages: [ChatMessage] = [.user("Hello")]
+        let request = client.buildRequest(messages: messages, tools: [])
+
+        let data = try JSONEncoder().encode(request)
+        let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+
+        #expect(json?["reasoning_effort"] == nil)
+        #expect(json?["reasoning"] == nil)
+    }
+
+    @Test
+    func allEffortLevelsEncodeCorrectRawValue() throws {
+        let efforts: [(ReasoningConfig, String)] = [
+            (.xhigh, "xhigh"),
+            (.high, "high"),
+            (.medium, "medium"),
+            (.low, "low"),
+            (.minimal, "minimal")
+        ]
+
+        for (config, expected) in efforts {
+            let client = OpenAIClient(
+                apiKey: "test-key",
+                model: "openai/gpt-oss-120b",
+                baseURL: OpenAIClient.openRouterBaseURL,
+                reasoningConfig: config
+            )
+            let request = client.buildRequest(messages: [.user("Hi")], tools: [])
+            let data = try JSONEncoder().encode(request)
+            let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+
+            let reasoning = json?["reasoning"] as? [String: Any]
+            #expect(reasoning?["effort"] as? String == expected)
+        }
+    }
+
+    @Test
+    func reasoningWithMaxTokensEncodesNestedMaxTokens() throws {
+        let config = ReasoningConfig(effort: .high, maxTokens: 8192)
+        let client = OpenAIClient(
+            apiKey: "test-key",
+            model: "openai/gpt-oss-120b",
+            baseURL: OpenAIClient.openRouterBaseURL,
+            reasoningConfig: config
+        )
+        let request = client.buildRequest(messages: [.user("Hi")], tools: [])
+        let data = try JSONEncoder().encode(request)
+        let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+
+        let reasoning = json?["reasoning"] as? [String: Any]
+        #expect(reasoning?["effort"] as? String == "high")
+        #expect(reasoning?["max_tokens"] as? Int == 8192)
+        #expect(reasoning?["exclude"] == nil)
+    }
+
+    @Test
+    func reasoningWithExcludeEncodesNestedExclude() throws {
+        let config = ReasoningConfig(effort: .medium, exclude: true)
+        let client = OpenAIClient(
+            apiKey: "test-key",
+            model: "openai/gpt-oss-120b",
+            baseURL: OpenAIClient.openRouterBaseURL,
+            reasoningConfig: config
+        )
+        let request = client.buildRequest(messages: [.user("Hi")], tools: [])
+        let data = try JSONEncoder().encode(request)
+        let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+
+        let reasoning = json?["reasoning"] as? [String: Any]
+        #expect(reasoning?["effort"] as? String == "medium")
+        #expect(reasoning?["max_tokens"] == nil)
+        #expect(reasoning?["exclude"] as? Bool == true)
+    }
+
+    @Test
+    func reasoningWithAllFieldsEncodesCompletely() throws {
+        let config = ReasoningConfig(effort: .low, maxTokens: 4096, exclude: false)
+        let client = OpenAIClient(
+            apiKey: "test-key",
+            model: "openai/gpt-oss-120b",
+            baseURL: OpenAIClient.openRouterBaseURL,
+            reasoningConfig: config
+        )
+        let request = client.buildRequest(messages: [.user("Hi")], tools: [])
+        let data = try JSONEncoder().encode(request)
+        let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+
+        let reasoning = json?["reasoning"] as? [String: Any]
+        #expect(reasoning?["effort"] as? String == "low")
+        #expect(reasoning?["max_tokens"] as? Int == 4096)
+        #expect(reasoning?["exclude"] as? Bool == false)
     }
 }

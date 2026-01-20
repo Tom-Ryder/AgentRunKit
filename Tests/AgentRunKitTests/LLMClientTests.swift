@@ -508,11 +508,23 @@ struct ReasoningConfigTests {
     func initialization() {
         let config = ReasoningConfig(effort: .high)
         #expect(config.effort == .high)
+        #expect(config.maxTokens == nil)
+        #expect(config.exclude == nil)
+    }
+
+    @Test
+    func initializationWithAllFields() {
+        let config = ReasoningConfig(effort: .medium, maxTokens: 8192, exclude: true)
+        #expect(config.effort == .medium)
+        #expect(config.maxTokens == 8192)
+        #expect(config.exclude == true)
     }
 
     @Test
     func staticFactories() {
         #expect(ReasoningConfig.high.effort == .high)
+        #expect(ReasoningConfig.high.maxTokens == nil)
+        #expect(ReasoningConfig.high.exclude == nil)
         #expect(ReasoningConfig.medium.effort == .medium)
         #expect(ReasoningConfig.low.effort == .low)
     }
@@ -535,67 +547,23 @@ struct ReasoningConfigTests {
         #expect(config1 == config2)
         #expect(config1 != config3)
     }
-}
 
-@Suite
-struct ReasoningRequestEncodingTests {
     @Test
-    func requestIncludesReasoningEffort() throws {
-        let client = OpenAIClient(
-            apiKey: "test-key",
-            model: "test/model",
-            baseURL: OpenAIClient.openRouterBaseURL,
-            reasoningConfig: .high
-        )
-        let messages: [ChatMessage] = [.user("Hello")]
-        let request = client.buildRequest(messages: messages, tools: [])
-
-        let encoder = JSONEncoder()
-        encoder.keyEncodingStrategy = .convertToSnakeCase
-        let data = try encoder.encode(request)
-        let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
-
-        #expect(json?["reasoning_effort"] as? String == "high")
+    func equatabilityWithMaxTokens() {
+        let config1 = ReasoningConfig(effort: .high, maxTokens: 8192)
+        let config2 = ReasoningConfig(effort: .high, maxTokens: 8192)
+        let config3 = ReasoningConfig(effort: .high, maxTokens: 4096)
+        #expect(config1 == config2)
+        #expect(config1 != config3)
     }
 
     @Test
-    func requestOmitsReasoningEffortWhenNil() throws {
-        let client = OpenAIClient(
-            apiKey: "test-key",
-            model: "test/model",
-            baseURL: OpenAIClient.openRouterBaseURL
-        )
-        let messages: [ChatMessage] = [.user("Hello")]
-        let request = client.buildRequest(messages: messages, tools: [])
-
-        let encoder = JSONEncoder()
-        encoder.keyEncodingStrategy = .convertToSnakeCase
-        let data = try encoder.encode(request)
-        let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
-
-        #expect(json?["reasoning_effort"] == nil)
-    }
-
-    @Test
-    func requestEncodesAllEffortLevels() throws {
-        for effort in [ReasoningConfig.Effort.xhigh, .high, .medium, .low, .minimal, .none] {
-            let config = ReasoningConfig(effort: effort)
-            let client = OpenAIClient(
-                apiKey: "test-key",
-                model: "test/model",
-                baseURL: OpenAIClient.openRouterBaseURL,
-                reasoningConfig: config
-            )
-            let messages: [ChatMessage] = [.user("Hello")]
-            let request = client.buildRequest(messages: messages, tools: [])
-
-            let encoder = JSONEncoder()
-            encoder.keyEncodingStrategy = .convertToSnakeCase
-            let data = try encoder.encode(request)
-            let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
-
-            #expect(json?["reasoning_effort"] as? String == effort.rawValue)
-        }
+    func equatabilityWithExclude() {
+        let config1 = ReasoningConfig(effort: .high, exclude: true)
+        let config2 = ReasoningConfig(effort: .high, exclude: true)
+        let config3 = ReasoningConfig(effort: .high, exclude: false)
+        #expect(config1 == config2)
+        #expect(config1 != config3)
     }
 }
 
