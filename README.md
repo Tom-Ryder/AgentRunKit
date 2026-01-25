@@ -15,41 +15,38 @@
   A lightweight Swift 6 framework for building LLM-powered agents with type-safe tool calling.
 </p>
 
-- **Zero external dependencies** - Foundation only
-- **Modern Swift 6** - Full `Sendable` compliance, async/await, structured concurrency
-- **Type-safe tools** - Generic `Tool<P, O, C>` with automatic JSON schema generation
-- **Multi-provider** - OpenAI, OpenRouter, Groq, Together, Ollama (any OpenAI-compatible API)
-- **Streaming** - First-class `AsyncThrowingStream` support with progress events
-- **Production-ready** - Retry with backoff, timeout handling, proper error propagation
+<p align="center">
+  <b>Zero dependencies</b> · <b>Full Sendable</b> · <b>Async/await</b> · <b>Multi-provider</b> · <b>Production-ready</b>
+</p>
 
-## Features
+---
 
-- **Agent Loop** - Generate → execute tools → repeat until completion
-- **Type-Safe Tools** - Define tools with `Codable` parameters and automatic schema inference
-- **Multi-Provider Support** - OpenAI, OpenRouter, Groq, Together, Ollama
-- **Streaming** - Real-time token streaming with `StreamEvent` callbacks
-- **Multimodal** - Images, audio, video, and PDF (base64; images also support URLs)
-- **Structured Output** - JSON schema-constrained responses
-- **Retry with Backoff** - Automatic retry on transient failures and rate limits
-- **Cancellation** - Proper Swift concurrency cancellation support
-- **Timeout** - Configurable per-tool execution timeout
-- **Token Tracking** - Aggregated token usage across iterations with overflow protection
+## Table of Contents
 
-## Installation
+- [Quick Start](#quick-start)
+- [Installation](#installation)
+- [Core Concepts](#core-concepts)
+  - [When to Use What](#when-to-use-what)
+  - [Defining Tools](#defining-tools)
+  - [Tool Context](#tool-context)
+- [Guides](#guides)
+  - [Agent with Tools](#agent-with-tools)
+  - [Conversation History](#conversation-history)
+  - [Streaming](#streaming)
+  - [Reasoning Models](#reasoning-models)
+  - [Multimodal Input](#multimodal-input)
+  - [Structured Output](#structured-output)
+  - [Error Handling](#error-handling)
+- [Configuration](#configuration)
+  - [Agent Configuration](#agent-configuration)
+  - [Retry Policy](#retry-policy)
+  - [Per-Request Customization](#per-request-customization)
+- [LLM Providers](#llm-providers)
+  - [Proxy Mode](#proxy-mode)
+- [API Reference](#api-reference)
+- [Requirements](#requirements)
 
-Add AgentRunKit to your `Package.swift`:
-
-```swift
-dependencies: [
-    .package(url: "https://github.com/Tom-Ryder/AgentRunKit.git", from: "1.0.0")
-]
-```
-
-Then add it to your target:
-
-```swift
-.target(name: "YourApp", dependencies: ["AgentRunKit"])
-```
+---
 
 ## Quick Start
 
@@ -69,23 +66,43 @@ let result = try await agent.run(
 )
 
 print(result.content)
-print("Tokens used: \(result.totalTokenUsage.total)")
+print("Tokens: \(result.totalTokenUsage.total)")
 ```
 
-## When to Use What
+---
+
+## Installation
+
+Add to your `Package.swift`:
+
+```swift
+dependencies: [
+    .package(url: "https://github.com/Tom-Ryder/AgentRunKit.git", from: "1.0.0")
+]
+```
+
+```swift
+.target(name: "YourApp", dependencies: ["AgentRunKit"])
+```
+
+---
+
+## Core Concepts
+
+### When to Use What
 
 | Interface | Use Case |
 |-----------|----------|
-| `Agent` | Tool-calling workflows. Injects a `finish` tool and loops until the model calls it. |
-| `Chat` | Simple multi-turn conversations without the agent loop overhead. |
-| `client.stream()` | Raw streaming when you need direct control over deltas. |
+| `Agent` | Tool-calling workflows. Loops until the model calls `finish`. |
+| `Chat` | Multi-turn conversations without agent overhead. |
+| `client.stream()` | Raw streaming with direct control over deltas. |
 | `client.generate()` | Single request/response without streaming. |
 
-**Important:** `Agent` requires the model to call its `finish` tool to complete. If you're doing simple chat without tools, use `Chat` or the client directly to avoid `maxIterationsReached` errors.
+> **Note:** `Agent` requires the model to call its `finish` tool. For simple chat, use `Chat` to avoid `maxIterationsReached` errors.
 
-## Defining Tools
+### Defining Tools
 
-Tools are defined with strongly-typed parameters and outputs. The framework handles JSON encoding/decoding automatically.
+Tools use strongly-typed parameters with automatic JSON schema generation:
 
 ```swift
 struct WeatherParams: Codable, SchemaProviding, Sendable {
@@ -102,25 +119,13 @@ let weatherTool = Tool<WeatherParams, WeatherResult, EmptyContext>(
     name: "get_weather",
     description: "Get current weather for a city",
     executor: { params, _ in
-        // Your implementation here
         WeatherResult(temperature: 22.0, condition: "Sunny")
     }
 )
 ```
 
-### Automatic Schema Generation
-
-Types conforming to `Codable` and `SchemaProviding` get automatic JSON schema generation:
-
-```swift
-struct SearchParams: Codable, SchemaProviding, Sendable {
-    let query: String
-    let maxResults: Int?
-    // JSON schema is auto-generated from the Codable structure
-}
-```
-
-### Manual Schema Definition
+<details>
+<summary><b>Manual Schema Definition</b></summary>
 
 For more control, implement `jsonSchema` explicitly:
 
@@ -142,9 +147,38 @@ struct ComplexParams: Codable, SchemaProviding, Sendable {
 }
 ```
 
-## Agent with Tools
+</details>
 
-A complete agent that invokes tools and iterates until completion:
+### Tool Context
+
+Inject dependencies (database, user session, etc.) via a custom context:
+
+```swift
+struct AppContext: ToolContext {
+    let database: Database
+    let currentUserId: String
+}
+
+let userTool = Tool<UserParams, UserResult, AppContext>(
+    name: "get_user",
+    description: "Fetch user from database",
+    executor: { params, context in
+        let user = try await context.database.fetchUser(id: params.userId)
+        return UserResult(name: user.name, email: user.email)
+    }
+)
+
+let result = try await agent.run(
+    userMessage: "Get user 456",
+    context: AppContext(database: db, currentUserId: "user_123")
+)
+```
+
+---
+
+## Guides
+
+### Agent with Tools
 
 ```swift
 let config = AgentConfiguration(
@@ -166,21 +200,18 @@ let result = try await agent.run(
 
 print("Answer: \(result.content)")
 print("Iterations: \(result.iterations)")
-print("Finish reason: \(result.finishReason)")
 ```
 
-## Conversation History
+### Conversation History
 
-Pass conversation history for multi-turn interactions. Each `run()`, `send()`, or `stream()` returns the updated history.
+Each `run()`, `send()`, or `stream()` returns updated history for multi-turn:
 
 ```swift
-// First turn
 let result1 = try await agent.run(
     userMessage: "Remember the number 42.",
     context: EmptyContext()
 )
 
-// Second turn - pass history from previous result
 let result2 = try await agent.run(
     userMessage: "What number did I ask you to remember?",
     history: result1.history,
@@ -190,7 +221,8 @@ let result2 = try await agent.run(
 print(result2.content)  // "42"
 ```
 
-Works the same with `Chat`:
+<details>
+<summary><b>With Chat</b></summary>
 
 ```swift
 let chat = Chat<EmptyContext>(client: client)
@@ -201,100 +233,50 @@ let (response2, _) = try await chat.send("What's my name?", history: history1)
 print(response2.content)  // "Alice"
 ```
 
-And with streaming:
+</details>
 
-```swift
-var history: [ChatMessage] = []
-for try await event in agent.stream(
-    userMessage: "Continue our conversation",
-    history: history,
-    context: EmptyContext()
-) {
-    if case let .finished(_, _, _, newHistory) = event {
-        history = newHistory
-    }
-}
-```
+### Streaming
 
-## Tool Context
-
-Inject app-specific dependencies (database, user session, etc.) via a custom context:
-
-```swift
-struct AppContext: ToolContext {
-    let database: Database
-    let currentUserId: String
-}
-
-let userTool = Tool<UserParams, UserResult, AppContext>(
-    name: "get_user",
-    description: "Fetch user from database",
-    executor: { params, context in
-        let user = try await context.database.fetchUser(id: params.userId)
-        return UserResult(name: user.name, email: user.email)
-    }
-)
-
-let context = AppContext(database: db, currentUserId: "user_123")
-let result = try await agent.run(userMessage: "Get user 456", context: context)
-```
-
-## Streaming
-
-### Agent Streaming (StreamEvent)
-
-Use `agent.stream()` or `chat.stream()` for high-level streaming with tool execution:
+**Agent/Chat streaming** with `StreamEvent`:
 
 ```swift
 for try await event in agent.stream(userMessage: "Write a poem", context: EmptyContext()) {
     switch event {
     case .delta(let text):
         print(text, terminator: "")
-
     case .reasoningDelta(let text):
         print("[Thinking] \(text)", terminator: "")
-
-    case .toolCallStarted(let name, let id):
+    case .toolCallStarted(let name, _):
         print("\n[Executing \(name)...]")
-
-    case .toolCallCompleted(let id, let name, let result):
+    case .toolCallCompleted(_, let name, _):
         print("[Completed \(name)]")
-
-    case .finished(let tokenUsage, let content, let reason, let history):
-        print("\nDone. Tokens: \(tokenUsage.total)")
+    case .finished(let tokenUsage, _, _, _):
+        print("\nTokens: \(tokenUsage.total)")
     }
 }
 ```
 
-### Client Streaming (StreamDelta)
+<details>
+<summary><b>Raw Client Streaming</b></summary>
 
-Use `client.stream()` for raw streaming without agent overhead:
+Use `client.stream()` for lower-level control:
 
 ```swift
 for try await delta in client.stream(messages: messages, tools: []) {
     switch delta {
     case .content(let text):
         print(text, terminator: "")
-
     case .reasoning(let text):
         print("[Thinking] \(text)", terminator: "")
-
-    case .toolCallStart(let index, let id, let name):
+    case .toolCallStart(_, _, let name):
         print("\n[Tool: \(name)]")
-
-    case .toolCallDelta(let index, let arguments):
-        // Accumulate tool arguments
+    case .toolCallDelta(_, _):
         break
-
     case .finished(let usage):
-        if let usage {
-            print("\nTokens: \(usage.total)")
-        }
+        if let usage { print("\nTokens: \(usage.total)") }
     }
 }
 ```
-
-### StreamEvent vs StreamDelta
 
 | StreamEvent (Agent/Chat) | StreamDelta (Client) |
 |--------------------------|----------------------|
@@ -304,30 +286,22 @@ for try await delta in client.stream(messages: messages, tools: []) {
 | `.toolCallCompleted(id:name:result:)` | `.toolCallDelta(index:arguments:)` |
 | `.finished(tokenUsage:content:reason:history:)` | `.finished(usage:)` |
 
-## Reasoning
+</details>
 
-For models that support extended thinking, configure reasoning behavior:
+### Reasoning Models
+
+For models with extended thinking:
 
 ```swift
 let client = OpenAIClient(
     apiKey: apiKey,
-    model: "your-model",
+    model: "deepseek/deepseek-r1",
     baseURL: OpenAIClient.openRouterBaseURL,
     reasoningConfig: .high  // .xhigh, .high, .medium, .low, .minimal, .none
 )
-
-// Or with fine-grained control
-let client = OpenAIClient(
-    apiKey: apiKey,
-    model: "your-model",
-    baseURL: OpenAIClient.openRouterBaseURL,
-    reasoningConfig: ReasoningConfig(effort: .high, maxTokens: 16000, exclude: false)
-)
 ```
 
-### Non-Streaming
-
-Access reasoning content from responses:
+Access reasoning content:
 
 ```swift
 let response = try await client.generate(messages: messages, tools: [])
@@ -338,27 +312,121 @@ if let reasoning = response.reasoning {
 print("Answer: \(response.content)")
 ```
 
-### Streaming
-
-Receive reasoning deltas in real-time:
+<details>
+<summary><b>Fine-Grained Control</b></summary>
 
 ```swift
-for try await event in agent.stream(userMessage: "Solve this problem", context: EmptyContext()) {
-    switch event {
-    case .reasoningDelta(let text):
-        // Model's thinking process
-        print(text, terminator: "")
-    case .delta(let text):
-        // Final answer
-        print(text, terminator: "")
-    case .finished(_, _, _, let history):
-        // Reasoning is preserved in history for multi-turn
-        break
+let client = OpenAIClient(
+    apiKey: apiKey,
+    model: "your-model",
+    baseURL: OpenAIClient.openRouterBaseURL,
+    reasoningConfig: ReasoningConfig(effort: .high, maxTokens: 16000, exclude: false)
+)
+```
+
+</details>
+
+### Multimodal Input
+
+Images, audio, video, and PDFs:
+
+```swift
+// Image from URL
+let message = ChatMessage.user(
+    text: "Describe this image",
+    imageURL: "https://example.com/image.jpg"
+)
+
+// Image from data
+let message = ChatMessage.user(
+    text: "What's in this photo?",
+    imageData: imageData,
+    mimeType: "image/jpeg"
+)
+
+// Audio (speech to text)
+let message = ChatMessage.user(
+    text: "Transcribe this:",
+    audioData: audioData,
+    format: .wav
+)
+
+// PDF document
+let message = ChatMessage.user([
+    .text("Summarize:"),
+    .pdf(data: pdfData)
+])
+```
+
+<details>
+<summary><b>Direct Transcription</b></summary>
+
+```swift
+let transcript = try await client.transcribe(
+    audio: audioData,
+    format: .wav,
+    model: "whisper-1"
+)
+```
+
+</details>
+
+### Structured Output
+
+Request JSON schema-constrained responses:
+
+```swift
+struct WeatherReport: Codable, SchemaProviding, Sendable {
+    let temperature: Int
+    let conditions: String
+}
+
+// With client
+let response = try await client.generate(
+    messages: [.user("Weather in Paris?")],
+    tools: [],
+    responseFormat: .jsonSchema(WeatherReport.self)
+)
+let report = try JSONDecoder().decode(WeatherReport.self, from: Data(response.content.utf8))
+
+// With Chat (automatic decoding)
+let chat = Chat<EmptyContext>(client: client)
+let report: WeatherReport = try await chat.send("Weather in Paris?", returning: WeatherReport.self)
+```
+
+### Error Handling
+
+```swift
+do {
+    let result = try await agent.run(userMessage: "...", context: EmptyContext())
+} catch let error as AgentError {
+    switch error {
+    case .maxIterationsReached(let count):
+        print("Didn't finish in \(count) iterations")
+    case .toolTimeout(let tool):
+        print("Tool '\(tool)' timed out")
+    case .toolNotFound(let name):
+        print("Unknown tool: \(name)")
+    case .toolExecutionFailed(let tool, let message):
+        print("Tool '\(tool)' failed: \(message)")
+    case .llmError(let transport):
+        switch transport {
+        case .rateLimited(let retryAfter):
+            print("Rate limited. Retry: \(retryAfter?.description ?? "unknown")")
+        case .httpError(let status, let body):
+            print("HTTP \(status): \(body)")
+        default:
+            print("Transport: \(transport)")
+        }
     default:
-        break
+        print("Error: \(error)")
     }
 }
 ```
+
+> Tool errors are automatically fed back to the LLM for recovery via `AgentError.feedbackMessage`.
+
+---
 
 ## Configuration
 
@@ -366,14 +434,12 @@ for try await event in agent.stream(userMessage: "Solve this problem", context: 
 
 ```swift
 let config = AgentConfiguration(
-    maxIterations: 10,          // Maximum tool-calling rounds
-    maxMessages: 50,            // Truncate context to 50 messages
+    maxIterations: 10,          // Max tool-calling rounds
+    maxMessages: 50,            // Context truncation limit
     toolTimeout: .seconds(30),  // Per-tool timeout
     systemPrompt: "You are a helpful assistant."
 )
 ```
-
-Context truncation (`maxMessages`) removes the oldest messages when the conversation exceeds the limit. The system prompt is always preserved, and tool call/result pairs are kept together to maintain conversation coherence.
 
 ### Retry Policy
 
@@ -392,224 +458,151 @@ let client = OpenAIClient(
 
 ### Per-Request Customization
 
-Inject extra fields into the request body and access response headers via `RequestContext`:
+Inject extra fields and access response headers:
 
 ```swift
-var conversationId: String?
-
 let context = RequestContext(
-    extraFields: conversationId.map {
-        ["conversationId": .string($0), "conversationType": .string("coaching")]
-    } ?? [:],
+    extraFields: [
+        "temperature": .double(0.7),
+        "metadata": .object(["user_id": .string("123")])
+    ],
     onResponse: { response in
-        if let id = response.value(forHTTPHeaderField: "X-Conversation-Id") {
-            conversationId = id
-        }
+        print(response.value(forHTTPHeaderField: "X-Request-Id") ?? "")
     }
 )
 
 let stream = client.stream(messages: messages, tools: [], context: context)
 ```
 
-`extraFields` accepts any JSON structure via the type-safe `JSONValue` enum:
-
-```swift
-let context = RequestContext(extraFields: [
-    "temperature": .double(0.7),
-    "metadata": .object(["user_id": .string("123")]),
-    "stop": .array([.string("END"), .string("STOP")])
-])
-```
+---
 
 ## LLM Providers
 
-AgentRunKit works with any OpenAI-compatible API:
+Works with any OpenAI-compatible API:
 
-| Provider | Base URL | Notes |
-|----------|----------|-------|
-| OpenAI | `OpenAIClient.openAIBaseURL` | Direct OpenAI API |
-| OpenRouter | `OpenAIClient.openRouterBaseURL` | Multi-model gateway |
-| Groq | `OpenAIClient.groqBaseURL` | Fast inference |
-| Together | `OpenAIClient.togetherBaseURL` | Open models |
-| Ollama | `OpenAIClient.ollamaBaseURL` | Local models |
+| Provider | Base URL |
+|----------|----------|
+| OpenAI | `OpenAIClient.openAIBaseURL` |
+| OpenRouter | `OpenAIClient.openRouterBaseURL` |
+| Groq | `OpenAIClient.groqBaseURL` |
+| Together | `OpenAIClient.togetherBaseURL` |
+| Ollama | `OpenAIClient.ollamaBaseURL` |
 
 ```swift
-// OpenRouter (access to many models)
-let openRouter = OpenAIClient(
+// OpenRouter
+let client = OpenAIClient(
     apiKey: ProcessInfo.processInfo.environment["OPENROUTER_API_KEY"]!,
     model: "anthropic/claude-sonnet-4",
     baseURL: OpenAIClient.openRouterBaseURL
 )
 
 // Local Ollama
-let ollama = OpenAIClient(
+let client = OpenAIClient(
     apiKey: "ollama",
     model: "llama3.2",
     baseURL: OpenAIClient.ollamaBaseURL
-)
-
-// Custom endpoint
-let custom = OpenAIClient(
-    apiKey: "your-key",
-    model: "your-model",
-    baseURL: URL(string: "https://your-api.com/v1")!
 )
 ```
 
 ### Proxy Mode
 
-For backends that handle authentication and model selection server-side, use the `proxy()` factory:
+For backends that handle auth and model selection server-side:
 
 ```swift
-// Backend proxy handles API keys and model routing
 let client = OpenAIClient.proxy(
     baseURL: URL(string: "https://api.myapp.com/v1/ai")!,
     additionalHeaders: ["Authorization": "Bearer \(userToken)"]
 )
-
-// No apiKey or model needed - the proxy controls these
-let result = try await agent.run(userMessage: "Hello", context: EmptyContext())
 ```
 
-This is useful for iOS apps where:
-- The backend authenticates users and manages LLM API keys
-- The backend selects which model to use (A/B testing, upgrades without app updates)
-- The backend injects context or tracks usage
+Useful for iOS apps where:
+- Backend manages LLM API keys (security)
+- Backend selects models (A/B testing, upgrades without app updates)
+- Backend injects context or tracks usage
 
-The `proxy()` factory omits the `Authorization: Bearer` header and the `model` field from requests, letting your backend handle both.
-```
+The `proxy()` factory omits `Authorization: Bearer` and `model` from requests.
 
-## Multimodal Input
+---
 
-Send images, audio, video, and PDFs. For OpenRouter speech-to-text, use model `mistralai/voxtral-small-24b-2507`.
+## API Reference
 
-```swift
-// Image from URL
-let message = ChatMessage.user(
-    text: "Describe this image",
-    imageURL: "https://example.com/image.jpg"
-)
+<details>
+<summary><b>Core Types</b></summary>
 
-// Image from data
-let imageData = try Data(contentsOf: localImageURL)
-let message = ChatMessage.user(
-    text: "What's in this photo?",
-    imageData: imageData,
-    mimeType: "image/jpeg"
-)
+| Type | Description |
+|------|-------------|
+| `Agent<C>` | Main agent loop coordinator |
+| `AgentConfiguration` | Agent behavior settings |
+| `AgentResult` | Final result with content and token usage |
+| `Chat<C>` | Lightweight multi-turn chat interface |
+| `StreamEvent` | Streaming event types |
 
-// Multiple content parts
-let message = ChatMessage.user([
-    .text("Compare these images:"),
-    .image(url: "https://example.com/a.jpg"),
-    .image(url: "https://example.com/b.jpg")
-])
+</details>
 
-// Audio (speech to text)
-let audioData = try Data(contentsOf: audioURL)
-let message = ChatMessage.user(
-    text: "Transcribe this audio:",
-    audioData: audioData,
-    format: .wav
-)
+<details>
+<summary><b>Tool Types</b></summary>
 
-// PDF document
-let pdfData = try Data(contentsOf: pdfURL)
-let message = ChatMessage.user([
-    .text("Summarize this document:"),
-    .pdf(data: pdfData)
-])
-```
+| Type | Description |
+|------|-------------|
+| `Tool<P, O, C>` | Type-safe tool definition |
+| `AnyTool` | Type-erased tool protocol |
+| `ToolContext` | Protocol for dependency injection |
+| `EmptyContext` | Null context for stateless tools |
+| `ToolResult` | Tool execution result |
 
-Direct transcription via `/audio/transcriptions`:
+</details>
 
-```swift
-let transcript = try await client.transcribe(
-    audio: audioData,
-    format: .wav,
-    model: "whisper-1"
-)
+<details>
+<summary><b>Schema Types</b></summary>
 
-let transcript = try await client.transcribe(
-    audioFileURL: audioURL,
-    format: .wav,
-    model: "whisper-1"
-)
-```
+| Type | Description |
+|------|-------------|
+| `JSONSchema` | JSON Schema representation |
+| `SchemaProviding` | Protocol for automatic schema generation |
+| `SchemaDecoder` | Automatic schema inference from Decodable |
 
-## Structured Output
+</details>
 
-Request JSON schema-constrained responses:
+<details>
+<summary><b>LLM Types</b></summary>
 
-```swift
-struct WeatherReport: Codable, SchemaProviding, Sendable {
-    let temperature: Int
-    let conditions: String
-    let humidity: Int
-}
+| Type | Description |
+|------|-------------|
+| `LLMClient` | Protocol for LLM implementations |
+| `OpenAIClient` | OpenAI-compatible client |
+| `ResponseFormat` | Structured output configuration |
+| `RetryPolicy` | Exponential backoff settings |
+| `ReasoningConfig` | Reasoning effort for thinking models |
+| `RequestContext` | Per-request extra fields and callbacks |
+| `JSONValue` | Type-safe JSON value enum |
 
-let response = try await client.generate(
-    messages: [.user("What's the weather in Paris?")],
-    tools: [],
-    responseFormat: .jsonSchema(WeatherReport.self)
-)
+</details>
 
-let report = try JSONDecoder().decode(
-    WeatherReport.self,
-    from: Data(response.content.utf8)
-)
-```
+<details>
+<summary><b>Message Types</b></summary>
 
-Or use the `Chat` interface for automatic decoding:
+| Type | Description |
+|------|-------------|
+| `ChatMessage` | Conversation message enum |
+| `AssistantMessage` | LLM response with tool calls and reasoning |
+| `TokenUsage` | Token accounting (input, output, reasoning, total) |
+| `ContentPart` | Multimodal content element |
+| `ReasoningContent` | Reasoning/thinking content |
 
-```swift
-let chat = Chat<EmptyContext>(client: client)
-let report: WeatherReport = try await chat.send(
-    "What's the weather in Paris?",
-    returning: WeatherReport.self
-)
-```
+</details>
 
-## Error Handling
+<details>
+<summary><b>Error Types</b></summary>
 
-AgentRunKit provides typed errors for proper handling:
+| Type | Description |
+|------|-------------|
+| `AgentError` | Typed agent framework errors |
+| `TransportError` | HTTP and network errors |
 
-```swift
-do {
-    let result = try await agent.run(userMessage: "...", context: EmptyContext())
-} catch let error as AgentError {
-    switch error {
-    case .maxIterationsReached(let count):
-        print("Agent didn't finish in \(count) iterations")
+</details>
 
-    case .toolTimeout(let tool):
-        print("Tool '\(tool)' timed out")
-
-    case .toolNotFound(let name):
-        print("Unknown tool: \(name)")
-
-    case .toolExecutionFailed(let tool, let message):
-        print("Tool '\(tool)' failed: \(message)")
-
-    case .llmError(let transport):
-        switch transport {
-        case .rateLimited(let retryAfter):
-            print("Rate limited. Retry after: \(retryAfter?.description ?? "unknown")")
-        case .httpError(let status, let body):
-            print("HTTP \(status): \(body)")
-        default:
-            print("Transport error: \(transport)")
-        }
-
-    default:
-        print("Error: \(error.localizedDescription)")
-    }
-}
-```
-
-Tool execution errors are automatically fed back to the LLM for recovery. Each `AgentError` has a `feedbackMessage` property suitable for sending to the model.
-
-## Custom LLM Clients
+<details>
+<summary><b>Custom LLM Client</b></summary>
 
 Implement `LLMClient` for non-OpenAI-compatible providers:
 
@@ -628,73 +621,20 @@ public protocol LLMClient: Sendable {
 }
 ```
 
-## API Reference
+</details>
 
-### Core Types
-
-| Type | Description |
-|------|-------------|
-| `Agent<C>` | Main agent loop coordinator |
-| `AgentConfiguration` | Agent behavior settings |
-| `AgentResult` | Final result with content and token usage |
-| `Chat<C>` | Lightweight multi-turn chat interface |
-| `StreamEvent` | Streaming event types |
-
-### Tool Types
-
-| Type | Description |
-|------|-------------|
-| `Tool<P, O, C>` | Type-safe tool definition |
-| `AnyTool` | Type-erased tool protocol |
-| `ToolContext` | Protocol for dependency injection |
-| `EmptyContext` | Null context for stateless tools |
-| `ToolResult` | Tool execution result |
-
-### Schema Types
-
-| Type | Description |
-|------|-------------|
-| `JSONSchema` | JSON Schema representation |
-| `SchemaProviding` | Protocol for automatic schema generation |
-| `SchemaDecoder` | Automatic schema inference from Decodable |
-
-### LLM Types
-
-| Type | Description |
-|------|-------------|
-| `LLMClient` | Protocol for LLM implementations |
-| `OpenAIClient` | OpenAI-compatible client |
-| `ResponseFormat` | Structured output configuration |
-| `RetryPolicy` | Exponential backoff settings |
-| `ReasoningConfig` | Reasoning effort configuration for thinking models |
-| `RequestContext` | Per-request extra fields and response callback |
-| `JSONValue` | Type-safe JSON value (string, int, double, bool, null, array, object) |
-
-### Message Types
-
-| Type | Description |
-|------|-------------|
-| `ChatMessage` | Conversation message enum |
-| `AssistantMessage` | LLM response with tool calls and reasoning |
-| `TokenUsage` | Token accounting (`.input`, `.output`, `.reasoning`, `.total`) |
-| `ContentPart` | Multimodal content element |
-| `ReasoningContent` | Reasoning/thinking content from models |
-
-### Error Types
-
-| Type | Description |
-|------|-------------|
-| `AgentError` | Typed agent framework errors |
-| `TransportError` | HTTP and network errors |
+---
 
 ## Requirements
 
-| Platform | Minimum Version |
-|----------|-----------------|
+| Platform | Version |
+|----------|---------|
 | iOS | 18.0+ |
 | macOS | 15.0+ |
 | Swift | 6.0+ |
 | Xcode | 16+ |
+
+---
 
 ## License
 
