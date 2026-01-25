@@ -1,9 +1,9 @@
 import Foundation
 
 public struct OpenAIClient: LLMClient, Sendable {
-    public let modelIdentifier: String
+    public let modelIdentifier: String?
     public let maxTokens: Int
-    let apiKey: String
+    let apiKey: String?
     let baseURL: URL
     let chatCompletionPath: String
     let additionalHeaders: [String: String]
@@ -12,8 +12,8 @@ public struct OpenAIClient: LLMClient, Sendable {
     let reasoningConfig: ReasoningConfig?
 
     public init(
-        apiKey: String,
-        model: String,
+        apiKey: String? = nil,
+        model: String? = nil,
         maxTokens: Int = 16384,
         baseURL: URL,
         chatCompletionPath: String = "chat/completions",
@@ -95,12 +95,16 @@ public struct OpenAIClient: LLMClient, Sendable {
         model: String,
         options: TranscriptionOptions = TranscriptionOptions()
     ) async throws -> String {
+        guard let apiKey else {
+            throw AgentError.llmError(.other("Transcription requires an API key"))
+        }
         let request = buildTranscriptionURLRequest(
             audio: audio,
             format: format,
             model: model,
             options: options,
-            boundary: UUID().uuidString
+            boundary: UUID().uuidString,
+            apiKey: apiKey
         )
         return try await performWithRetry(urlRequest: request) { data, _ in
             try parseTranscriptionResponse(data)
@@ -113,13 +117,17 @@ public struct OpenAIClient: LLMClient, Sendable {
         model: String,
         options: TranscriptionOptions = TranscriptionOptions()
     ) async throws -> String {
+        guard let apiKey else {
+            throw AgentError.llmError(.other("Transcription requires an API key"))
+        }
         let boundary = UUID().uuidString
         let (request, bodyURL) = try buildTranscriptionURLRequest(
             audioFileURL: audioFileURL,
             format: format,
             model: model,
             options: options,
-            boundary: boundary
+            boundary: boundary,
+            apiKey: apiKey
         )
         defer { try? FileManager.default.removeItem(at: bodyURL) }
         return try await performUploadWithRetry(urlRequest: request, bodyFileURL: bodyURL) { data, _ in
@@ -155,7 +163,9 @@ extension OpenAIClient {
         var urlRequest = URLRequest(url: url)
         urlRequest.httpMethod = "POST"
         urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        urlRequest.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+        if let apiKey {
+            urlRequest.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+        }
         for (field, value) in additionalHeaders {
             urlRequest.setValue(value, forHTTPHeaderField: field)
         }
@@ -174,7 +184,8 @@ extension OpenAIClient {
         format: TranscriptionAudioFormat,
         model: String,
         options: TranscriptionOptions,
-        boundary: String
+        boundary: String,
+        apiKey: String
     ) -> URLRequest {
         var formData = MultipartFormData(boundary: boundary)
         formData.addField(name: "model", value: model)
@@ -211,7 +222,8 @@ extension OpenAIClient {
         format: TranscriptionAudioFormat,
         model: String,
         options: TranscriptionOptions,
-        boundary: String
+        boundary: String,
+        apiKey: String
     ) throws -> (URLRequest, URL) {
         var formData = MultipartFormData(boundary: boundary)
         formData.addField(name: "model", value: model)
@@ -318,4 +330,26 @@ public extension OpenAIClient {
     static let groqBaseURL = URL(string: "https://api.groq.com/openai/v1")!
     static let togetherBaseURL = URL(string: "https://api.together.xyz/v1")!
     static let ollamaBaseURL = URL(string: "http://localhost:11434/v1")!
+
+    static func proxy(
+        baseURL: URL,
+        maxTokens: Int = 16384,
+        chatCompletionPath: String = "chat/completions",
+        additionalHeaders: [String: String] = [:],
+        session: URLSession = .shared,
+        retryPolicy: RetryPolicy = .default,
+        reasoningConfig: ReasoningConfig? = nil
+    ) -> OpenAIClient {
+        OpenAIClient(
+            apiKey: nil,
+            model: nil,
+            maxTokens: maxTokens,
+            baseURL: baseURL,
+            chatCompletionPath: chatCompletionPath,
+            additionalHeaders: additionalHeaders,
+            session: session,
+            retryPolicy: retryPolicy,
+            reasoningConfig: reasoningConfig
+        )
+    }
 }

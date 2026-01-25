@@ -78,7 +78,7 @@ struct RequestReasoning: Encodable, Sendable {
 }
 
 struct ChatCompletionRequest: Encodable, Sendable {
-    let model: String
+    let model: String?
     let messages: [RequestMessage]
     let tools: [RequestTool]?
     let toolChoice: String?
@@ -100,7 +100,7 @@ struct ChatCompletionRequest: Encodable, Sendable {
 
     func encode(to encoder: any Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
-        try container.encode(model, forKey: .model)
+        try container.encodeIfPresent(model, forKey: .model)
         try container.encode(messages, forKey: .messages)
         try container.encodeIfPresent(tools, forKey: .tools)
         try container.encodeIfPresent(toolChoice, forKey: .toolChoice)

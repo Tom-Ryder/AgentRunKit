@@ -454,15 +454,29 @@ let custom = OpenAIClient(
     model: "your-model",
     baseURL: URL(string: "https://your-api.com/v1")!
 )
+```
 
-// Enterprise proxy with custom headers
-let proxy = OpenAIClient(
-    apiKey: "your-key",
-    model: "gpt-4o",
-    baseURL: URL(string: "https://proxy.internal.corp/v1")!,
-    chatCompletionPath: "llm/chat",
-    additionalHeaders: ["X-User-Id": "alice", "X-Team": "platform"]
+### Proxy Mode
+
+For backends that handle authentication and model selection server-side, use the `proxy()` factory:
+
+```swift
+// Backend proxy handles API keys and model routing
+let client = OpenAIClient.proxy(
+    baseURL: URL(string: "https://api.myapp.com/v1/ai")!,
+    additionalHeaders: ["Authorization": "Bearer \(userToken)"]
 )
+
+// No apiKey or model needed - the proxy controls these
+let result = try await agent.run(userMessage: "Hello", context: EmptyContext())
+```
+
+This is useful for iOS apps where:
+- The backend authenticates users and manages LLM API keys
+- The backend selects which model to use (A/B testing, upgrades without app updates)
+- The backend injects context or tracks usage
+
+The `proxy()` factory omits the `Authorization: Bearer` header and the `model` field from requests, letting your backend handle both.
 ```
 
 ## Multimodal Input

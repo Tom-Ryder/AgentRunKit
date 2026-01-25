@@ -415,7 +415,8 @@ struct OpenAIClientURLRequestTests {
             format: .wav,
             model: "whisper-1",
             options: TranscriptionOptions(language: "en", prompt: "Hello", temperature: 0.2),
-            boundary: "boundary"
+            boundary: "boundary",
+            apiKey: "test-key"
         )
 
         #expect(urlRequest.url?.absoluteString == "https://api.openai.com/v1/audio/transcriptions")
@@ -458,7 +459,8 @@ struct OpenAIClientURLRequestTests {
             format: .wav,
             model: "whisper-1",
             options: TranscriptionOptions(),
-            boundary: "boundary"
+            boundary: "boundary",
+            apiKey: "test-key"
         )
 
         guard let body = urlRequest.httpBody else {
@@ -489,7 +491,8 @@ struct OpenAIClientURLRequestTests {
             format: .wav,
             model: "whisper-1",
             options: TranscriptionOptions(),
-            boundary: "boundary"
+            boundary: "boundary",
+            apiKey: "test-key"
         )
         defer { try? FileManager.default.removeItem(at: bodyURL) }
 
@@ -638,5 +641,73 @@ struct ReasoningMultiTurnTests {
         #expect(msg?["reasoning_content"] as? String == "I need to check the weather...")
         let jsonToolCalls = msg?["tool_calls"] as? [[String: Any]]
         #expect(jsonToolCalls?.count == 1)
+    }
+}
+
+@Suite
+struct ProxyModeTests {
+    @Test
+    func proxyFactoryCreatesClientWithoutApiKeyOrModel() {
+        let client = OpenAIClient.proxy(baseURL: URL(string: "http://localhost:8080")!)
+        #expect(client.modelIdentifier == nil)
+        #expect(client.maxTokens == 16384)
+    }
+
+    @Test
+    func proxyRequestOmitsAuthorizationHeader() throws {
+        let client = OpenAIClient.proxy(baseURL: URL(string: "http://localhost:8080")!)
+        let messages: [ChatMessage] = [.user("Hello")]
+        let request = client.buildRequest(messages: messages, tools: [])
+        let urlRequest = try client.buildURLRequest(request)
+
+        #expect(urlRequest.value(forHTTPHeaderField: "Authorization") == nil)
+        #expect(urlRequest.value(forHTTPHeaderField: "Content-Type") == "application/json")
+    }
+
+    @Test
+    func proxyRequestOmitsModelFromBody() throws {
+        let client = OpenAIClient.proxy(baseURL: URL(string: "http://localhost:8080")!)
+        let messages: [ChatMessage] = [.user("Hello")]
+        let request = client.buildRequest(messages: messages, tools: [])
+
+        let encoder = JSONEncoder()
+        let data = try encoder.encode(request)
+        let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+
+        #expect(json?["model"] == nil)
+        #expect(json?["messages"] != nil)
+    }
+
+    @Test
+    func proxyWithAdditionalHeaders() throws {
+        let client = OpenAIClient.proxy(
+            baseURL: URL(string: "http://localhost:8080")!,
+            additionalHeaders: ["X-Custom-Header": "custom-value"]
+        )
+        let messages: [ChatMessage] = [.user("Hello")]
+        let request = client.buildRequest(messages: messages, tools: [])
+        let urlRequest = try client.buildURLRequest(request)
+
+        #expect(urlRequest.value(forHTTPHeaderField: "X-Custom-Header") == "custom-value")
+        #expect(urlRequest.value(forHTTPHeaderField: "Authorization") == nil)
+    }
+
+    @Test
+    func clientWithApiKeyIncludesAuthorizationHeader() throws {
+        let client = OpenAIClient(apiKey: "test-key", baseURL: URL(string: "http://localhost:8080")!)
+        let messages: [ChatMessage] = [.user("Hello")]
+        let request = client.buildRequest(messages: messages, tools: [])
+        let urlRequest = try client.buildURLRequest(request)
+
+        #expect(urlRequest.value(forHTTPHeaderField: "Authorization") == "Bearer test-key")
+    }
+
+    @Test
+    func transcribeThrowsWhenApiKeyNil() async throws {
+        let client = OpenAIClient.proxy(baseURL: URL(string: "http://localhost:8080")!)
+
+        await #expect(throws: AgentError.self) {
+            _ = try await client.transcribe(audio: Data(), format: .wav, model: "whisper-1")
+        }
     }
 }
