@@ -300,7 +300,7 @@ struct CompletionTokensDetails: Decodable, Sendable {
 }
 
 struct StreamingChunk: Decodable, Sendable {
-    let choices: [StreamingChoice]
+    let choices: [StreamingChoice]?
     let usage: ResponseUsage?
 }
 

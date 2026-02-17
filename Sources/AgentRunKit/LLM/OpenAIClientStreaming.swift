@@ -264,7 +264,7 @@ extension OpenAIClient {
 
     func extractDeltas(from chunk: StreamingChunk) -> [StreamDelta] {
         var deltas: [StreamDelta] = []
-        for choice in chunk.choices {
+        for choice in chunk.choices ?? [] {
             if let reasoning = choice.delta.reasoning ?? choice.delta.reasoningContent, !reasoning.isEmpty {
                 deltas.append(.reasoning(reasoning))
             }

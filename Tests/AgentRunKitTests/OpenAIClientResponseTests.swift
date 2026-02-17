@@ -407,6 +407,25 @@ struct StreamingChunkParsingTests {
         #expect(deltas[0] == .reasoning("Thinking..."))
         #expect(deltas[1] == .content("Response"))
     }
+
+    @Test
+    func streamingChunkWithoutChoicesDecodesCleanly() throws {
+        let json = """
+        {
+            "usage": {
+                "prompt_tokens": 100,
+                "completion_tokens": 50
+            }
+        }
+        """
+        let client = OpenAIClient(apiKey: "test", model: "test", baseURL: OpenAIClient.openRouterBaseURL)
+        let chunk = try client.parseStreamingChunk(Data(json.utf8))
+        let deltas = client.extractDeltas(from: chunk)
+
+        #expect(deltas.isEmpty)
+        #expect(chunk.usage?.promptTokens == 100)
+        #expect(chunk.usage?.completionTokens == 50)
+    }
 }
 
 @Suite
