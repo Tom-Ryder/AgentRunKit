@@ -36,6 +36,7 @@
   - [Reasoning Models](#reasoning-models)
   - [Multimodal Input](#multimodal-input)
   - [Structured Output](#structured-output)
+  - [Sub-Agents](#sub-agents)
   - [Error Handling](#error-handling)
 - [Configuration](#configuration)
   - [Agent Configuration](#agent-configuration)
@@ -394,6 +395,58 @@ let chat = Chat<EmptyContext>(client: client)
 let report: WeatherReport = try await chat.send("Weather in Paris?", returning: WeatherReport.self)
 ```
 
+### Sub-Agents
+
+Agents can spawn child agents as tools, with automatic depth limiting and token budget enforcement:
+
+```swift
+struct ResearchParams: Codable, SchemaProviding, Sendable {
+    let query: String
+    static var jsonSchema: JSONSchema {
+        .object(properties: ["query": .string()], required: ["query"])
+    }
+}
+
+let researchAgent = Agent<SubAgentContext<AppContext>>(
+    client: client,
+    tools: [webSearchTool, summarizeTool]
+)
+
+let researchTool = try SubAgentTool<ResearchParams, AppContext>(
+    name: "research",
+    description: "Research a topic using web search",
+    agent: researchAgent,
+    tokenBudget: 5000,
+    messageBuilder: { $0.query }
+)
+
+let orchestrator = Agent<SubAgentContext<AppContext>>(
+    client: client,
+    tools: [researchTool, writeTool]
+)
+
+let ctx = SubAgentContext(inner: AppContext(), maxDepth: 3)
+let result = try await orchestrator.run(userMessage: "Write a report on Swift concurrency", context: ctx)
+```
+
+`SubAgentContext` wraps your existing context with depth tracking. Each sub-agent call increments depth automatically — if `currentDepth` reaches `maxDepth`, the call throws `AgentError.maxDepthExceeded`. Token budgets are enforced per sub-agent run, preventing any single child from consuming unbounded tokens.
+
+<details>
+<summary><b>Factory Function</b></summary>
+
+For better type inference at call sites, use the free function:
+
+```swift
+let tool: any AnyTool<SubAgentContext<AppContext>> = try subAgentTool(
+    name: "research",
+    description: "Research a topic",
+    agent: researchAgent,
+    messageBuilder: { (params: ResearchParams) in params.query }
+)
+```
+
+</details>
+
 ### Error Handling
 
 ```swift
@@ -409,6 +462,10 @@ do {
         print("Unknown tool: \(name)")
     case .toolExecutionFailed(let tool, let message):
         print("Tool '\(tool)' failed: \(message)")
+    case .maxDepthExceeded(let depth):
+        print("Sub-agent nesting too deep at level \(depth)")
+    case .tokenBudgetExceeded(let budget, let used):
+        print("Token budget \(budget) exceeded (used \(used))")
     case .llmError(let transport):
         switch transport {
         case .rateLimited(let retryAfter):
@@ -549,6 +606,8 @@ The `proxy()` factory omits `Authorization: Bearer` and `model` from requests.
 | `ToolContext` | Protocol for dependency injection |
 | `EmptyContext` | Null context for stateless tools |
 | `ToolResult` | Tool execution result |
+| `SubAgentTool<P, C>` | Tool that delegates to a child agent |
+| `SubAgentContext<C>` | Context wrapper with depth tracking |
 
 </details>
 
