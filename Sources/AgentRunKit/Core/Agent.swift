@@ -42,16 +42,19 @@ public final class Agent<C: ToolContext>: Sendable {
     public func run(
         userMessage: String,
         history: [ChatMessage] = [],
-        context: C
+        context: C,
+        tokenBudget: Int? = nil
     ) async throws -> AgentResult {
-        try await run(userMessage: .user(userMessage), history: history, context: context)
+        try await run(userMessage: .user(userMessage), history: history, context: context, tokenBudget: tokenBudget)
     }
 
     public func run(
         userMessage: ChatMessage,
         history: [ChatMessage] = [],
-        context: C
+        context: C,
+        tokenBudget: Int? = nil
     ) async throws -> AgentResult {
+        if let tokenBudget { precondition(tokenBudget >= 1, "tokenBudget must be at least 1") }
         var messages = buildInitialMessages(userMessage: userMessage, history: history)
 
         var totalUsage = TokenUsage()
@@ -71,6 +74,10 @@ public final class Agent<C: ToolContext>: Sendable {
                     iterations: iteration,
                     history: messages
                 )
+            }
+
+            if let tokenBudget, totalUsage.total > tokenBudget {
+                throw AgentError.tokenBudgetExceeded(budget: tokenBudget, used: totalUsage.total)
             }
 
             if !response.toolCalls.isEmpty {

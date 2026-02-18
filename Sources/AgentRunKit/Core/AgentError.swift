@@ -32,6 +32,8 @@ public enum AgentError: Error, Sendable, Equatable, LocalizedError {
     case llmError(TransportError)
     case malformedStream(MalformedStreamReason)
     case schemaInferenceFailed(type: String, message: String)
+    case maxDepthExceeded(depth: Int)
+    case tokenBudgetExceeded(budget: Int, used: Int)
 
     public var errorDescription: String? {
         switch self {
@@ -57,6 +59,10 @@ public enum AgentError: Error, Sendable, Equatable, LocalizedError {
             "Malformed stream: \(reason)"
         case let .schemaInferenceFailed(type, message):
             "Schema inference failed for '\(type)': \(message)"
+        case let .maxDepthExceeded(depth):
+            "Sub-agent max depth exceeded (current depth: \(depth))"
+        case let .tokenBudgetExceeded(budget, used):
+            "Token budget exceeded (budget: \(budget), used: \(used))"
         }
     }
 
@@ -73,6 +79,8 @@ public enum AgentError: Error, Sendable, Equatable, LocalizedError {
         case let .llmError(transportError): "Error: LLM request failed: \(transportError)"
         case let .malformedStream(reason): "Error: Malformed stream: \(reason)"
         case let .schemaInferenceFailed(type, message): "Error: Schema inference failed for '\(type)': \(message)"
+        case let .maxDepthExceeded(depth): "Error: Sub-agent max depth exceeded (current depth: \(depth))."
+        case let .tokenBudgetExceeded(budget, used): "Error: Token budget exceeded (budget: \(budget), used: \(used))."
         }
     }
 }

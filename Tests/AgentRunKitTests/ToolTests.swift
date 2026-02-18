@@ -120,6 +120,26 @@ struct ToolTests {
     }
 
     @Test
+    func agentErrorPassesThroughUnwrapped() async throws {
+        let tool = try Tool<TestParams, TestOutput, EmptyContext>(
+            name: "inner",
+            description: "Throws AgentError",
+            executor: { _, _ in throw AgentError.toolTimeout(tool: "inner") }
+        )
+        let args = try JSONEncoder().encode(TestParams(value: 1))
+        do {
+            _ = try await tool.execute(arguments: args, context: EmptyContext())
+            Issue.record("Expected error")
+        } catch let error as AgentError {
+            guard case let .toolTimeout(toolName) = error else {
+                Issue.record("Expected toolTimeout, got \(error)")
+                return
+            }
+            #expect(toolName == "inner")
+        }
+    }
+
+    @Test
     func encodingFailureWrapped() async throws {
         let tool = try Tool<TestParams, UnencodableOutput, EmptyContext>(
             name: "bad_encoder",

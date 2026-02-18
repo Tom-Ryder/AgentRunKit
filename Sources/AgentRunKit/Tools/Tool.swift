@@ -32,6 +32,8 @@ public struct Tool<P: Codable & SchemaProviding & Sendable, O: Codable & Sendabl
             output = try await executor(params, context)
         } catch is CancellationError {
             throw CancellationError()
+        } catch let error as AgentError {
+            throw error
         } catch {
             throw AgentError.toolExecutionFailed(tool: name, message: String(describing: error))
         }

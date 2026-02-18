@@ -243,6 +243,107 @@ struct AgentTests {
     }
 }
 
+@Suite
+struct AgentTokenBudgetTests {
+    @Test
+    func budgetExceededOnNonFinishIteration() async throws {
+        let noopTool = try Tool<NoopParams, NoopOutput, EmptyContext>(
+            name: "noop",
+            description: "No-op",
+            executor: { _, _ in NoopOutput() }
+        )
+        let toolCall = ToolCall(id: "call_1", name: "noop", arguments: "{}")
+        let finishCall = ToolCall(id: "call_2", name: "finish", arguments: #"{"content": "done"}"#)
+        let client = MockLLMClient(responses: [
+            AssistantMessage(content: "", toolCalls: [toolCall], tokenUsage: TokenUsage(input: 40, output: 40)),
+            AssistantMessage(content: "", toolCalls: [finishCall])
+        ])
+        let agent = Agent<EmptyContext>(client: client, tools: [noopTool])
+
+        do {
+            _ = try await agent.run(userMessage: "Go", context: EmptyContext(), tokenBudget: 50)
+            Issue.record("Expected tokenBudgetExceeded")
+        } catch let error as AgentError {
+            guard case let .tokenBudgetExceeded(budget, used) = error else {
+                Issue.record("Expected tokenBudgetExceeded, got \(error)")
+                return
+            }
+            #expect(budget == 50)
+            #expect(used == 80)
+        }
+    }
+
+    @Test
+    func budgetNilNoEnforcement() async throws {
+        let finishCall = ToolCall(
+            id: "call_1",
+            name: "finish",
+            arguments: #"{"content": "done"}"#
+        )
+        let client = MockLLMClient(responses: [
+            AssistantMessage(content: "", toolCalls: [finishCall], tokenUsage: TokenUsage(input: 10000, output: 10000))
+        ])
+        let agent = Agent<EmptyContext>(client: client, tools: [])
+
+        let result = try await agent.run(userMessage: "Go", context: EmptyContext())
+        #expect(result.content == "done")
+    }
+
+    @Test
+    func budgetWithinLimitSucceeds() async throws {
+        let noopTool = try Tool<NoopParams, NoopOutput, EmptyContext>(
+            name: "noop",
+            description: "No-op",
+            executor: { _, _ in NoopOutput() }
+        )
+        let toolCall = ToolCall(id: "call_1", name: "noop", arguments: "{}")
+        let finishCall = ToolCall(id: "call_2", name: "finish", arguments: #"{"content": "done"}"#)
+        let client = MockLLMClient(responses: [
+            AssistantMessage(content: "", toolCalls: [toolCall], tokenUsage: TokenUsage(input: 20, output: 20)),
+            AssistantMessage(content: "", toolCalls: [finishCall], tokenUsage: TokenUsage(input: 20, output: 20))
+        ])
+        let agent = Agent<EmptyContext>(client: client, tools: [noopTool])
+
+        let result = try await agent.run(userMessage: "Go", context: EmptyContext(), tokenBudget: 100)
+        #expect(result.content == "done")
+    }
+
+    @Test
+    func budgetExactlyEqualToUsageSucceeds() async throws {
+        let noopTool = try Tool<NoopParams, NoopOutput, EmptyContext>(
+            name: "noop",
+            description: "No-op",
+            executor: { _, _ in NoopOutput() }
+        )
+        let toolCall = ToolCall(id: "call_1", name: "noop", arguments: "{}")
+        let finishCall = ToolCall(id: "call_2", name: "finish", arguments: #"{"content": "done"}"#)
+        let client = MockLLMClient(responses: [
+            AssistantMessage(content: "", toolCalls: [toolCall], tokenUsage: TokenUsage(input: 25, output: 25)),
+            AssistantMessage(content: "", toolCalls: [finishCall], tokenUsage: TokenUsage(input: 25, output: 25))
+        ])
+        let agent = Agent<EmptyContext>(client: client, tools: [noopTool])
+
+        let result = try await agent.run(userMessage: "Go", context: EmptyContext(), tokenBudget: 100)
+        #expect(result.content == "done")
+    }
+
+    @Test
+    func finishReturnedEvenWhenOverBudget() async throws {
+        let finishCall = ToolCall(
+            id: "call_1",
+            name: "finish",
+            arguments: #"{"content": "completed"}"#
+        )
+        let client = MockLLMClient(responses: [
+            AssistantMessage(content: "", toolCalls: [finishCall], tokenUsage: TokenUsage(input: 100, output: 100))
+        ])
+        let agent = Agent<EmptyContext>(client: client, tools: [])
+
+        let result = try await agent.run(userMessage: "Go", context: EmptyContext(), tokenBudget: 50)
+        #expect(result.content == "completed")
+    }
+}
+
 private struct EchoParams: Codable, SchemaProviding, Sendable {
     let message: String
     static var jsonSchema: JSONSchema { .object(properties: ["message": .string()], required: ["message"]) }
