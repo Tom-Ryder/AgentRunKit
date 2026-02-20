@@ -150,10 +150,12 @@ public final class Agent<C: ToolContext>: Sendable {
             )
 
             let reasoning = iteration.reasoning.isEmpty ? nil : ReasoningContent(content: iteration.reasoning)
+            let details = iteration.reasoningDetails.isEmpty ? nil : iteration.reasoningDetails
             messages.append(.assistant(AssistantMessage(
                 content: iteration.content,
                 toolCalls: iteration.toolCalls,
-                reasoning: reasoning
+                reasoning: reasoning,
+                reasoningDetails: details
             )))
 
             let executableTools = policy.executableToolCalls(from: iteration.toolCalls)

@@ -150,6 +150,32 @@ struct CodableRoundTripTests {
         #expect(decoded.reasoning?.content == "Thought process")
         #expect(decoded.reasoning?.signature == "sig")
     }
+
+    @Test
+    func assistantMessageWithReasoningDetailsRoundTrip() throws {
+        let details: [JSONValue] = [
+            .object([
+                "type": .string("reasoning.encrypted"),
+                "encrypted": .string("blob=="),
+                "index": .int(0)
+            ]),
+            .object([
+                "type": .string("reasoning.summary"),
+                "summary": .string("Thinking..."),
+                "index": .int(1)
+            ])
+        ]
+        let original = AssistantMessage(
+            content: "Result",
+            toolCalls: [],
+            tokenUsage: TokenUsage(input: 10, output: 5),
+            reasoningDetails: details
+        )
+        let data = try JSONEncoder().encode(original)
+        let decoded = try JSONDecoder().decode(AssistantMessage.self, from: data)
+        #expect(decoded == original)
+        #expect(decoded.reasoningDetails?.count == 2)
+    }
 }
 
 @Suite

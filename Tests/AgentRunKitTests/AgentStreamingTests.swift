@@ -313,7 +313,10 @@ struct AgentStreamingTests {
         }
         #expect(prompt == "You are helpful.")
     }
+}
 
+@Suite
+struct StreamingReasoningTests {
     @Test
     func reasoningDeltasEmittedAsReasoningDeltaEvents() async throws {
         let deltas: [StreamDelta] = [
@@ -395,6 +398,89 @@ struct AgentStreamingTests {
         }.first
 
         #expect(assistantMessage?.reasoning?.content == "Thinking step 1. Thinking step 2.")
+    }
+
+    @Test
+    func reasoningDetailsAccumulatedInHistory() async throws {
+        let details: [JSONValue] = [
+            .object(["type": .string("reasoning.encrypted"), "encrypted": .string("blob==")])
+        ]
+        let deltas: [StreamDelta] = [
+            .reasoningDetails(details),
+            .content("I'll search"),
+            .toolCallStart(index: 0, id: "call_1", name: "finish"),
+            .toolCallDelta(index: 0, arguments: #"{"content": "Done"}"#),
+            .finished(usage: nil)
+        ]
+        let client = StreamingMockLLMClient(streamSequences: [deltas])
+        let agent = Agent<EmptyContext>(client: client, tools: [])
+
+        var finalHistory: [ChatMessage] = []
+        for try await event in agent.stream(userMessage: "Hi", context: EmptyContext()) {
+            if case let .finished(_, _, _, history) = event {
+                finalHistory = history
+            }
+        }
+
+        let assistantMessage = finalHistory.compactMap { msg -> AssistantMessage? in
+            if case let .assistant(assistant) = msg { return assistant }
+            return nil
+        }.first
+
+        #expect(assistantMessage?.reasoningDetails?.count == 1)
+        guard case let .object(obj) = assistantMessage?.reasoningDetails?.first else {
+            Issue.record("Expected object in reasoning_details")
+            return
+        }
+        #expect(obj["type"] == .string("reasoning.encrypted"))
+        #expect(obj["encrypted"] == .string("blob=="))
+    }
+
+    @Test
+    func reasoningDetailsEchoedBackInSubsequentRequest() async throws {
+        let details: [JSONValue] = [
+            .object(["type": .string("reasoning.encrypted"), "data": .string("abc123")])
+        ]
+        let echoTool = try Tool<EchoParams, EchoOutput, EmptyContext>(
+            name: "echo",
+            description: "Echoes",
+            executor: { params, _ in EchoOutput(echoed: params.message) }
+        )
+
+        let firstDeltas: [StreamDelta] = [
+            .reasoningDetails(details),
+            .content("Let me search"),
+            .toolCallStart(index: 0, id: "call_1", name: "echo"),
+            .toolCallDelta(index: 0, arguments: #"{"message": "test"}"#),
+            .finished(usage: nil)
+        ]
+        let secondDeltas: [StreamDelta] = [
+            .toolCallStart(index: 0, id: "call_2", name: "finish"),
+            .toolCallDelta(index: 0, arguments: #"{"content": "Done"}"#),
+            .finished(usage: nil)
+        ]
+
+        let client = CapturingStreamingMockLLMClient(streamSequences: [firstDeltas, secondDeltas])
+        let agent = Agent<EmptyContext>(client: client, tools: [echoTool])
+
+        for try await _ in agent.stream(userMessage: "Hi", context: EmptyContext()) {}
+
+        let allCalls = await client.allCapturedMessages
+        #expect(allCalls.count == 2)
+        let secondCallMessages = allCalls[1]
+
+        let assistantInHistory = secondCallMessages.compactMap { msg -> AssistantMessage? in
+            if case let .assistant(assistant) = msg { return assistant }
+            return nil
+        }.first
+
+        #expect(assistantInHistory?.reasoningDetails?.count == 1)
+        guard case let .object(obj) = assistantInHistory?.reasoningDetails?.first else {
+            Issue.record("Expected reasoning_details echoed back")
+            return
+        }
+        #expect(obj["type"] == .string("reasoning.encrypted"))
+        #expect(obj["data"] == .string("abc123"))
     }
 }
 

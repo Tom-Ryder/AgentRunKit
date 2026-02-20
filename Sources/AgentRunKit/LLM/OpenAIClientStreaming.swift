@@ -24,7 +24,11 @@ extension OpenAIClient {
                     continuation.finish()
                     return
                 }
-                let chunk = try parseStreamingChunk(Data(payload.utf8))
+                let chunkData = Data(payload.utf8)
+                let chunk = try parseStreamingChunk(chunkData)
+                if let details = try JSONValue.extractReasoningDetails(from: chunkData) {
+                    continuation.yield(.reasoningDetails(details))
+                }
                 for delta in extractDeltas(from: chunk) {
                     continuation.yield(delta)
                 }

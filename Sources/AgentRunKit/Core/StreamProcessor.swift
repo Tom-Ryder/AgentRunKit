@@ -49,6 +49,7 @@ struct StreamIteration: Sendable {
     let content: String
     let toolCalls: [ToolCall]
     let reasoning: String
+    let reasoningDetails: [JSONValue]
 }
 
 struct StreamProcessor: Sendable {
@@ -63,6 +64,7 @@ struct StreamProcessor: Sendable {
     ) async throws -> StreamIteration {
         var contentBuffer = ""
         var reasoningBuffer = ""
+        var reasoningDetailsBuffer: [JSONValue] = []
         var accumulators: [Int: ToolCallAccumulator] = [:]
         var pendingArguments: [Int: String] = [:]
 
@@ -76,6 +78,9 @@ struct StreamProcessor: Sendable {
             case let .reasoning(text):
                 reasoningBuffer += text
                 continuation.yield(.reasoningDelta(text))
+
+            case let .reasoningDetails(details):
+                reasoningDetailsBuffer.append(contentsOf: details)
 
             case let .toolCallStart(index, id, name):
                 var accumulator = ToolCallAccumulator(id: id, name: name)
@@ -106,6 +111,11 @@ struct StreamProcessor: Sendable {
         let toolCalls = accumulators.keys.sorted().compactMap { index in
             accumulators[index]?.toToolCall()
         }
-        return StreamIteration(content: contentBuffer, toolCalls: toolCalls, reasoning: reasoningBuffer)
+        return StreamIteration(
+            content: contentBuffer,
+            toolCalls: toolCalls,
+            reasoning: reasoningBuffer,
+            reasoningDetails: reasoningDetailsBuffer
+        )
     }
 }

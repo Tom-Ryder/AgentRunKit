@@ -596,6 +596,89 @@ struct ReasoningMultiTurnTests {
     }
 
     @Test
+    func assistantMessageWithReasoningDetailsEncodes() throws {
+        let details: [JSONValue] = [
+            .object([
+                "type": .string("reasoning.encrypted"),
+                "encrypted": .string("base64blob=="),
+                "id": .string("re_001")
+            ])
+        ]
+        let assistantMsg = AssistantMessage(content: "Result", reasoningDetails: details)
+        let client = OpenAIClient(
+            apiKey: "test-key",
+            model: "test/model",
+            baseURL: OpenAIClient.openRouterBaseURL
+        )
+        let messages: [ChatMessage] = [.assistant(assistantMsg)]
+        let request = client.buildRequest(messages: messages, tools: [])
+
+        let encoder = JSONEncoder()
+        let data = try encoder.encode(request)
+        let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+
+        let jsonMessages = json?["messages"] as? [[String: Any]]
+        let msg = jsonMessages?[0]
+        let encodedDetails = msg?["reasoning_details"] as? [[String: Any]]
+        #expect(encodedDetails?.count == 1)
+        #expect(encodedDetails?[0]["type"] as? String == "reasoning.encrypted")
+        #expect(encodedDetails?[0]["encrypted"] as? String == "base64blob==")
+        #expect(encodedDetails?[0]["id"] as? String == "re_001")
+    }
+
+    @Test
+    func assistantMessageWithoutReasoningDetailsOmitsField() throws {
+        let assistantMsg = AssistantMessage(content: "Simple")
+        let client = OpenAIClient(
+            apiKey: "test-key",
+            model: "test/model",
+            baseURL: OpenAIClient.openRouterBaseURL
+        )
+        let messages: [ChatMessage] = [.assistant(assistantMsg)]
+        let request = client.buildRequest(messages: messages, tools: [])
+
+        let encoder = JSONEncoder()
+        let data = try encoder.encode(request)
+        let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+
+        let jsonMessages = json?["messages"] as? [[String: Any]]
+        let msg = jsonMessages?[0]
+        #expect(msg?["reasoning_details"] == nil)
+    }
+
+    @Test
+    func reasoningDetailsRoundTripPreservesSnakeCaseKeys() throws {
+        let details: [JSONValue] = [
+            .object([
+                "type": .string("reasoning.text"),
+                "reasoning_type": .string("chain_of_thought"),
+                "inner_data": .object(["nested_key": .string("value")])
+            ])
+        ]
+        let assistantMsg = AssistantMessage(content: "Result", reasoningDetails: details)
+        let client = OpenAIClient(
+            apiKey: "test-key",
+            model: "test/model",
+            baseURL: OpenAIClient.openRouterBaseURL
+        )
+        let messages: [ChatMessage] = [.assistant(assistantMsg)]
+        let request = client.buildRequest(messages: messages, tools: [])
+
+        let encoder = JSONEncoder()
+        let data = try encoder.encode(request)
+        let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+
+        let jsonMessages = json?["messages"] as? [[String: Any]]
+        let msg = jsonMessages?[0]
+        let encodedDetails = msg?["reasoning_details"] as? [[String: Any]]
+        let obj = encodedDetails?[0]
+        #expect(obj?["reasoning_type"] as? String == "chain_of_thought")
+        let inner = obj?["inner_data"] as? [String: Any]
+        #expect(inner?["nested_key"] as? String == "value")
+        #expect(obj?["reasoningType"] == nil, "snake_case keys must survive the round-trip unchanged")
+    }
+
+    @Test
     func assistantMessageWithoutReasoningOmitsField() throws {
         let assistantMsg = AssistantMessage(content: "The answer is 42")
         let client = OpenAIClient(

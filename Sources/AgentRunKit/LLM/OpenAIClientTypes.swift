@@ -1,6 +1,6 @@
 import Foundation
 
-public enum JSONValue: Sendable, Equatable, Encodable {
+public enum JSONValue: Sendable, Equatable, Codable {
     case string(String)
     case int(Int)
     case double(Double)
@@ -21,6 +21,62 @@ public enum JSONValue: Sendable, Equatable, Encodable {
         case let .object(obj): try container.encode(obj)
         }
     }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        if container.decodeNil() {
+            self = .null
+        } else if let value = try? container.decode(Bool.self) {
+            self = .bool(value)
+        } else if let value = try? container.decode(Int.self) {
+            self = .int(value)
+        } else if let value = try? container.decode(Double.self) {
+            self = .double(value)
+        } else if let value = try? container.decode(String.self) {
+            self = .string(value)
+        } else if let value = try? container.decode([JSONValue].self) {
+            self = .array(value)
+        } else if let value = try? container.decode([String: JSONValue].self) {
+            self = .object(value)
+        } else {
+            throw DecodingError.dataCorruptedError(in: container, debugDescription: "Cannot decode JSONValue")
+        }
+    }
+
+    static func fromJSONObject(_ value: Any) throws -> JSONValue {
+        switch value {
+        case let string as String:
+            return .string(string)
+        case let number as NSNumber:
+            if CFGetTypeID(number) == CFBooleanGetTypeID() {
+                return .bool(number.boolValue)
+            }
+            if let intValue = Int(exactly: number) {
+                return .int(intValue)
+            }
+            return .double(number.doubleValue)
+        case let array as [Any]:
+            return try .array(array.map { try fromJSONObject($0) })
+        case let dict as [String: Any]:
+            return try .object(dict.mapValues { try fromJSONObject($0) })
+        case is NSNull:
+            return .null
+        default:
+            throw AgentError.llmError(.decodingFailed(description: "Unsupported JSON type: \(type(of: value))"))
+        }
+    }
+
+    static func extractReasoningDetails(from data: Data) throws -> [JSONValue]? {
+        let root = try JSONSerialization.jsonObject(with: data)
+        guard let dict = root as? [String: Any],
+              let choices = dict["choices"] as? [[String: Any]],
+              let first = choices.first
+        else { return nil }
+        let message = first["message"] as? [String: Any] ?? first["delta"] as? [String: Any]
+        guard let details = message?["reasoning_details"] as? [Any] else { return nil }
+        let result = try details.map { try fromJSONObject($0) }
+        return result.isEmpty ? nil : result
+    }
 }
 
 public struct RequestContext: Sendable {
@@ -36,7 +92,7 @@ public struct RequestContext: Sendable {
     }
 }
 
-private struct DynamicCodingKey: CodingKey {
+struct DynamicCodingKey: CodingKey {
     var stringValue: String
     var intValue: Int? { nil }
     init(_ key: String) { stringValue = key }
@@ -126,12 +182,14 @@ struct RequestMessage: Encodable, Sendable {
     let toolCallId: String?
     let name: String?
     let reasoningContent: String?
+    let reasoningDetails: [JSONValue]?
 
     enum CodingKeys: String, CodingKey {
         case role, content, name
         case toolCalls = "tool_calls"
         case toolCallId = "tool_call_id"
         case reasoningContent = "reasoning_content"
+        case reasoningDetails = "reasoning_details"
     }
 
     enum MessageContent: Encodable, Sendable {
@@ -158,6 +216,7 @@ struct RequestMessage: Encodable, Sendable {
             toolCallId = nil
             name = nil
             reasoningContent = nil
+            reasoningDetails = nil
         case let .user(text):
             role = "user"
             content = .text(text)
@@ -165,6 +224,7 @@ struct RequestMessage: Encodable, Sendable {
             toolCallId = nil
             name = nil
             reasoningContent = nil
+            reasoningDetails = nil
         case let .userMultimodal(parts):
             role = "user"
             content = .multimodal(parts)
@@ -172,6 +232,7 @@ struct RequestMessage: Encodable, Sendable {
             toolCallId = nil
             name = nil
             reasoningContent = nil
+            reasoningDetails = nil
         case let .assistant(msg):
             role = "assistant"
             content = .text(msg.content)
@@ -179,6 +240,7 @@ struct RequestMessage: Encodable, Sendable {
             toolCallId = nil
             name = nil
             reasoningContent = msg.reasoning?.content
+            reasoningDetails = msg.reasoningDetails
         case let .tool(id, toolName, resultContent):
             role = "tool"
             content = .text(resultContent)
@@ -186,6 +248,7 @@ struct RequestMessage: Encodable, Sendable {
             toolCallId = id
             name = toolName
             reasoningContent = nil
+            reasoningDetails = nil
         }
     }
 }

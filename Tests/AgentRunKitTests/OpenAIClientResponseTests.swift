@@ -605,3 +605,96 @@ struct ResponseValidationTests {
         }
     }
 }
+
+@Suite
+struct ReasoningDetailsResponseTests {
+    @Test
+    func responseWithReasoningDetailsDecodes() throws {
+        let json = """
+        {
+            "choices": [{
+                "message": {
+                    "role": "assistant",
+                    "content": "I'll search for that.",
+                    "reasoning_details": [
+                        {"type": "reasoning.summary", "summary": "Planning search...", "id": "rs_001", "format": "anthropic-claude-v1", "index": 0},
+                        {"type": "reasoning.encrypted", "encrypted": "base64blob==", "id": "re_002", "format": "anthropic-claude-v1", "index": 1}
+                    ]
+                },
+                "finish_reason": "stop"
+            }],
+            "usage": {"prompt_tokens": 50, "completion_tokens": 30}
+        }
+        """
+        let client = OpenAIClient(apiKey: "test", model: "test", baseURL: OpenAIClient.openRouterBaseURL)
+        let msg = try client.parseResponse(Data(json.utf8))
+
+        #expect(msg.content == "I'll search for that.")
+        #expect(msg.reasoningDetails != nil)
+        #expect(msg.reasoningDetails?.count == 2)
+
+        guard case let .object(first) = msg.reasoningDetails?[0] else {
+            Issue.record("Expected object")
+            return
+        }
+        #expect(first["type"] == .string("reasoning.summary"))
+        #expect(first["summary"] == .string("Planning search..."))
+
+        guard case let .object(second) = msg.reasoningDetails?[1] else {
+            Issue.record("Expected object")
+            return
+        }
+        #expect(second["type"] == .string("reasoning.encrypted"))
+        #expect(second["encrypted"] == .string("base64blob=="))
+    }
+
+    @Test
+    func responseWithoutReasoningDetailsHasNilField() throws {
+        let json = """
+        {
+            "choices": [{
+                "message": {
+                    "role": "assistant",
+                    "content": "Simple response"
+                },
+                "finish_reason": "stop"
+            }],
+            "usage": {"prompt_tokens": 50, "completion_tokens": 20}
+        }
+        """
+        let client = OpenAIClient(apiKey: "test", model: "test", baseURL: OpenAIClient.openRouterBaseURL)
+        let msg = try client.parseResponse(Data(json.utf8))
+        #expect(msg.reasoningDetails == nil)
+    }
+
+    @Test
+    func reasoningDetailsPreservesSnakeCaseKeys() throws {
+        let json = """
+        {
+            "choices": [{
+                "message": {
+                    "role": "assistant",
+                    "content": "Result",
+                    "reasoning_details": [
+                        {"type": "reasoning.text", "reasoning_type": "chain_of_thought", "inner_data": {"nested_key": "value"}}
+                    ]
+                },
+                "finish_reason": "stop"
+            }],
+            "usage": {"prompt_tokens": 10, "completion_tokens": 5}
+        }
+        """
+        let client = OpenAIClient(apiKey: "test", model: "test", baseURL: OpenAIClient.openRouterBaseURL)
+        let msg = try client.parseResponse(Data(json.utf8))
+
+        guard let details = msg.reasoningDetails, let first = details.first,
+              case let .object(obj) = first
+        else {
+            Issue.record("Expected reasoning_details with object")
+            return
+        }
+        #expect(obj["reasoning_type"] == .string("chain_of_thought"))
+        #expect(obj["inner_data"] == .object(["nested_key": .string("value")]))
+        #expect(obj["reasoningType"] == nil, "snake_case keys must NOT be mangled to camelCase")
+    }
+}

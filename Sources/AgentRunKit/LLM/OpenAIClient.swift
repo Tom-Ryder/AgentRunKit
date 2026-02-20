@@ -304,11 +304,14 @@ extension OpenAIClient {
         let reasoning = (choice.message.reasoning ?? choice.message.reasoningContent)
             .flatMap { $0.isEmpty ? nil : ReasoningContent(content: $0) }
 
+        let reasoningDetails = try JSONValue.extractReasoningDetails(from: data)
+
         return AssistantMessage(
             content: choice.message.content ?? "",
             toolCalls: toolCalls,
             tokenUsage: tokenUsage,
-            reasoning: reasoning
+            reasoning: reasoning,
+            reasoningDetails: reasoningDetails
         )
     }
 
