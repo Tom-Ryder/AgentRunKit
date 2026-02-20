@@ -437,6 +437,64 @@ struct StreamingReasoningTests {
     }
 
     @Test
+    func reasoningTextFragmentsConsolidatedInHistory() async throws {
+        let deltas: [StreamDelta] = [
+            .reasoningDetails([.object([
+                "type": .string("reasoning.text"),
+                "text": .string(""),
+                "signature": .string(""),
+                "format": .string("anthropic-claude-v1"),
+                "index": .int(0),
+            ])]),
+            .reasoningDetails([.object([
+                "type": .string("reasoning.text"),
+                "text": .string("Hello"),
+                "format": .string("anthropic-claude-v1"),
+                "index": .int(0),
+            ])]),
+            .reasoningDetails([.object([
+                "type": .string("reasoning.text"),
+                "text": .string(" world"),
+                "format": .string("anthropic-claude-v1"),
+                "index": .int(0),
+            ])]),
+            .reasoningDetails([.object([
+                "type": .string("reasoning.text"),
+                "signature": .string("real_sig"),
+                "format": .string("anthropic-claude-v1"),
+                "index": .int(0),
+            ])]),
+            .content("Answer"),
+            .toolCallStart(index: 0, id: "call_1", name: "finish"),
+            .toolCallDelta(index: 0, arguments: #"{"content": "Done"}"#),
+            .finished(usage: nil),
+        ]
+        let client = StreamingMockLLMClient(streamSequences: [deltas])
+        let agent = Agent<EmptyContext>(client: client, tools: [])
+
+        var finalHistory: [ChatMessage] = []
+        for try await event in agent.stream(userMessage: "Hi", context: EmptyContext()) {
+            if case let .finished(_, _, _, history) = event {
+                finalHistory = history
+            }
+        }
+
+        let assistantMessage = finalHistory.compactMap { msg -> AssistantMessage? in
+            if case let .assistant(assistant) = msg { return assistant }
+            return nil
+        }.first
+
+        #expect(assistantMessage?.reasoningDetails?.count == 1)
+        guard case let .object(obj) = assistantMessage?.reasoningDetails?.first else {
+            Issue.record("Expected consolidated reasoning_details object")
+            return
+        }
+        #expect(obj["text"] == .string("Hello world"))
+        #expect(obj["signature"] == .string("real_sig"))
+        #expect(obj["format"] == .string("anthropic-claude-v1"))
+    }
+
+    @Test
     func reasoningDetailsEchoedBackInSubsequentRequest() async throws {
         let details: [JSONValue] = [
             .object(["type": .string("reasoning.encrypted"), "data": .string("abc123")])
