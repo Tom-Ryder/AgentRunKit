@@ -327,6 +327,32 @@ let client = OpenAIClient(
 
 </details>
 
+<details>
+<summary><b>Interleaved Thinking</b></summary>
+
+Models like Claude and DeepSeek return opaque `reasoning_details` blocks alongside their responses. These must be echoed back verbatim on subsequent requests to maintain thinking continuity across tool-calling turns.
+
+AgentRunKit handles this automatically — `reasoning_details` are extracted from each response, stored on `AssistantMessage`, and included in the next request. No configuration needed.
+
+```swift
+// reasoning_details are preserved across tool-calling turns automatically
+let result = try await agent.run(
+    userMessage: "Analyze this data and search for related papers",
+    context: EmptyContext()
+)
+
+// Access reasoning details if needed
+for message in result.history {
+    if case .assistant(let msg) = message, let details = msg.reasoningDetails {
+        print("Reasoning blocks: \(details.count)")
+    }
+}
+```
+
+Keys inside `reasoning_details` are preserved verbatim (not mangled by `camelCase` conversion), ensuring the opaque contract with the provider is maintained.
+
+</details>
+
 ### Multimodal Input
 
 Images, audio, video, and PDFs:
