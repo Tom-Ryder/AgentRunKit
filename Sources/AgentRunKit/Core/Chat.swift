@@ -31,25 +31,33 @@ public struct Chat<C: ToolContext>: Sendable {
 
     public func send(
         _ message: String,
-        history: [ChatMessage] = []
+        history: [ChatMessage] = [],
+        requestContext: RequestContext? = nil
     ) async throws -> (response: AssistantMessage, history: [ChatMessage]) {
-        try await send(.user(message), history: history)
+        try await send(.user(message), history: history, requestContext: requestContext)
     }
 
     public func send(
         _ parts: [ContentPart],
-        history: [ChatMessage] = []
+        history: [ChatMessage] = [],
+        requestContext: RequestContext? = nil
     ) async throws -> (response: AssistantMessage, history: [ChatMessage]) {
-        try await send(.user(parts), history: history)
+        try await send(.user(parts), history: history, requestContext: requestContext)
     }
 
     public func send(
         _ message: ChatMessage,
-        history: [ChatMessage] = []
+        history: [ChatMessage] = [],
+        requestContext: RequestContext? = nil
     ) async throws -> (response: AssistantMessage, history: [ChatMessage]) {
         var messages = buildMessages(userMessage: message, history: history)
         let truncatedMessages = truncateIfNeeded(messages)
-        let response = try await client.generate(messages: truncatedMessages, tools: toolDefinitions)
+        let response = try await client.generate(
+            messages: truncatedMessages,
+            tools: toolDefinitions,
+            responseFormat: nil,
+            requestContext: requestContext
+        )
         messages.append(.assistant(response))
         return (response, messages)
     }
@@ -57,7 +65,8 @@ public struct Chat<C: ToolContext>: Sendable {
     public func send<T: Decodable & SchemaProviding>(
         _ message: String,
         history: [ChatMessage] = [],
-        returning _: T.Type
+        returning _: T.Type,
+        requestContext: RequestContext? = nil
     ) async throws -> (result: T, history: [ChatMessage]) {
         try T.validateSchema()
         var messages = buildMessages(userMessage: .user(message), history: history)
@@ -65,7 +74,8 @@ public struct Chat<C: ToolContext>: Sendable {
         let response = try await client.generate(
             messages: truncatedMessages,
             tools: [],
-            responseFormat: .jsonSchema(T.self)
+            responseFormat: .jsonSchema(T.self),
+            requestContext: requestContext
         )
         messages.append(.assistant(response))
         let result: T = try decodeStructuredOutput(response.content)
@@ -75,7 +85,8 @@ public struct Chat<C: ToolContext>: Sendable {
     public func send<T: Decodable & SchemaProviding>(
         _ parts: [ContentPart],
         history: [ChatMessage] = [],
-        returning _: T.Type
+        returning _: T.Type,
+        requestContext: RequestContext? = nil
     ) async throws -> (result: T, history: [ChatMessage]) {
         try T.validateSchema()
         var messages = buildMessages(userMessage: .user(parts), history: history)
@@ -83,7 +94,8 @@ public struct Chat<C: ToolContext>: Sendable {
         let response = try await client.generate(
             messages: truncatedMessages,
             tools: [],
-            responseFormat: .jsonSchema(T.self)
+            responseFormat: .jsonSchema(T.self),
+            requestContext: requestContext
         )
         messages.append(.assistant(response))
         let result: T = try decodeStructuredOutput(response.content)
@@ -101,23 +113,26 @@ public struct Chat<C: ToolContext>: Sendable {
     public func stream(
         _ message: String,
         history: [ChatMessage] = [],
-        context: C
+        context: C,
+        requestContext: RequestContext? = nil
     ) -> AsyncThrowingStream<StreamEvent, Error> {
-        stream(userMessage: .user(message), history: history, context: context)
+        stream(userMessage: .user(message), history: history, context: context, requestContext: requestContext)
     }
 
     public func stream(
         _ parts: [ContentPart],
         history: [ChatMessage] = [],
-        context: C
+        context: C,
+        requestContext: RequestContext? = nil
     ) -> AsyncThrowingStream<StreamEvent, Error> {
-        stream(userMessage: .user(parts), history: history, context: context)
+        stream(userMessage: .user(parts), history: history, context: context, requestContext: requestContext)
     }
 
     private func stream(
         userMessage: ChatMessage,
         history: [ChatMessage],
-        context: C
+        context: C,
+        requestContext: RequestContext?
     ) -> AsyncThrowingStream<StreamEvent, Error> {
         AsyncThrowingStream { continuation in
             let task = Task {
@@ -126,6 +141,7 @@ public struct Chat<C: ToolContext>: Sendable {
                         userMessage: userMessage,
                         history: history,
                         context: context,
+                        requestContext: requestContext,
                         continuation: continuation
                     )
                 } catch {
@@ -142,6 +158,7 @@ public struct Chat<C: ToolContext>: Sendable {
         userMessage: ChatMessage,
         history: [ChatMessage],
         context: C,
+        requestContext: RequestContext?,
         continuation: AsyncThrowingStream<StreamEvent, Error>.Continuation
     ) async throws {
         var messages = buildMessages(userMessage: userMessage, history: history)
@@ -156,7 +173,8 @@ public struct Chat<C: ToolContext>: Sendable {
             let iteration = try await processor.process(
                 messages: truncatedMessages,
                 totalUsage: &totalUsage,
-                continuation: continuation
+                continuation: continuation,
+                requestContext: requestContext
             )
 
             let reasoning = iteration.reasoning.isEmpty ? nil : ReasoningContent(content: iteration.reasoning)

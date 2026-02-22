@@ -14,7 +14,8 @@ actor MockLLMClient: LLMClient {
     func generate(
         messages _: [ChatMessage],
         tools _: [ToolDefinition],
-        responseFormat _: ResponseFormat?
+        responseFormat _: ResponseFormat?,
+        requestContext _: RequestContext?
     ) async throws -> AssistantMessage {
         defer { callIndex += 1 }
         guard callIndex < responses.count else {
@@ -25,7 +26,8 @@ actor MockLLMClient: LLMClient {
 
     nonisolated func stream(
         messages _: [ChatMessage],
-        tools _: [ToolDefinition]
+        tools _: [ToolDefinition],
+        requestContext _: RequestContext?
     ) -> AsyncThrowingStream<StreamDelta, Error> {
         AsyncThrowingStream { $0.finish() }
     }

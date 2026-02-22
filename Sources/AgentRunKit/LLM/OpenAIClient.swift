@@ -36,40 +36,25 @@ public struct OpenAIClient: LLMClient, Sendable {
     public func generate(
         messages: [ChatMessage],
         tools: [ToolDefinition],
-        responseFormat: ResponseFormat?
-    ) async throws -> AssistantMessage {
-        try await generate(messages: messages, tools: tools, responseFormat: responseFormat, context: nil)
-    }
-
-    public func generate(
-        messages: [ChatMessage],
-        tools: [ToolDefinition],
         responseFormat: ResponseFormat?,
-        context: RequestContext?
+        requestContext: RequestContext?
     ) async throws -> AssistantMessage {
         let request = buildRequest(
             messages: messages,
             tools: tools,
             responseFormat: responseFormat,
-            extraFields: context?.extraFields ?? [:]
+            extraFields: requestContext?.extraFields ?? [:]
         )
         let urlRequest = try buildURLRequest(request)
-        return try await performWithRetry(urlRequest: urlRequest, onResponse: context?.onResponse) { data, _ in
+        return try await performWithRetry(urlRequest: urlRequest, onResponse: requestContext?.onResponse) { data, _ in
             try parseResponse(data)
         }
     }
 
     public func stream(
         messages: [ChatMessage],
-        tools: [ToolDefinition]
-    ) -> AsyncThrowingStream<StreamDelta, Error> {
-        stream(messages: messages, tools: tools, context: nil)
-    }
-
-    public func stream(
-        messages: [ChatMessage],
         tools: [ToolDefinition],
-        context: RequestContext?
+        requestContext: RequestContext?
     ) -> AsyncThrowingStream<StreamDelta, Error> {
         AsyncThrowingStream { continuation in
             let task = Task {
@@ -77,8 +62,8 @@ public struct OpenAIClient: LLMClient, Sendable {
                     try await performStreamRequest(
                         messages: messages,
                         tools: tools,
-                        extraFields: context?.extraFields ?? [:],
-                        onResponse: context?.onResponse,
+                        extraFields: requestContext?.extraFields ?? [:],
+                        onResponse: requestContext?.onResponse,
                         continuation: continuation
                     )
                 } catch {

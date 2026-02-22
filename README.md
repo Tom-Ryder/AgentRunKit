@@ -541,20 +541,35 @@ let client = OpenAIClient(
 
 ### Per-Request Customization
 
-Inject extra fields and access response headers:
+`RequestContext` injects arbitrary fields into the HTTP request body and provides access to response headers. Pass it to any Agent, Chat, or client method:
 
 ```swift
-let context = RequestContext(
+let requestContext = RequestContext(
     extraFields: [
-        "temperature": .double(0.7),
-        "metadata": .object(["user_id": .string("123")])
+        "web_search_options": .object(["search_context_size": .string("high")]),
+        "provider": .object(["order": .array([.string("cerebras")])]),
     ],
     onResponse: { response in
         print(response.value(forHTTPHeaderField: "X-Request-Id") ?? "")
     }
 )
 
-let stream = client.stream(messages: messages, tools: [], context: context)
+// Agent
+let result = try await agent.run(
+    userMessage: "Search the web for latest news",
+    context: myContext,
+    requestContext: requestContext
+)
+
+// Streaming
+for try await event in agent.stream(
+    userMessage: "Summarize recent events",
+    context: myContext,
+    requestContext: requestContext
+) { ... }
+
+// Chat
+let (response, history) = try await chat.send("Hello", requestContext: requestContext)
 ```
 
 ---

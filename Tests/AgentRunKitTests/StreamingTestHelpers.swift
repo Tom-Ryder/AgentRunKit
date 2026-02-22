@@ -16,7 +16,8 @@ actor StreamingMockLLMClient: LLMClient {
     func generate(
         messages _: [ChatMessage],
         tools _: [ToolDefinition],
-        responseFormat _: ResponseFormat?
+        responseFormat _: ResponseFormat?,
+        requestContext _: RequestContext?
     ) async throws -> AssistantMessage {
         defer { generateIndex += 1 }
         guard generateIndex < generateResponses.count else {
@@ -33,7 +34,8 @@ actor StreamingMockLLMClient: LLMClient {
 
     nonisolated func stream(
         messages _: [ChatMessage],
-        tools _: [ToolDefinition]
+        tools _: [ToolDefinition],
+        requestContext _: RequestContext?
     ) -> AsyncThrowingStream<StreamDelta, Error> {
         AsyncThrowingStream { continuation in
             Task {
@@ -63,7 +65,8 @@ actor GenerateOnlyMockLLMClient: LLMClient {
     func generate(
         messages _: [ChatMessage],
         tools _: [ToolDefinition],
-        responseFormat _: ResponseFormat?
+        responseFormat _: ResponseFormat?,
+        requestContext _: RequestContext?
     ) async throws -> AssistantMessage {
         defer { callIndex += 1 }
         guard callIndex < responses.count else {
@@ -74,7 +77,8 @@ actor GenerateOnlyMockLLMClient: LLMClient {
 
     nonisolated func stream(
         messages _: [ChatMessage],
-        tools _: [ToolDefinition]
+        tools _: [ToolDefinition],
+        requestContext _: RequestContext?
     ) -> AsyncThrowingStream<StreamDelta, Error> {
         AsyncThrowingStream { $0.finish() }
     }
@@ -96,7 +100,8 @@ actor CapturingStreamingMockLLMClient: LLMClient {
     func generate(
         messages _: [ChatMessage],
         tools _: [ToolDefinition],
-        responseFormat _: ResponseFormat?
+        responseFormat _: ResponseFormat?,
+        requestContext _: RequestContext?
     ) async throws -> AssistantMessage {
         throw AgentError.llmError(.other("No more mock responses"))
     }
@@ -110,7 +115,8 @@ actor CapturingStreamingMockLLMClient: LLMClient {
 
     nonisolated func stream(
         messages: [ChatMessage],
-        tools _: [ToolDefinition]
+        tools _: [ToolDefinition],
+        requestContext _: RequestContext?
     ) -> AsyncThrowingStream<StreamDelta, Error> {
         AsyncThrowingStream { continuation in
             Task {
@@ -158,7 +164,8 @@ actor ControllableStreamingMockLLMClient: LLMClient {
     func generate(
         messages _: [ChatMessage],
         tools _: [ToolDefinition],
-        responseFormat _: ResponseFormat?
+        responseFormat _: ResponseFormat?,
+        requestContext _: RequestContext?
     ) async throws -> AssistantMessage {
         throw AgentError.llmError(.other("No more mock responses"))
     }
@@ -172,7 +179,8 @@ actor ControllableStreamingMockLLMClient: LLMClient {
 
     nonisolated func stream(
         messages _: [ChatMessage],
-        tools _: [ToolDefinition]
+        tools _: [ToolDefinition],
+        requestContext _: RequestContext?
     ) -> AsyncThrowingStream<StreamDelta, Error> {
         AsyncThrowingStream { continuation in
             Task {

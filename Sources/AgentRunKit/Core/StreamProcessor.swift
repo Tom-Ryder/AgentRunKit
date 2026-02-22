@@ -60,7 +60,8 @@ struct StreamProcessor: Sendable {
     func process(
         messages: [ChatMessage],
         totalUsage: inout TokenUsage,
-        continuation: AsyncThrowingStream<StreamEvent, Error>.Continuation
+        continuation: AsyncThrowingStream<StreamEvent, Error>.Continuation,
+        requestContext: RequestContext? = nil
     ) async throws -> StreamIteration {
         var contentBuffer = ""
         var reasoningBuffer = ""
@@ -68,7 +69,11 @@ struct StreamProcessor: Sendable {
         var accumulators: [Int: ToolCallAccumulator] = [:]
         var pendingArguments: [Int: String] = [:]
 
-        for try await delta in client.stream(messages: messages, tools: toolDefinitions) {
+        for try await delta in client.stream(
+            messages: messages,
+            tools: toolDefinitions,
+            requestContext: requestContext
+        ) {
             try Task.checkCancellation()
             switch delta {
             case let .content(text):

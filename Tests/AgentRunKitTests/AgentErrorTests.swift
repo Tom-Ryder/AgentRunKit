@@ -184,14 +184,16 @@ actor FailingMockLLMClient: LLMClient {
     func generate(
         messages _: [ChatMessage],
         tools _: [ToolDefinition],
-        responseFormat _: ResponseFormat?
+        responseFormat _: ResponseFormat?,
+        requestContext _: RequestContext?
     ) async throws -> AssistantMessage {
         throw AgentError.llmError(.other("Intentional test failure"))
     }
 
     nonisolated func stream(
         messages _: [ChatMessage],
-        tools _: [ToolDefinition]
+        tools _: [ToolDefinition],
+        requestContext _: RequestContext?
     ) -> AsyncThrowingStream<StreamDelta, Error> {
         AsyncThrowingStream {
             $0.finish(throwing: AgentError.llmError(.other("Intentional test failure")))

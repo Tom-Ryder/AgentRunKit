@@ -43,16 +43,24 @@ public final class Agent<C: ToolContext>: Sendable {
         userMessage: String,
         history: [ChatMessage] = [],
         context: C,
-        tokenBudget: Int? = nil
+        tokenBudget: Int? = nil,
+        requestContext: RequestContext? = nil
     ) async throws -> AgentResult {
-        try await run(userMessage: .user(userMessage), history: history, context: context, tokenBudget: tokenBudget)
+        try await run(
+            userMessage: .user(userMessage),
+            history: history,
+            context: context,
+            tokenBudget: tokenBudget,
+            requestContext: requestContext
+        )
     }
 
     public func run(
         userMessage: ChatMessage,
         history: [ChatMessage] = [],
         context: C,
-        tokenBudget: Int? = nil
+        tokenBudget: Int? = nil,
+        requestContext: RequestContext? = nil
     ) async throws -> AgentResult {
         if let tokenBudget { precondition(tokenBudget >= 1, "tokenBudget must be at least 1") }
         var messages = buildInitialMessages(userMessage: userMessage, history: history)
@@ -63,7 +71,12 @@ public final class Agent<C: ToolContext>: Sendable {
             try Task.checkCancellation()
 
             let truncatedMessages = truncateIfNeeded(messages)
-            let response = try await client.generate(messages: truncatedMessages, tools: toolDefinitions)
+            let response = try await client.generate(
+                messages: truncatedMessages,
+                tools: toolDefinitions,
+                responseFormat: nil,
+                requestContext: requestContext
+            )
             messages.append(.assistant(response))
             if let usage = response.tokenUsage { totalUsage += usage }
 
@@ -99,15 +112,17 @@ public final class Agent<C: ToolContext>: Sendable {
     public func stream(
         userMessage: String,
         history: [ChatMessage] = [],
-        context: C
+        context: C,
+        requestContext: RequestContext? = nil
     ) -> AsyncThrowingStream<StreamEvent, Error> {
-        stream(userMessage: .user(userMessage), history: history, context: context)
+        stream(userMessage: .user(userMessage), history: history, context: context, requestContext: requestContext)
     }
 
     public func stream(
         userMessage: ChatMessage,
         history: [ChatMessage] = [],
-        context: C
+        context: C,
+        requestContext: RequestContext? = nil
     ) -> AsyncThrowingStream<StreamEvent, Error> {
         AsyncThrowingStream { continuation in
             let task = Task {
@@ -116,6 +131,7 @@ public final class Agent<C: ToolContext>: Sendable {
                         userMessage: userMessage,
                         history: history,
                         context: context,
+                        requestContext: requestContext,
                         continuation: continuation
                     )
                 } catch {
@@ -132,6 +148,7 @@ public final class Agent<C: ToolContext>: Sendable {
         userMessage: ChatMessage,
         history: [ChatMessage],
         context: C,
+        requestContext: RequestContext?,
         continuation: AsyncThrowingStream<StreamEvent, Error>.Continuation
     ) async throws {
         var messages = buildInitialMessages(userMessage: userMessage, history: history)
@@ -146,7 +163,8 @@ public final class Agent<C: ToolContext>: Sendable {
             let iteration = try await processor.process(
                 messages: truncatedMessages,
                 totalUsage: &totalUsage,
-                continuation: continuation
+                continuation: continuation,
+                requestContext: requestContext
             )
 
             let reasoning = iteration.reasoning.isEmpty ? nil : ReasoningContent(content: iteration.reasoning)

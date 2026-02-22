@@ -372,3 +372,146 @@ struct ReasoningConfigEncodingTests {
         #expect(reasoning?["exclude"] as? Bool == false)
     }
 }
+
+private actor CapturingRequestContextMockLLMClient: LLMClient {
+    private(set) var lastGenerateRequestContext: RequestContext?
+    private(set) var lastStreamRequestContext: RequestContext?
+    private let generateResponse: AssistantMessage
+    private let streamDeltas: [StreamDelta]
+
+    init(generateResponse: AssistantMessage, streamDeltas: [StreamDelta] = [.content("done"), .finished(usage: nil)]) {
+        self.generateResponse = generateResponse
+        self.streamDeltas = streamDeltas
+    }
+
+    func generate(
+        messages _: [ChatMessage],
+        tools _: [ToolDefinition],
+        responseFormat _: ResponseFormat?,
+        requestContext: RequestContext?
+    ) async throws -> AssistantMessage {
+        lastGenerateRequestContext = requestContext
+        return generateResponse
+    }
+
+    nonisolated func stream(
+        messages _: [ChatMessage],
+        tools _: [ToolDefinition],
+        requestContext: RequestContext?
+    ) -> AsyncThrowingStream<StreamDelta, Error> {
+        let deltas = streamDeltas
+        return AsyncThrowingStream { continuation in
+            Task {
+                await self.recordStreamContext(requestContext)
+                for delta in deltas {
+                    continuation.yield(delta)
+                }
+                continuation.finish()
+            }
+        }
+    }
+
+    func recordStreamContext(_ context: RequestContext?) {
+        lastStreamRequestContext = context
+    }
+}
+
+private struct ForwardingTestOutput: Codable, SchemaProviding {
+    let value: String
+
+    static var jsonSchema: JSONSchema {
+        .object(properties: ["value": .string()], required: ["value"])
+    }
+}
+
+@Suite
+struct RequestContextForwardingTests {
+    private static let finishResponse = AssistantMessage(
+        content: "",
+        toolCalls: [ToolCall(id: "call_1", name: "finish", arguments: #"{"content":"done"}"#)]
+    )
+
+    private static let plainResponse = AssistantMessage(content: "response")
+
+    @Test
+    func agentRunForwardsRequestContext() async throws {
+        let client = CapturingRequestContextMockLLMClient(generateResponse: Self.finishResponse)
+        let agent = Agent<EmptyContext>(client: client, tools: [])
+        let ctx = RequestContext(extraFields: ["temperature": .double(0.5)])
+
+        _ = try await agent.run(userMessage: "Hello", context: EmptyContext(), requestContext: ctx)
+
+        let captured = await client.lastGenerateRequestContext
+        #expect(captured?.extraFields["temperature"] == .double(0.5))
+    }
+
+    @Test
+    func agentRunWithoutRequestContextDefaultsToNil() async throws {
+        let client = CapturingRequestContextMockLLMClient(generateResponse: Self.finishResponse)
+        let agent = Agent<EmptyContext>(client: client, tools: [])
+
+        _ = try await agent.run(userMessage: "Hello", context: EmptyContext())
+
+        let captured = await client.lastGenerateRequestContext
+        #expect(captured == nil)
+    }
+
+    @Test
+    func chatSendForwardsRequestContext() async throws {
+        let client = CapturingRequestContextMockLLMClient(generateResponse: Self.plainResponse)
+        let chat = Chat<EmptyContext>(client: client)
+        let ctx = RequestContext(extraFields: ["top_p": .double(0.9)])
+
+        _ = try await chat.send("Hello", requestContext: ctx)
+
+        let captured = await client.lastGenerateRequestContext
+        #expect(captured?.extraFields["top_p"] == .double(0.9))
+    }
+
+    @Test
+    func agentStreamForwardsRequestContext() async throws {
+        let finishDeltas: [StreamDelta] = [
+            .toolCallStart(index: 0, id: "call_1", name: "finish"),
+            .toolCallDelta(index: 0, arguments: #"{"content":"done"}"#),
+            .finished(usage: nil)
+        ]
+        let client = CapturingRequestContextMockLLMClient(
+            generateResponse: Self.finishResponse,
+            streamDeltas: finishDeltas
+        )
+        let agent = Agent<EmptyContext>(client: client, tools: [])
+        let ctx = RequestContext(extraFields: ["provider": .object(["order": .array([.string("cerebras")])])])
+
+        for try await _ in agent.stream(userMessage: "Hello", context: EmptyContext(), requestContext: ctx) {}
+
+        let captured = await client.lastStreamRequestContext
+        #expect(captured?.extraFields["provider"] == .object(["order": .array([.string("cerebras")])]))
+    }
+
+    @Test
+    func chatStreamForwardsRequestContext() async throws {
+        let client = CapturingRequestContextMockLLMClient(generateResponse: Self.plainResponse)
+        let chat = Chat<EmptyContext>(client: client)
+        let ctx = RequestContext(extraFields: ["plugins": .array([.object(["id": .string("web")])])])
+
+        for try await _ in chat.stream("Hello", context: EmptyContext(), requestContext: ctx) {}
+
+        let captured = await client.lastStreamRequestContext
+        #expect(captured?.extraFields["plugins"] == .array([.object(["id": .string("web")])]))
+    }
+
+    @Test
+    func chatSendReturningForwardsRequestContext() async throws {
+        let jsonContent = #"{"value":"test"}"#
+        let client = CapturingRequestContextMockLLMClient(
+            generateResponse: AssistantMessage(content: jsonContent)
+        )
+        let chat = Chat<EmptyContext>(client: client)
+        let ctx = RequestContext(extraFields: ["temperature": .double(0.3)])
+
+        _ = try await chat.send("Extract", returning: ForwardingTestOutput.self, requestContext: ctx)
+
+        let captured = await client.lastGenerateRequestContext
+        #expect(captured?.extraFields["temperature"] == .double(0.3))
+    }
+}
