@@ -38,6 +38,15 @@ struct SubAgentContextTests {
         #expect(descended.currentDepth == 3)
         #expect(descended.maxDepth == 5)
     }
+
+    @Test
+    func descendingClearsParentHistory() {
+        let messages: [ChatMessage] = [.user("hello"), .assistant(AssistantMessage(content: "hi"))]
+        let ctx = SubAgentContext(inner: EmptyContext(), maxDepth: 3)
+            .withParentHistory(messages)
+        let descended = ctx.descending()
+        #expect(descended.parentHistory.isEmpty)
+    }
 }
 
 @Suite
@@ -303,6 +312,51 @@ struct SubAgentToolTests {
     }
 
     @Test
+    func inheritParentMessagesFalseDoesNotForward() async throws {
+        let childFinish = ToolCall(id: "cf", name: "finish", arguments: #"{"content": "child done"}"#)
+        let childClient = CapturingMockLLMClient(responses: [
+            AssistantMessage(content: "", toolCalls: [childFinish]),
+        ])
+        let childAgent = Agent<SubAgentContext<EmptyContext>>(
+            client: childClient, tools: [],
+            configuration: AgentConfiguration(systemPrompt: "child system")
+        )
+        let tool = try SubAgentTool<QueryParams, EmptyContext>(
+            name: "research",
+            description: "Research",
+            agent: childAgent,
+            messageBuilder: { $0.query }
+        )
+
+        let subCall = ToolCall(id: "cs", name: "research", arguments: #"{"query": "task"}"#)
+        let parentFinish = ToolCall(id: "pf", name: "finish", arguments: #"{"content": "parent done"}"#)
+        let parentClient = MockLLMClient(responses: [
+            AssistantMessage(content: "", toolCalls: [subCall]),
+            AssistantMessage(content: "", toolCalls: [parentFinish]),
+        ])
+        let parentAgent = Agent<SubAgentContext<EmptyContext>>(
+            client: parentClient, tools: [tool],
+            configuration: AgentConfiguration(systemPrompt: "parent system")
+        )
+
+        let ctx = SubAgentContext(inner: EmptyContext(), maxDepth: 3)
+        _ = try await parentAgent.run(userMessage: "Go", context: ctx)
+
+        let captured = await childClient.capturedMessages
+        #expect(captured.count == 2)
+        guard case let .system(prompt) = captured[0] else {
+            Issue.record("Expected system message")
+            return
+        }
+        #expect(prompt == "child system")
+        guard case let .user(msg) = captured[1] else {
+            Issue.record("Expected user message")
+            return
+        }
+        #expect(msg == "task")
+    }
+
+    @Test
     func nilToolTimeoutBypassesAgentTimeoutInNonStreamingPath() async throws {
         let delayTool = try Tool<NoopParams, NoopOutput, SubAgentContext<EmptyContext>>(
             name: "delay",
@@ -340,5 +394,196 @@ struct SubAgentToolTests {
         let ctx = SubAgentContext(inner: EmptyContext(), maxDepth: 3)
         let result = try await parentAgent.run(userMessage: "Go", context: ctx)
         #expect(result.content == "parent done")
+    }
+}
+
+@Suite
+struct SubAgentInheritParentMessagesTests {
+    @Test
+    func childSeesParentHistory() async throws {
+        let childFinish = ToolCall(id: "cf", name: "finish", arguments: #"{"content": "child done"}"#)
+        let childClient = CapturingMockLLMClient(responses: [
+            AssistantMessage(content: "", toolCalls: [childFinish]),
+        ])
+        let childAgent = Agent<SubAgentContext<EmptyContext>>(
+            client: childClient, tools: [],
+            configuration: AgentConfiguration(systemPrompt: "child system")
+        )
+        let tool = try SubAgentTool<QueryParams, EmptyContext>(
+            name: "research",
+            description: "Research",
+            agent: childAgent,
+            inheritParentMessages: true,
+            messageBuilder: { $0.query }
+        )
+
+        let subCall = ToolCall(id: "cs", name: "research", arguments: #"{"query": "task"}"#)
+        let parentFinish = ToolCall(id: "pf", name: "finish", arguments: #"{"content": "parent done"}"#)
+        let parentClient = MockLLMClient(responses: [
+            AssistantMessage(content: "", toolCalls: [subCall]),
+            AssistantMessage(content: "", toolCalls: [parentFinish]),
+        ])
+        let parentAgent = Agent<SubAgentContext<EmptyContext>>(
+            client: parentClient, tools: [tool],
+            configuration: AgentConfiguration(systemPrompt: "parent system")
+        )
+
+        let ctx = SubAgentContext(inner: EmptyContext(), maxDepth: 3)
+        _ = try await parentAgent.run(userMessage: "Go", context: ctx)
+
+        let captured = await childClient.capturedMessages
+        #expect(captured.count == 4)
+        guard case let .system(prompt) = captured[0] else {
+            Issue.record("Expected child system message first")
+            return
+        }
+        #expect(prompt == "child system")
+        guard case let .user(userMsg) = captured[1] else {
+            Issue.record("Expected parent user message")
+            return
+        }
+        #expect(userMsg == "Go")
+        guard case .assistant = captured[2] else {
+            Issue.record("Expected parent assistant message")
+            return
+        }
+        guard case let .user(taskMsg) = captured[3] else {
+            Issue.record("Expected child task message last")
+            return
+        }
+        #expect(taskMsg == "task")
+    }
+
+    @Test
+    func parentSystemMessageStripped() async throws {
+        let childFinish = ToolCall(id: "cf", name: "finish", arguments: #"{"content": "child done"}"#)
+        let childClient = CapturingMockLLMClient(responses: [
+            AssistantMessage(content: "", toolCalls: [childFinish]),
+        ])
+        let childAgent = Agent<SubAgentContext<EmptyContext>>(
+            client: childClient, tools: [],
+            configuration: AgentConfiguration(systemPrompt: "child system")
+        )
+        let tool = try SubAgentTool<QueryParams, EmptyContext>(
+            name: "research",
+            description: "Research",
+            agent: childAgent,
+            inheritParentMessages: true,
+            messageBuilder: { $0.query }
+        )
+
+        let subCall = ToolCall(id: "cs", name: "research", arguments: #"{"query": "task"}"#)
+        let parentFinish = ToolCall(id: "pf", name: "finish", arguments: #"{"content": "parent done"}"#)
+        let parentClient = MockLLMClient(responses: [
+            AssistantMessage(content: "", toolCalls: [subCall]),
+            AssistantMessage(content: "", toolCalls: [parentFinish]),
+        ])
+        let parentAgent = Agent<SubAgentContext<EmptyContext>>(
+            client: parentClient, tools: [tool],
+            configuration: AgentConfiguration(systemPrompt: "parent system")
+        )
+
+        let ctx = SubAgentContext(inner: EmptyContext(), maxDepth: 3)
+        _ = try await parentAgent.run(userMessage: "Go", context: ctx)
+
+        let captured = await childClient.capturedMessages
+        let systemMessages = captured.filter(\.isSystem)
+        #expect(systemMessages.count == 1)
+        guard case let .system(prompt) = systemMessages[0] else {
+            Issue.record("Expected system message")
+            return
+        }
+        #expect(prompt == "child system")
+    }
+
+    @Test
+    func multiTurnParentHistoryInherited() async throws {
+        let echoTool = try Tool<NoopParams, NoopOutput, SubAgentContext<EmptyContext>>(
+            name: "echo",
+            description: "Echo",
+            executor: { _, _ in NoopOutput() }
+        )
+        let childFinish = ToolCall(id: "cf", name: "finish", arguments: #"{"content": "child done"}"#)
+        let childClient = CapturingMockLLMClient(responses: [
+            AssistantMessage(content: "", toolCalls: [childFinish]),
+        ])
+        let childAgent = Agent<SubAgentContext<EmptyContext>>(
+            client: childClient, tools: [],
+            configuration: AgentConfiguration(systemPrompt: "child system")
+        )
+        let subAgentTool = try SubAgentTool<QueryParams, EmptyContext>(
+            name: "research",
+            description: "Research",
+            agent: childAgent,
+            inheritParentMessages: true,
+            messageBuilder: { $0.query }
+        )
+
+        let echoCall1 = ToolCall(id: "e1", name: "echo", arguments: "{}")
+        let echoCall2 = ToolCall(id: "e2", name: "echo", arguments: "{}")
+        let subCall = ToolCall(id: "cs", name: "research", arguments: #"{"query": "task"}"#)
+        let parentFinish = ToolCall(id: "pf", name: "finish", arguments: #"{"content": "parent done"}"#)
+        let parentClient = MockLLMClient(responses: [
+            AssistantMessage(content: "", toolCalls: [echoCall1]),
+            AssistantMessage(content: "", toolCalls: [echoCall2]),
+            AssistantMessage(content: "", toolCalls: [subCall]),
+            AssistantMessage(content: "", toolCalls: [parentFinish]),
+        ])
+        let parentAgent = Agent<SubAgentContext<EmptyContext>>(
+            client: parentClient, tools: [echoTool, subAgentTool]
+        )
+
+        let ctx = SubAgentContext(inner: EmptyContext(), maxDepth: 3)
+        _ = try await parentAgent.run(userMessage: "Go", context: ctx)
+
+        let captured = await childClient.capturedMessages
+        #expect(captured.count == 8)
+        guard case let .system(prompt) = captured[0] else {
+            Issue.record("Expected child system first")
+            return
+        }
+        #expect(prompt == "child system")
+        guard case let .user(taskMsg) = captured.last else {
+            Issue.record("Expected task message last")
+            return
+        }
+        #expect(taskMsg == "task")
+        let toolMessages = captured.filter { if case .tool = $0 { return true }; return false }
+        #expect(toolMessages.count == 2)
+    }
+
+    @Test
+    func emptyParentHistoryAtRoot() async throws {
+        let childFinish = ToolCall(id: "cf", name: "finish", arguments: #"{"content": "child done"}"#)
+        let childClient = CapturingMockLLMClient(responses: [
+            AssistantMessage(content: "", toolCalls: [childFinish]),
+        ])
+        let childAgent = Agent<SubAgentContext<EmptyContext>>(
+            client: childClient, tools: [],
+            configuration: AgentConfiguration(systemPrompt: "child system")
+        )
+        let tool = try SubAgentTool<QueryParams, EmptyContext>(
+            name: "research",
+            description: "Research",
+            agent: childAgent,
+            inheritParentMessages: true,
+            messageBuilder: { $0.query }
+        )
+
+        let args = try JSONEncoder().encode(QueryParams(query: "task"))
+        let ctx = SubAgentContext(inner: EmptyContext(), maxDepth: 3)
+        let result = try await tool.execute(arguments: args, context: ctx)
+        #expect(result.content == "child done")
+
+        let captured = await childClient.capturedMessages
+        #expect(captured.count == 2)
+        guard case .system = captured[0] else {
+            Issue.record("Expected system message")
+            return
+        }
+        guard case .user = captured[1] else {
+            Issue.record("Expected user message")
+            return
+        }
     }
 }

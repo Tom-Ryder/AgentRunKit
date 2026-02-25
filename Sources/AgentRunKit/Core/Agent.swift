@@ -67,12 +67,13 @@ public final class Agent<C: ToolContext>: Sendable {
 
     func run(
         userMessage: String,
+        history: [ChatMessage] = [],
         context: C,
         tokenBudget: Int? = nil,
         systemPromptOverride: String?
     ) async throws -> AgentResult {
         try await run(
-            userMessage: .user(userMessage), history: [], context: context,
+            userMessage: .user(userMessage), history: history, context: context,
             tokenBudget: tokenBudget, requestContext: nil, systemPromptOverride: systemPromptOverride
         )
     }
@@ -119,7 +120,9 @@ public final class Agent<C: ToolContext>: Sendable {
             }
 
             if !response.toolCalls.isEmpty {
-                let results = try await executeToolsInParallel(response.toolCalls, context: context)
+                let results = try await executeToolsInParallel(
+                    response.toolCalls, context: context.withParentHistory(messages)
+                )
                 for (call, result) in results {
                     messages.append(.tool(id: call.id, name: call.name, content: result.content))
                 }
@@ -165,12 +168,13 @@ public final class Agent<C: ToolContext>: Sendable {
 
     func stream(
         userMessage: String,
+        history: [ChatMessage] = [],
         context: C,
         tokenBudget: Int? = nil,
         systemPromptOverride: String?
     ) -> AsyncThrowingStream<StreamEvent, Error> {
         stream(
-            userMessage: .user(userMessage), history: [], context: context,
+            userMessage: .user(userMessage), history: history, context: context,
             tokenBudget: tokenBudget, requestContext: nil, systemPromptOverride: systemPromptOverride
         )
     }
@@ -245,7 +249,7 @@ public final class Agent<C: ToolContext>: Sendable {
             let executableTools = policy.executableToolCalls(from: iteration.toolCalls)
             if !executableTools.isEmpty {
                 let results = try await executeToolsStreaming(
-                    executableTools, context: context, continuation: continuation
+                    executableTools, context: context.withParentHistory(messages), continuation: continuation
                 )
                 for (call, result) in results {
                     messages.append(.tool(id: call.id, name: call.name, content: result.content))

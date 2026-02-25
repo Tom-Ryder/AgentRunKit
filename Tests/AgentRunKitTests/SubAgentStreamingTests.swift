@@ -619,3 +619,140 @@ struct SubAgentDepthLimitStreamingTests {
         }
     }
 }
+
+@Suite
+struct SubAgentInheritHistoryStreamingTests {
+    @Test
+    func childSeesParentHistoryInStreaming() async throws {
+        let childDeltas: [StreamDelta] = [
+            .toolCallStart(index: 0, id: "cf", name: "finish"),
+            .toolCallDelta(index: 0, arguments: #"{"content": "child done"}"#),
+            .finished(usage: nil),
+        ]
+        let childClient = CapturingStreamingMockLLMClient(streamSequences: [childDeltas])
+        let childAgent = Agent<SubAgentContext<EmptyContext>>(
+            client: childClient, tools: [],
+            configuration: AgentConfiguration(systemPrompt: "child system")
+        )
+        let tool = try SubAgentTool<QueryParams, EmptyContext>(
+            name: "research",
+            description: "Research",
+            agent: childAgent,
+            inheritParentMessages: true,
+            messageBuilder: { $0.query }
+        )
+
+        let parentDeltas1: [StreamDelta] = [
+            .toolCallStart(index: 0, id: "cs", name: "research"),
+            .toolCallDelta(index: 0, arguments: #"{"query": "task"}"#),
+            .finished(usage: nil),
+        ]
+        let parentDeltas2: [StreamDelta] = [
+            .toolCallStart(index: 0, id: "pf", name: "finish"),
+            .toolCallDelta(index: 0, arguments: #"{"content": "parent done"}"#),
+            .finished(usage: nil),
+        ]
+        let parentClient = StreamingMockLLMClient(streamSequences: [parentDeltas1, parentDeltas2])
+        let parentAgent = Agent<SubAgentContext<EmptyContext>>(
+            client: parentClient, tools: [tool],
+            configuration: AgentConfiguration(systemPrompt: "parent system")
+        )
+
+        let ctx = SubAgentContext(inner: EmptyContext(), maxDepth: 3)
+        for try await _ in parentAgent.stream(userMessage: "Go", context: ctx) {}
+
+        let captured = await childClient.capturedMessages
+        #expect(captured.count == 4)
+        guard case let .system(prompt) = captured[0] else {
+            Issue.record("Expected child system message first")
+            return
+        }
+        #expect(prompt == "child system")
+        guard case let .user(userMsg) = captured[1] else {
+            Issue.record("Expected parent user message")
+            return
+        }
+        #expect(userMsg == "Go")
+        guard case .assistant = captured[2] else {
+            Issue.record("Expected parent assistant message")
+            return
+        }
+        guard case let .user(taskMsg) = captured[3] else {
+            Issue.record("Expected child task message last")
+            return
+        }
+        #expect(taskMsg == "task")
+    }
+
+    @Test
+    func parallelSiblingsInheritSameHistory() async throws {
+        let child1Deltas: [StreamDelta] = [
+            .toolCallStart(index: 0, id: "cf1", name: "finish"),
+            .toolCallDelta(index: 0, arguments: #"{"content": "child1 done"}"#),
+            .finished(usage: nil),
+        ]
+        let child1Client = CapturingStreamingMockLLMClient(streamSequences: [child1Deltas])
+        let child1Agent = Agent<SubAgentContext<EmptyContext>>(
+            client: child1Client, tools: [],
+            configuration: AgentConfiguration(systemPrompt: "child1 system")
+        )
+        let tool1 = try SubAgentTool<QueryParams, EmptyContext>(
+            name: "research1",
+            description: "Research 1",
+            agent: child1Agent,
+            inheritParentMessages: true,
+            messageBuilder: { $0.query }
+        )
+
+        let child2Deltas: [StreamDelta] = [
+            .toolCallStart(index: 0, id: "cf2", name: "finish"),
+            .toolCallDelta(index: 0, arguments: #"{"content": "child2 done"}"#),
+            .finished(usage: nil),
+        ]
+        let child2Client = CapturingStreamingMockLLMClient(streamSequences: [child2Deltas])
+        let child2Agent = Agent<SubAgentContext<EmptyContext>>(
+            client: child2Client, tools: [],
+            configuration: AgentConfiguration(systemPrompt: "child2 system")
+        )
+        let tool2 = try SubAgentTool<QueryParams, EmptyContext>(
+            name: "research2",
+            description: "Research 2",
+            agent: child2Agent,
+            inheritParentMessages: true,
+            messageBuilder: { $0.query }
+        )
+
+        let parentDeltas1: [StreamDelta] = [
+            .toolCallStart(index: 0, id: "cs1", name: "research1"),
+            .toolCallDelta(index: 0, arguments: #"{"query": "task1"}"#),
+            .toolCallStart(index: 1, id: "cs2", name: "research2"),
+            .toolCallDelta(index: 1, arguments: #"{"query": "task2"}"#),
+            .finished(usage: nil),
+        ]
+        let parentDeltas2: [StreamDelta] = [
+            .toolCallStart(index: 0, id: "pf", name: "finish"),
+            .toolCallDelta(index: 0, arguments: #"{"content": "parent done"}"#),
+            .finished(usage: nil),
+        ]
+        let parentClient = StreamingMockLLMClient(streamSequences: [parentDeltas1, parentDeltas2])
+        let parentAgent = Agent<SubAgentContext<EmptyContext>>(
+            client: parentClient, tools: [tool1, tool2],
+            configuration: AgentConfiguration(systemPrompt: "parent system")
+        )
+
+        let ctx = SubAgentContext(inner: EmptyContext(), maxDepth: 3)
+        for try await _ in parentAgent.stream(userMessage: "Go", context: ctx) {}
+
+        let captured1 = await child1Client.capturedMessages
+        let captured2 = await child2Client.capturedMessages
+
+        let history1 = captured1.dropFirst().dropLast()
+        let history2 = captured2.dropFirst().dropLast()
+        #expect(Array(history1) == Array(history2))
+
+        let systemMessages1 = captured1.filter(\.isSystem)
+        let systemMessages2 = captured2.filter(\.isSystem)
+        #expect(systemMessages1.count == 1)
+        #expect(systemMessages2.count == 1)
+    }
+}

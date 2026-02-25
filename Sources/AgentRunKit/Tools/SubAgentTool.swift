@@ -10,6 +10,7 @@ public struct SubAgentTool<P: Codable & SchemaProviding & Sendable, InnerContext
     let toolTimeout: Duration?
     private let agent: Agent<SubAgentContext<InnerContext>>
     private let tokenBudget: Int?
+    private let inheritParentMessages: Bool
     private let messageBuilder: @Sendable (P) -> String
     private let systemPromptBuilder: (@Sendable (P) -> String)?
 
@@ -19,6 +20,7 @@ public struct SubAgentTool<P: Codable & SchemaProviding & Sendable, InnerContext
         agent: Agent<SubAgentContext<InnerContext>>,
         tokenBudget: Int? = nil,
         toolTimeout: Duration? = nil,
+        inheritParentMessages: Bool = false,
         systemPromptBuilder: (@Sendable (P) -> String)? = nil,
         messageBuilder: @escaping @Sendable (P) -> String
     ) throws {
@@ -29,6 +31,7 @@ public struct SubAgentTool<P: Codable & SchemaProviding & Sendable, InnerContext
         self.agent = agent
         self.tokenBudget = tokenBudget
         self.toolTimeout = toolTimeout
+        self.inheritParentMessages = inheritParentMessages
         self.systemPromptBuilder = systemPromptBuilder
         self.messageBuilder = messageBuilder
     }
@@ -38,8 +41,10 @@ public struct SubAgentTool<P: Codable & SchemaProviding & Sendable, InnerContext
         guard context.currentDepth < context.maxDepth else {
             throw AgentError.maxDepthExceeded(depth: context.currentDepth)
         }
+        let history = inheritParentMessages ? context.parentHistory.filter { !$0.isSystem } : []
         let result = try await agent.run(
             userMessage: messageBuilder(params),
+            history: history,
             context: context.descending(),
             tokenBudget: tokenBudget,
             systemPromptOverride: systemPromptBuilder?(params)
@@ -57,8 +62,10 @@ public struct SubAgentTool<P: Codable & SchemaProviding & Sendable, InnerContext
         guard context.currentDepth < context.maxDepth else {
             throw AgentError.maxDepthExceeded(depth: context.currentDepth)
         }
+        let history = inheritParentMessages ? context.parentHistory.filter { !$0.isSystem } : []
         let stream = agent.stream(
             userMessage: messageBuilder(params),
+            history: history,
             context: context.descending(),
             tokenBudget: tokenBudget,
             systemPromptOverride: systemPromptBuilder?(params)
@@ -95,6 +102,7 @@ public func subAgentTool<P: Codable & SchemaProviding & Sendable, InnerContext: 
     agent: Agent<SubAgentContext<InnerContext>>,
     tokenBudget: Int? = nil,
     toolTimeout: Duration? = nil,
+    inheritParentMessages: Bool = false,
     systemPromptBuilder: (@Sendable (P) -> String)? = nil,
     messageBuilder: @escaping @Sendable (P) -> String
 ) throws -> SubAgentTool<P, InnerContext> {
@@ -104,6 +112,7 @@ public func subAgentTool<P: Codable & SchemaProviding & Sendable, InnerContext: 
         agent: agent,
         tokenBudget: tokenBudget,
         toolTimeout: toolTimeout,
+        inheritParentMessages: inheritParentMessages,
         systemPromptBuilder: systemPromptBuilder,
         messageBuilder: messageBuilder
     )

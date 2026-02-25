@@ -545,6 +545,8 @@ let result = try await orchestrator.run(userMessage: "Write a report on Swift co
 
 **Streaming visibility:** When using `agent.stream()`, sub-agent execution is fully observable. The parent stream emits `.subAgentStarted` when a child begins, `.subAgentEvent` for every event the child produces (including nested sub-agents, recursively), and `.subAgentCompleted` when it finishes.
 
+**Inheriting parent messages:** Pass `inheritParentMessages: true` to forward the parent's conversation history (excluding system messages) to the child agent. The child receives the parent's messages as prefill before its task message, enabling prompt-cache hits when multiple parallel sub-agents share the same context. The parent's system message is always stripped — only the child's own system prompt (from `AgentConfiguration` or `systemPromptBuilder`) is used. Defaults to `false`.
+
 <details>
 <summary><b>Factory Function</b></summary>
 
