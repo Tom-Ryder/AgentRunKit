@@ -36,6 +36,7 @@
   - [Reasoning Models](#reasoning-models)
   - [Multimodal Input](#multimodal-input)
   - [Audio Output](#audio-output)
+  - [Text-to-Speech](#text-to-speech)
   - [Structured Output](#structured-output)
   - [Sub-Agents](#sub-agents)
   - [Error Handling](#error-handling)
@@ -476,6 +477,86 @@ for try await event in chat.stream("Tell me a story", context: EmptyContext(), r
 
 Audio events flow alongside text and tool call events. The streaming pipeline accumulates audio chunks internally and emits `.audioFinished` with the complete buffer after the stream ends. When the model returns audio without text content, the audio transcript is automatically used as the assistant's content in conversation history.
 
+### Text-to-Speech
+
+Convert text to speech using any TTS API. `TTSClient` handles sentence-boundary chunking, bounded-concurrency parallel generation, ordered reassembly, and MP3 concatenation:
+
+```swift
+let provider = OpenAITTSProvider(
+    apiKey: ProcessInfo.processInfo.environment["OPENAI_API_KEY"]!,
+    model: "tts-1"
+)
+let tts = TTSClient(provider: provider)
+
+// Single short text
+let audio = try await tts.generate(text: "Hello, world!")
+
+// Stream long text — segments yield in order as they complete
+for try await segment in tts.stream(text: articleBody) {
+    audioPlayer.enqueue(segment.audio)   // begin playback before all chunks finish
+    print("Segment \(segment.index + 1)/\(segment.total)")
+}
+
+// Collect all segments into one buffer (MP3-aware concatenation)
+let fullAudio = try await tts.generateAll(text: articleBody)
+```
+
+Voice, speed, and format are configurable per request:
+
+```swift
+let audio = try await tts.generate(
+    text: "Speak quickly in a different voice.",
+    voice: "nova",
+    options: TTSOptions(speed: 1.5, responseFormat: .wav)
+)
+```
+
+<details>
+<summary><b>Custom TTS Provider</b></summary>
+
+Implement `TTSProvider` to use any TTS API:
+
+```swift
+struct ElevenLabsProvider: TTSProvider, Sendable {
+    let config: TTSProviderConfig
+
+    init() {
+        config = TTSProviderConfig(
+            maxChunkCharacters: 5000,
+            defaultVoice: "rachel",
+            defaultFormat: .mp3
+        )
+    }
+
+    func generate(text: String, voice: String, options: TTSOptions) async throws -> Data {
+        // Build and execute your HTTP request here
+        // Return raw audio bytes
+    }
+}
+
+let tts = TTSClient(provider: ElevenLabsProvider(), maxConcurrent: 6)
+```
+
+`TTSProviderConfig.maxChunkCharacters` controls how text is split. The chunker uses `NLTokenizer(.sentence)` for sentence-boundary detection, falling back to word and character boundaries for oversized sentences.
+
+</details>
+
+<details>
+<summary><b>How Chunking and Concatenation Work</b></summary>
+
+`TTSClient.stream()` internally:
+
+1. Splits text on sentence boundaries respecting `provider.config.maxChunkCharacters`
+2. Launches up to `maxConcurrent` parallel generation tasks via `TaskGroup`
+3. Buffers out-of-order completions and yields `TTSSegment`s in strict index order
+4. Propagates cancellation — cancelling the stream's `Task` cancels all in-flight chunks
+
+`generateAll()` collects all segments from `stream()` and concatenates them. For MP3 output, `MP3Concatenator` strips ID3v2 headers, Xing/Info VBR frames, and ID3v1 tags from interior segments before joining. For other formats, segments are appended directly.
+
+Provider errors are wrapped as `TTSError.chunkFailed(index:total:)` with the underlying `TransportError`. `CancellationError` propagates unwrapped.
+
+</details>
+
 ### Structured Output
 
 Request JSON schema-constrained responses:
@@ -856,12 +937,31 @@ The `proxy()` factory omits `Authorization: Bearer` and `model` from requests.
 </details>
 
 <details>
+<summary><b>TTS Types</b></summary>
+
+| Type | Description |
+|------|-------------|
+| `TTSClient<P>` | Text-to-speech orchestrator with chunking and concurrency |
+| `TTSProvider` | Protocol for TTS service implementations |
+| `TTSProviderConfig` | Provider constraints (max chunk size, default voice/format) |
+| `TTSOptions` | Per-request options (speed, format override) |
+| `TTSAudioFormat` | Audio format enum (mp3, opus, aac, flac, wav, pcm) |
+| `TTSSegment` | Ordered audio chunk with index and total count |
+| `TTSError` | TTS-specific errors (emptyText, chunkFailed, invalidConfiguration) |
+| `OpenAITTSProvider` | Built-in provider for OpenAI's `/audio/speech` endpoint |
+| `MP3Concatenator` | MP3-aware segment joiner (strips ID3/Xing metadata) |
+| `SentenceChunker` | NLTokenizer-based text splitter |
+
+</details>
+
+<details>
 <summary><b>Error Types</b></summary>
 
 | Type | Description |
 |------|-------------|
 | `AgentError` | Typed agent framework errors |
 | `TransportError` | HTTP and network errors |
+| `TTSError` | TTS chunk and configuration errors |
 
 </details>
 
