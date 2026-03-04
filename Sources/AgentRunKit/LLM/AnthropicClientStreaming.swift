@@ -54,7 +54,9 @@ extension AnthropicClient {
         continuation: AsyncThrowingStream<StreamDelta, Error>.Continuation
     ) async throws -> Bool {
         switch type {
-        case .messageStart, .ping:
+        case .messageStart:
+            try await handleMessageStart(data: data, state: state)
+        case .ping:
             break
         case .contentBlockStart:
             try await handleBlockStart(
@@ -69,7 +71,7 @@ extension AnthropicClient {
                 data: data, state: state, continuation: continuation
             )
         case .messageDelta:
-            try handleMessageDelta(data: data, continuation: continuation)
+            try await handleMessageDelta(data: data, state: state, continuation: continuation)
         case .messageStop:
             return true
         case .error:
@@ -160,12 +162,29 @@ extension AnthropicClient {
         }
     }
 
+    private func handleMessageStart(
+        data: Data,
+        state: AnthropicStreamState
+    ) async throws {
+        let event = try decodeEvent(AnthropicMessageStartEvent.self, from: data)
+        await state.setInputUsage(event.message.usage)
+    }
+
     private func handleMessageDelta(
         data: Data,
+        state: AnthropicStreamState,
         continuation: AsyncThrowingStream<StreamDelta, Error>.Continuation
-    ) throws {
+    ) async throws {
         let event = try decodeEvent(AnthropicMessageDeltaEvent.self, from: data)
-        let usage = event.usage.map { TokenUsage(input: 0, output: $0.outputTokens) }
+        let outputTokens = event.usage?.outputTokens ?? 0
+        let inputUsage = await state.inputUsage
+
+        let usage = TokenUsage(
+            input: inputUsage?.inputTokens ?? 0,
+            output: outputTokens,
+            cacheRead: inputUsage?.cacheReadInputTokens,
+            cacheWrite: inputUsage?.cacheCreationInputTokens
+        )
         continuation.yield(.finished(usage: usage))
     }
 
@@ -192,6 +211,11 @@ actor AnthropicStreamState {
     private var thinkingText: [Int: String] = [:]
     private var signatures: [Int: String] = [:]
     private(set) var toolCallCount: Int = 0
+    private(set) var inputUsage: AnthropicUsage?
+
+    func setInputUsage(_ usage: AnthropicUsage) {
+        inputUsage = usage
+    }
 
     func setBlockType(_ index: Int, _ type: BlockType) {
         blockTypes[index] = type
@@ -324,6 +348,14 @@ private struct AnthropicDeltaUsage: Decodable {
     enum CodingKeys: String, CodingKey {
         case outputTokens = "output_tokens"
     }
+}
+
+private struct AnthropicMessageStartEvent: Decodable {
+    let message: AnthropicMessageStartMessage
+}
+
+private struct AnthropicMessageStartMessage: Decodable {
+    let usage: AnthropicUsage
 }
 
 private struct AnthropicStreamErrorEvent: Decodable {

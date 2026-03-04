@@ -116,19 +116,31 @@ enum AnthropicContentBlock: Encodable, Sendable {
     }
 }
 
+struct CacheControl: Encodable, Sendable {
+    let type = "ephemeral"
+}
+
 struct AnthropicSystemBlock: Encodable, Sendable {
     let type = "text"
     let text: String
+    var cacheControl: CacheControl?
+
+    enum CodingKeys: String, CodingKey {
+        case type, text
+        case cacheControl = "cache_control"
+    }
 }
 
 struct AnthropicToolDefinition: Encodable, Sendable {
     let name: String
     let description: String
     let inputSchema: JSONSchema
+    var cacheControl: CacheControl?
 
     enum CodingKeys: String, CodingKey {
         case name, description
         case inputSchema = "input_schema"
+        case cacheControl = "cache_control"
     }
 
     init(_ definition: ToolDefinition) {
@@ -218,10 +230,14 @@ enum AnthropicResponseBlock: Decodable, Sendable {
 struct AnthropicUsage: Decodable, Sendable {
     let inputTokens: Int
     let outputTokens: Int
+    let cacheCreationInputTokens: Int?
+    let cacheReadInputTokens: Int?
 
     enum CodingKeys: String, CodingKey {
         case inputTokens = "input_tokens"
         case outputTokens = "output_tokens"
+        case cacheCreationInputTokens = "cache_creation_input_tokens"
+        case cacheReadInputTokens = "cache_read_input_tokens"
     }
 }
 

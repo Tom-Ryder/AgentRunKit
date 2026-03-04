@@ -93,6 +93,70 @@ struct AnthropicContentBlockEncodingTests {
 }
 
 @Suite
+struct AnthropicCacheControlWireFormatTests {
+    private func encodeToDict(_ value: some Encodable) throws -> [String: Any] {
+        let data = try JSONEncoder().encode(value)
+        let object = try JSONSerialization.jsonObject(with: data)
+        guard let dict = object as? [String: Any] else {
+            preconditionFailure("Encoded value is not a JSON object: \(object)")
+        }
+        return dict
+    }
+
+    @Test
+    func systemBlockWithoutCacheControl() throws {
+        let block = AnthropicSystemBlock(text: "Be helpful")
+        let json = try encodeToDict(block)
+
+        #expect(json["type"] as? String == "text")
+        #expect(json["text"] as? String == "Be helpful")
+        #expect(json["cache_control"] == nil)
+        #expect(json.count == 2)
+    }
+
+    @Test
+    func systemBlockCacheControlWireFormat() throws {
+        var block = AnthropicSystemBlock(text: "Be helpful")
+        block.cacheControl = CacheControl()
+        let json = try encodeToDict(block)
+
+        #expect(json["type"] as? String == "text")
+        #expect(json["text"] as? String == "Be helpful")
+        let cacheControl = json["cache_control"] as? [String: Any]
+        #expect(cacheControl?["type"] as? String == "ephemeral")
+        #expect(json.count == 3)
+    }
+
+    @Test
+    func toolDefinitionCacheControlWireFormat() throws {
+        let def = ToolDefinition(
+            name: "search", description: "Search",
+            parametersSchema: .object(properties: [:], required: [])
+        )
+        var toolDef = AnthropicToolDefinition(def)
+        toolDef.cacheControl = CacheControl()
+        let json = try encodeToDict(toolDef)
+
+        #expect(json["name"] as? String == "search")
+        #expect(json["description"] as? String == "Search")
+        let cacheControl = json["cache_control"] as? [String: Any]
+        #expect(cacheControl?["type"] as? String == "ephemeral")
+    }
+
+    @Test
+    func toolDefinitionWithoutCacheControl() throws {
+        let def = ToolDefinition(
+            name: "search", description: "Search",
+            parametersSchema: .object(properties: [:], required: [])
+        )
+        let toolDef = AnthropicToolDefinition(def)
+        let json = try encodeToDict(toolDef)
+
+        #expect(json["cache_control"] == nil)
+    }
+}
+
+@Suite
 struct AnthropicErrorHandlingTests {
     @Test
     func malformedResponseThrowsDecodingError() {

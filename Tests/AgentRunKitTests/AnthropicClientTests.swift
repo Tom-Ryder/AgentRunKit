@@ -393,6 +393,80 @@ struct AnthropicBudgetMappingTests {
     }
 }
 
+@Suite
+struct AnthropicCachingRequestTests {
+    private let testTools = [
+        ToolDefinition(
+            name: "search", description: "Search",
+            parametersSchema: .object(properties: ["q": .string()], required: ["q"])
+        ),
+        ToolDefinition(
+            name: "lookup", description: "Lookup",
+            parametersSchema: .object(properties: ["id": .integer()], required: ["id"])
+        ),
+    ]
+
+    @Test
+    func cachingDisabledOmitsCacheControl() throws {
+        let client = AnthropicClient(apiKey: "k", model: "m", cachingEnabled: false)
+        let request = try client.buildRequest(
+            messages: [.system("Be helpful"), .user("Hi")],
+            tools: testTools
+        )
+        let json = try encodeRequest(request)
+
+        let system = json["system"] as? [[String: Any]]
+        #expect(system?.last?["cache_control"] == nil)
+
+        let tools = json["tools"] as? [[String: Any]]
+        #expect(tools?.last?["cache_control"] == nil)
+    }
+
+    @Test
+    func cachingEnabledMarksLastSystemBlock() throws {
+        let client = AnthropicClient(apiKey: "k", model: "m", cachingEnabled: true)
+        let request = try client.buildRequest(
+            messages: [.system("First"), .system("Second"), .user("Hi")],
+            tools: []
+        )
+        let json = try encodeRequest(request)
+
+        let system = json["system"] as? [[String: Any]]
+        #expect(system?.count == 2)
+        #expect(system?[0]["cache_control"] == nil)
+        let lastCC = system?[1]["cache_control"] as? [String: Any]
+        #expect(lastCC?["type"] as? String == "ephemeral")
+    }
+
+    @Test
+    func cachingEnabledMarksLastToolDefinition() throws {
+        let client = AnthropicClient(apiKey: "k", model: "m", cachingEnabled: true)
+        let request = try client.buildRequest(
+            messages: [.user("Hi")],
+            tools: testTools
+        )
+        let json = try encodeRequest(request)
+
+        let tools = json["tools"] as? [[String: Any]]
+        #expect(tools?.count == 2)
+        #expect(tools?[0]["cache_control"] == nil)
+        let lastCC = tools?[1]["cache_control"] as? [String: Any]
+        #expect(lastCC?["type"] as? String == "ephemeral")
+    }
+
+    @Test
+    func cachingWithNoSystemOrTools() throws {
+        let client = AnthropicClient(apiKey: "k", model: "m", cachingEnabled: true)
+        let request = try client.buildRequest(
+            messages: [.user("Hi")],
+            tools: []
+        )
+        let json = try encodeRequest(request)
+        #expect(json["system"] == nil)
+        #expect(json["tools"] == nil)
+    }
+}
+
 private enum TestAnthropicOutput: SchemaProviding {
     static var jsonSchema: JSONSchema { .object(properties: ["value": .string()], required: ["value"]) }
 }

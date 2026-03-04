@@ -1,3 +1,4 @@
 excluded:
   - .build
   - _reference
+  - Spike

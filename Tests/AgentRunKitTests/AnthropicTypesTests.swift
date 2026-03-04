@@ -233,6 +233,70 @@ struct AnthropicResponseParsingTests {
 }
 
 @Suite
+struct AnthropicCacheUsageParsingTests {
+    private func makeClient() -> AnthropicClient {
+        AnthropicClient(apiKey: "test-key", model: "claude-sonnet-4-6")
+    }
+
+    @Test
+    func cacheUsageParsedFromResponse() throws {
+        let json = """
+        {
+            "id": "msg_cache",
+            "type": "message",
+            "role": "assistant",
+            "content": [{"type": "text", "text": "Hi"}],
+            "stop_reason": "end_turn",
+            "usage": {
+                "input_tokens": 2500,
+                "output_tokens": 100,
+                "cache_creation_input_tokens": 2400,
+                "cache_read_input_tokens": 0
+            }
+        }
+        """
+        let msg = try makeClient().parseResponse(Data(json.utf8))
+        #expect(msg.tokenUsage?.input == 2500)
+        #expect(msg.tokenUsage?.output == 100)
+        #expect(msg.tokenUsage?.cacheWrite == 2400)
+        #expect(msg.tokenUsage?.cacheRead == 0)
+    }
+
+    @Test
+    func cacheUsageAbsentParsesAsNil() throws {
+        let json = """
+        {
+            "id": "msg_nocache",
+            "type": "message",
+            "role": "assistant",
+            "content": [{"type": "text", "text": "Hi"}],
+            "stop_reason": "end_turn",
+            "usage": {"input_tokens": 100, "output_tokens": 50}
+        }
+        """
+        let msg = try makeClient().parseResponse(Data(json.utf8))
+        #expect(msg.tokenUsage?.cacheRead == nil)
+        #expect(msg.tokenUsage?.cacheWrite == nil)
+    }
+
+    @Test
+    func tokenUsageAdditionWithCacheFields() {
+        let lhs = TokenUsage(input: 100, output: 50, cacheRead: 10, cacheWrite: 20)
+        let rhs = TokenUsage(input: 200, output: 100, cacheRead: 30, cacheWrite: nil)
+        let sum = lhs + rhs
+        #expect(sum.input == 300)
+        #expect(sum.output == 150)
+        #expect(sum.cacheRead == 40)
+        #expect(sum.cacheWrite == 20)
+
+        let noCacheLhs = TokenUsage(input: 50, output: 25)
+        let noCacheRhs = TokenUsage(input: 50, output: 25)
+        #expect((noCacheLhs + noCacheRhs).cacheRead == nil)
+        #expect((noCacheLhs + noCacheRhs).cacheWrite == nil)
+    }
+}
+
+@Suite
 struct AnthropicMessageTranslationTests {
     @Test
     func toolResultsMergedIntoSingleUserMessage() throws {

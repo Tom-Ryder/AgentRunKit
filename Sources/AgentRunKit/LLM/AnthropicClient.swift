@@ -10,6 +10,7 @@ public struct AnthropicClient: LLMClient, Sendable {
     let retryPolicy: RetryPolicy
     let reasoningConfig: ReasoningConfig?
     let interleavedThinking: Bool
+    let cachingEnabled: Bool
 
     public init(
         apiKey: String,
@@ -20,7 +21,8 @@ public struct AnthropicClient: LLMClient, Sendable {
         session: URLSession = .shared,
         retryPolicy: RetryPolicy = .default,
         reasoningConfig: ReasoningConfig? = nil,
-        interleavedThinking: Bool = true
+        interleavedThinking: Bool = true,
+        cachingEnabled: Bool = false
     ) {
         self.apiKey = apiKey
         modelIdentifier = model
@@ -31,6 +33,7 @@ public struct AnthropicClient: LLMClient, Sendable {
         self.retryPolicy = retryPolicy
         self.reasoningConfig = reasoningConfig
         self.interleavedThinking = interleavedThinking
+        self.cachingEnabled = cachingEnabled
     }
 
     public func generate(
@@ -92,11 +95,25 @@ extension AnthropicClient {
         extraFields: [String: JSONValue] = [:]
     ) throws -> AnthropicRequest {
         let (system, anthropicMessages) = try AnthropicMessageMapper.mapMessages(messages)
+        var toolDefs: [AnthropicToolDefinition]? = tools.isEmpty ? nil : tools.map(AnthropicToolDefinition.init)
+
+        var systemBlocks = system
+        if cachingEnabled {
+            if var last = systemBlocks?.popLast() {
+                last.cacheControl = CacheControl()
+                systemBlocks?.append(last)
+            }
+            if var last = toolDefs?.popLast() {
+                last.cacheControl = CacheControl()
+                toolDefs?.append(last)
+            }
+        }
+
         return try AnthropicRequest(
             model: modelIdentifier,
             messages: anthropicMessages,
-            system: system,
-            tools: tools.isEmpty ? nil : tools.map(AnthropicToolDefinition.init),
+            system: systemBlocks,
+            tools: toolDefs,
             maxTokens: maxTokens,
             stream: stream ? true : nil,
             thinking: buildThinkingConfig(),
@@ -193,7 +210,9 @@ extension AnthropicClient {
             toolCalls: toolCalls,
             tokenUsage: TokenUsage(
                 input: response.usage.inputTokens,
-                output: response.usage.outputTokens
+                output: response.usage.outputTokens,
+                cacheRead: response.usage.cacheReadInputTokens,
+                cacheWrite: response.usage.cacheCreationInputTokens
             ),
             reasoning: reasoningText.map { ReasoningContent(content: $0) },
             reasoningDetails: reasoningDetails.isEmpty ? nil : reasoningDetails

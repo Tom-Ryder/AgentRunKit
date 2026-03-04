@@ -33,6 +33,7 @@
   - [Agent with Tools](#agent-with-tools)
   - [Conversation History](#conversation-history)
   - [Streaming](#streaming)
+  - [Observable Streaming (SwiftUI)](#observable-streaming-swiftui)
   - [Reasoning Models](#reasoning-models)
   - [Multimodal Input](#multimodal-input)
   - [Audio Output](#audio-output)
@@ -101,6 +102,7 @@ dependencies: [
 | Interface | Use Case |
 |-----------|----------|
 | `Agent` | Tool-calling workflows. Loops until the model calls `finish`. |
+| `AgentStream` | SwiftUI binding. `@Observable` wrapper around `Agent.stream()`. |
 | `Chat` | Multi-turn conversations without agent overhead. |
 | `client.stream()` | Raw streaming with direct control over deltas. |
 | `client.generate()` | Single request/response without streaming. |
@@ -320,6 +322,58 @@ for try await delta in client.stream(messages: messages, tools: []) {
 > **Parallel tool execution:** When the LLM calls multiple tools in one turn, they run concurrently. `toolCallCompleted` events fire as each tool finishes — the fastest tool fires first, regardless of dispatch order. Tool results are appended to the LLM context in original dispatch order so the model sees a deterministic conversation.
 
 </details>
+
+### Observable Streaming (SwiftUI)
+
+`AgentStream` is an `@Observable` wrapper that projects `Agent.stream()` into reactive properties for SwiftUI:
+
+```swift
+import AgentRunKit
+
+struct ChatView: View {
+    let stream: AgentStream<EmptyContext>
+
+    var body: some View {
+        VStack {
+            ScrollView {
+                Text(stream.content)
+            }
+            ForEach(stream.toolCalls) { toolCall in
+                HStack {
+                    Text(toolCall.name)
+                    switch toolCall.state {
+                    case .running: ProgressView()
+                    case .completed(let result): Text(result)
+                    case .failed(let error): Text(error).foregroundColor(.red)
+                    }
+                }
+            }
+            if stream.isStreaming { ProgressView() }
+            if let error = stream.error {
+                Text("Error: \(error.localizedDescription)")
+            }
+            Button("Send") {
+                stream.send("Hello", context: EmptyContext())
+            }
+        }
+    }
+}
+```
+
+`send()` cancels any previous stream, resets state, and starts a new stream. All properties update live as tokens arrive. `cancel()` stops the current stream immediately.
+
+Available properties:
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `content` | `String` | Accumulated text from deltas |
+| `reasoning` | `String` | Accumulated reasoning from thinking models |
+| `isStreaming` | `Bool` | `true` while a stream is active |
+| `error` | `(any Error & Sendable)?` | Error if the stream failed |
+| `tokenUsage` | `TokenUsage?` | Token counts after completion |
+| `finishReason` | `FinishReason?` | How the agent finished |
+| `history` | `[ChatMessage]` | Conversation history for multi-turn |
+| `toolCalls` | `[ToolCallInfo]` | Tool call states (`.running`, `.completed`, `.failed`) |
 
 ### Reasoning Models
 
@@ -915,6 +969,34 @@ let result = try await agent.run(userMessage: "Analyze this problem", context: E
 Both `Agent` and `Chat` work identically with `AnthropicClient` — just swap the client at construction time. Streaming, tool calling, sub-agents, and MCP tools all work unchanged.
 
 <details>
+<summary><b>Prompt Caching</b></summary>
+
+Enable server-side caching of system prompts and tool definitions with `cachingEnabled`. Anthropic caches content blocks marked with `cache_control: {"type": "ephemeral"}` for 5 minutes (refreshed on use), giving a 90% input token discount on cache hits — significant savings in agent loops where the system prompt and tools are resent every iteration.
+
+```swift
+let client = AnthropicClient(
+    apiKey: apiKey,
+    model: "claude-sonnet-4-6",
+    maxTokens: 16384,
+    cachingEnabled: true
+)
+```
+
+When enabled, `buildRequest` marks the last system block and the last tool definition with `cache_control`. Cache token usage is reported on `TokenUsage`:
+
+```swift
+let result = try await agent.run(userMessage: "...", context: EmptyContext())
+if let cacheRead = result.totalTokenUsage.cacheRead {
+    print("Cache read tokens: \(cacheRead)")
+}
+if let cacheWrite = result.totalTokenUsage.cacheWrite {
+    print("Cache write tokens: \(cacheWrite)")
+}
+```
+
+</details>
+
+<details>
 <summary><b>Extended Thinking</b></summary>
 
 Extended thinking is configured via `ReasoningConfig`. Effort levels map to token budgets automatically:
@@ -1071,10 +1153,12 @@ The `proxy()` factory omits `Authorization: Bearer` and `model` from requests.
 | Type | Description |
 |------|-------------|
 | `Agent<C>` | Main agent loop coordinator |
+| `AgentStream<C>` | `@Observable` wrapper for SwiftUI streaming |
 | `AgentConfiguration` | Agent behavior settings |
 | `AgentResult` | Final result with content and token usage |
 | `Chat<C>` | Lightweight multi-turn chat interface |
 | `StreamEvent` | Streaming event types |
+| `ToolCallInfo` | Tool call state (`.running`, `.completed`, `.failed`) |
 
 </details>
 
@@ -1128,7 +1212,7 @@ The `proxy()` factory omits `Authorization: Bearer` and `model` from requests.
 |------|-------------|
 | `ChatMessage` | Conversation message enum |
 | `AssistantMessage` | LLM response with tool calls and reasoning |
-| `TokenUsage` | Token accounting (input, output, reasoning, total) |
+| `TokenUsage` | Token accounting (input, output, reasoning, cacheRead, cacheWrite, total) |
 | `ContentPart` | Multimodal content element |
 | `ReasoningContent` | Reasoning/thinking content |
 
