@@ -16,7 +16,7 @@
 </p>
 
 <p align="center">
-  <b>Zero dependencies</b> · <b>Full Sendable</b> · <b>Async/await</b> · <b>Multi-provider</b> · <b>MCP</b> · <b>Production-ready</b>
+  <b>Zero dependencies</b> · <b>Full Sendable</b> · <b>Async/await</b> · <b>Cloud + Local</b> · <b>MCP</b> · <b>Production-ready</b>
 </p>
 
 ---
@@ -35,6 +35,7 @@
   - [Streaming](#streaming)
   - [Observable Streaming (SwiftUI)](#observable-streaming-swiftui)
   - [Reasoning Models](#reasoning-models)
+  - [Local Inference (MLX)](#local-inference-mlx)
   - [Multimodal Input](#multimodal-input)
   - [Audio Output](#audio-output)
   - [Text-to-Speech](#text-to-speech)
@@ -51,6 +52,7 @@
   - [OpenAI Responses API](#openai-responses-api)
   - [ChatGPT Subscription (OAuth)](#chatgpt-subscription-oauth)
   - [Proxy Mode](#proxy-mode)
+  - [MLX (On-Device)](#mlx-on-device)
 - [API Reference](#api-reference)
 - [Requirements](#requirements)
 
@@ -61,12 +63,27 @@
 ```swift
 import AgentRunKit
 
+// Cloud
 let client = OpenAIClient(
     apiKey: ProcessInfo.processInfo.environment["OPENAI_API_KEY"]!,
     model: "gpt-4o",
     baseURL: OpenAIClient.openAIBaseURL
 )
+```
 
+```swift
+// Or local — on-device with MLX
+import AgentRunKitMLX
+import MLXLLM
+
+let container = try await LLMModelFactory.shared.loadContainer(
+    configuration: ModelConfiguration(id: "mlx-community/Qwen3.5-4B-4bit")
+)
+let client = MLXClient(container: container)
+```
+
+```swift
+// Same agent, same tools, same API — cloud or local
 let agent = Agent<EmptyContext>(client: client, tools: [])
 let result = try await agent.run(
     userMessage: "What is the capital of France?",
@@ -90,7 +107,26 @@ dependencies: [
 ```
 
 ```swift
+// Core — cloud APIs, zero external dependencies
 .target(name: "YourApp", dependencies: ["AgentRunKit"])
+```
+
+For local inference, add the MLX dependency:
+
+```swift
+dependencies: [
+    .package(url: "https://github.com/Tom-Ryder/AgentRunKit.git", from: "1.0.0"),
+    .package(url: "https://github.com/ml-explore/mlx-swift-lm", .upToNextMinor(from: "2.30.0"))
+]
+```
+
+```swift
+// Local inference — on-device via MLX on Apple Silicon
+.target(name: "YourApp", dependencies: [
+    "AgentRunKit",
+    "AgentRunKitMLX",
+    .product(name: "MLXLLM", package: "mlx-swift-lm")
+])
 ```
 
 ---
@@ -108,6 +144,8 @@ dependencies: [
 | `client.generate()` | Single request/response without streaming. |
 
 > **Note:** `Agent` requires the model to call its `finish` tool. For simple chat, use `Chat` to avoid `maxIterationsReached` errors.
+
+> All interfaces work identically with cloud (`OpenAIClient`, `AnthropicClient`, `ResponsesAPIClient`) and local (`MLXClient`) backends. Swap the client at construction time — everything else stays the same.
 
 ### Defining Tools
 
@@ -404,6 +442,13 @@ let client = ResponsesAPIClient(
     baseURL: ResponsesAPIClient.openAIBaseURL,
     reasoningConfig: .medium
 )
+
+// Local reasoning (on-device via MLX)
+let container = try await LLMModelFactory.shared.loadContainer(
+    configuration: ModelConfiguration(id: "mlx-community/Qwen3.5-4B-4bit")
+)
+let client = MLXClient(container: container)
+// <think> tags automatically separated — same .reasoning API as cloud providers
 ```
 
 Access reasoning content:
@@ -462,6 +507,69 @@ for try await event in agent.stream(
     }
 }
 ```
+
+</details>
+
+### Local Inference (MLX)
+
+Run open-weight models on-device via [MLX](https://github.com/ml-explore/mlx-swift) on Apple Silicon. No API keys, no network, full privacy.
+
+```swift
+import AgentRunKitMLX
+import MLXLLM
+
+let container = try await LLMModelFactory.shared.loadContainer(
+    configuration: ModelConfiguration(id: "mlx-community/Qwen3.5-4B-4bit")
+) { progress in
+    print("\(Int(progress.fractionCompleted * 100))%")
+}
+
+let client = MLXClient(container: container, parameters: GenerateParameters(maxTokens: 2048))
+```
+
+Works with any model from the [mlx-community](https://huggingface.co/mlx-community) Hub — Qwen 3.5, Liquid LFM2.5, and more. Reasoning models automatically populate `AssistantMessage.reasoning` via the built-in streaming think tag parser (supports configurable delimiters for models that use non-standard tags).
+
+**Streaming with reasoning separation:**
+
+```swift
+for try await delta in client.stream(messages: messages, tools: []) {
+    switch delta {
+    case .reasoning(let text): print("[Think] \(text)", terminator: "")
+    case .content(let text): print(text, terminator: "")
+    case .finished(let usage): print("\nTokens: \(usage?.total ?? 0)")
+    default: break
+    }
+}
+```
+
+**Tool calling** works unchanged — same tools, same agent loop:
+
+```swift
+let agent = Agent<EmptyContext>(client: client, tools: [weatherTool, calculatorTool])
+let result = try await agent.run(userMessage: "What's the weather?", context: EmptyContext())
+```
+
+<details>
+<summary><b>Extra Parameters</b></summary>
+
+Override generation parameters per-request via `RequestContext`:
+
+```swift
+let context = RequestContext(extraFields: ["temperature": .double(0.7)])
+let response = try await client.generate(
+    messages: messages, tools: [], responseFormat: nil, requestContext: context
+)
+```
+
+</details>
+
+<details>
+<summary><b>Platform Requirements</b></summary>
+
+- macOS 15+ / iOS 18+ (Apple Silicon required)
+- Metal GPU acceleration via MLX
+- Models download from Hugging Face Hub on first use (~2-4 GB for 4-bit quantized models)
+- `AgentRunKitMLX` is a separate target — the core `AgentRunKit` library remains dependency-free
 
 </details>
 
@@ -1144,6 +1252,22 @@ Useful for iOS apps where:
 
 The `proxy()` factory omits `Authorization: Bearer` and `model` from requests.
 
+### MLX (On-Device)
+
+`MLXClient` runs open-weight models locally on Apple Silicon via [MLX](https://github.com/ml-explore/mlx-swift). Same `LLMClient` protocol — streaming, tool calling, and reasoning separation all work identically to cloud providers.
+
+```swift
+import AgentRunKitMLX
+import MLXLLM
+
+let container = try await LLMModelFactory.shared.loadContainer(
+    configuration: ModelConfiguration(id: "mlx-community/Qwen3.5-4B-4bit")
+)
+let client = MLXClient(container: container)
+```
+
+Reasoning models (Qwen 3.5 and others that emit `<think>` tags) automatically populate `AssistantMessage.reasoning` — the same contract as `AnthropicClient` and `ResponsesAPIClient`. For models with non-standard thinking tags, configure the parser via `ThinkTagParser(openTag:closeTag:)`.
+
 ---
 
 ## API Reference
@@ -1198,6 +1322,8 @@ The `proxy()` factory omits `Authorization: Bearer` and `model` from requests.
 | `AnthropicClient` | Anthropic Messages API client (Claude Sonnet, Opus, Haiku) |
 | `OpenAIClient` | Chat Completions client (OpenAI, OpenRouter, Groq, etc.) |
 | `ResponsesAPIClient` | OpenAI Responses API client (GPT-5.2, GPT-5.2-codex) |
+| `MLXClient` | On-device inference via MLX on Apple Silicon (Qwen 3.5, Liquid LFM2.5, etc.) |
+| `ThinkTagParser` | Streaming `<think>` tag parser with configurable delimiters |
 | `ResponseFormat` | Structured output configuration |
 | `RetryPolicy` | Exponential backoff settings |
 | `ReasoningConfig` | Reasoning effort for thinking models |
