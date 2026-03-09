@@ -7,6 +7,7 @@
 <p align="center">
   <img src="https://img.shields.io/badge/Swift-6.0-orange" alt="Swift 6.0">
   <img src="https://img.shields.io/badge/Platforms-iOS%2018%20%7C%20macOS%2015-blue" alt="Platforms">
+  <img src="https://img.shields.io/badge/On--Device-MLX%20%7C%20Apple%20Silicon-8B5CF6" alt="On-Device MLX">
   <img src="https://img.shields.io/badge/SPM-compatible-brightgreen" alt="SPM">
   <img src="https://img.shields.io/badge/License-MIT-lightgrey" alt="License">
 </p>
@@ -16,7 +17,7 @@
 </p>
 
 <p align="center">
-  <b>Zero dependencies</b> · <b>Full Sendable</b> · <b>Async/await</b> · <b>Cloud + Local</b> · <b>MCP</b> · <b>Production-ready</b>
+  <b>Zero dependencies</b> · <b>Full Sendable</b> · <b>Async/await</b> · <b>Cloud + Local</b> · <b>MCP</b>
 </p>
 
 ---
