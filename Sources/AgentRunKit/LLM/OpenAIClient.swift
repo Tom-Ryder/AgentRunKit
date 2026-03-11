@@ -3,6 +3,7 @@ import Foundation
 public struct OpenAIClient: LLMClient, Sendable {
     public let modelIdentifier: String?
     public let maxTokens: Int
+    public let contextWindowSize: Int?
     let apiKey: String?
     let baseURL: URL
     let chatCompletionPath: String
@@ -15,6 +16,7 @@ public struct OpenAIClient: LLMClient, Sendable {
         apiKey: String? = nil,
         model: String? = nil,
         maxTokens: Int = 16384,
+        contextWindowSize: Int? = nil,
         baseURL: URL,
         chatCompletionPath: String = "chat/completions",
         additionalHeaders: @Sendable @escaping () -> [String: String] = { [:] },
@@ -25,6 +27,7 @@ public struct OpenAIClient: LLMClient, Sendable {
         self.apiKey = apiKey
         modelIdentifier = model
         self.maxTokens = maxTokens
+        self.contextWindowSize = contextWindowSize
         self.baseURL = baseURL
         self.chatCompletionPath = chatCompletionPath
         self.additionalHeaders = additionalHeaders
@@ -324,6 +327,7 @@ public extension OpenAIClient {
     static func proxy(
         baseURL: URL,
         maxTokens: Int = 16384,
+        contextWindowSize: Int? = nil,
         chatCompletionPath: String = "chat/completions",
         additionalHeaders: @Sendable @escaping () -> [String: String] = { [:] },
         session: URLSession = .shared,
@@ -334,6 +338,7 @@ public extension OpenAIClient {
             apiKey: nil,
             model: nil,
             maxTokens: maxTokens,
+            contextWindowSize: contextWindowSize,
             baseURL: baseURL,
             chatCompletionPath: chatCompletionPath,
             additionalHeaders: additionalHeaders,

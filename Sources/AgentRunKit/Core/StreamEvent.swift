@@ -13,4 +13,5 @@ public enum StreamEvent: Sendable, Equatable {
     indirect case subAgentEvent(toolCallId: String, toolName: String, event: StreamEvent)
     case subAgentCompleted(toolCallId: String, toolName: String, result: ToolResult)
     case iterationCompleted(usage: TokenUsage, iteration: Int)
+    case compacted(totalTokens: Int, windowSize: Int)
 }

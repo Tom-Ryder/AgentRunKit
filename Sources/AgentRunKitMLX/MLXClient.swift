@@ -6,15 +6,18 @@ import MLXLMCommon
 public struct MLXClient: LLMClient, Sendable {
     public let container: ModelContainer
     public let modelIdentifier: String?
+    public let contextWindowSize: Int?
     public let generateParameters: GenerateParameters
 
     public init(
         container: ModelContainer,
         model: String? = nil,
+        contextWindowSize: Int? = nil,
         parameters: GenerateParameters = GenerateParameters()
     ) {
         self.container = container
         modelIdentifier = model
+        self.contextWindowSize = contextWindowSize
         generateParameters = parameters
     }
 

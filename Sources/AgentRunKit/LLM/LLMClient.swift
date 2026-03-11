@@ -1,6 +1,8 @@
 import Foundation
 
 public protocol LLMClient: Sendable {
+    var contextWindowSize: Int? { get }
+
     func generate(
         messages: [ChatMessage],
         tools: [ToolDefinition],
@@ -16,6 +18,8 @@ public protocol LLMClient: Sendable {
 }
 
 public extension LLMClient {
+    var contextWindowSize: Int? { nil }
+
     func generate(
         messages: [ChatMessage],
         tools: [ToolDefinition],

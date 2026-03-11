@@ -43,6 +43,7 @@
   - [Structured Output](#structured-output)
   - [Sub-Agents](#sub-agents)
   - [MCP Tools](#mcp-tools)
+  - [Context Management](#context-management)
   - [Error Handling](#error-handling)
 - [Configuration](#configuration)
   - [Agent Configuration](#agent-configuration)
@@ -357,6 +358,8 @@ for try await delta in client.stream(messages: messages, tools: []) {
 | `.audioTranscript(String)` | `.audioTranscript(String)` |
 | `.audioFinished(id:expiresAt:data:)` | `.audioStarted(id:expiresAt:)` |
 | `.finished(tokenUsage:content:reason:history:)` | `.finished(usage:)` |
+| `.compacted(totalTokens:windowSize:)` | — |
+| `.iterationCompleted(usage:iteration:)` | — |
 
 > **Parallel tool execution:** When the LLM calls multiple tools in one turn, they run concurrently. `toolCallCompleted` events fire as each tool finishes — the fastest tool fires first, regardless of dispatch order. Tool results are appended to the LLM context in original dispatch order so the model sees a deterministic conversation.
 
@@ -927,6 +930,60 @@ let session = MCPSession(
 
 </details>
 
+### Context Management
+
+Long-running agent sessions can exhaust the model's context window. AgentRunKit provides automatic context compaction — a two-phase strategy that keeps conversations productive within token limits.
+
+Enable it by setting `contextWindowSize` on the client and `compactionThreshold` on the configuration:
+
+```swift
+let client = OpenAIClient(
+    apiKey: apiKey,
+    model: "gpt-4o",
+    contextWindowSize: 128_000,  // Model's context window
+    baseURL: OpenAIClient.openAIBaseURL
+)
+
+let config = AgentConfiguration(
+    maxIterations: 50,
+    systemPrompt: "You are a coding assistant.",
+    compactionThreshold: 0.7,          // Compact when 70% of window is used
+    compactionPrompt: "Summarize focusing on code changes and decisions made.",  // Custom summarization
+    maxToolResultCharacters: 30_000    // Truncate large tool results (middle-out)
+)
+
+let agent = Agent<EmptyContext>(client: client, tools: tools, configuration: config)
+```
+
+**How it works:**
+
+When total token usage exceeds the threshold, the agent applies a two-phase cascade:
+
+1. **Observation pruning** (free) — Replaces old tool results with short placeholders. If this reduces tool result volume by >20%, it's used as-is.
+2. **LLM summarization** (one extra API call) — Sends the conversation to the model with a structured checkpoint prompt. The summary replaces the middle of the conversation, preserving the system prompt, initial user message, and most recent assistant/tool exchange. Customize the summarization prompt via `compactionPrompt` — the default captures task objectives, progress, current state, remaining work, and critical context.
+
+If summarization fails, the agent falls back to message-count truncation (`maxMessages`). Both phases are opt-in — without `compactionThreshold`, the agent uses the existing `maxMessages` truncation (or no management at all).
+
+**Tool result truncation** applies independently at recording time. Large tool outputs are trimmed with a middle-out strategy (prefix + suffix preserved, middle replaced with a marker), preventing a single tool result from consuming the context window.
+
+<details>
+<summary><b>Streaming Observability</b></summary>
+
+When compaction occurs during streaming, a `.compacted` event is emitted:
+
+```swift
+for try await event in agent.stream(userMessage: "...", context: EmptyContext()) {
+    switch event {
+    case .compacted(let totalTokens, let windowSize):
+        print("Context compacted at \(totalTokens)/\(windowSize) tokens")
+    default:
+        break
+    }
+}
+```
+
+</details>
+
 ### Error Handling
 
 ```swift
@@ -971,10 +1028,13 @@ do {
 
 ```swift
 let config = AgentConfiguration(
-    maxIterations: 10,          // Max tool-calling rounds
-    maxMessages: 50,            // Context truncation limit
-    toolTimeout: .seconds(30),  // Per-tool timeout
-    systemPrompt: "You are a helpful assistant."
+    maxIterations: 10,              // Max tool-calling rounds
+    toolTimeout: .seconds(30),      // Per-tool timeout
+    systemPrompt: "You are a helpful assistant.",
+    maxMessages: 50,                // Message-count truncation (fallback)
+    compactionThreshold: 0.7,       // Compact at 70% context window usage
+    compactionPrompt: "Custom summarization instructions.",  // nil = built-in prompt
+    maxToolResultCharacters: 30_000 // Middle-out tool result truncation
 )
 ```
 
@@ -1401,6 +1461,8 @@ Implement `LLMClient` for non-OpenAI-compatible providers:
 
 ```swift
 public protocol LLMClient: Sendable {
+    var contextWindowSize: Int? { get }  // Enables context compaction
+
     func generate(
         messages: [ChatMessage],
         tools: [ToolDefinition],

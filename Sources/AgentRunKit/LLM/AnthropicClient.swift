@@ -3,6 +3,7 @@ import Foundation
 public struct AnthropicClient: LLMClient, Sendable {
     public let modelIdentifier: String?
     public let maxTokens: Int
+    public let contextWindowSize: Int?
     let apiKey: String
     let baseURL: URL
     let additionalHeaders: @Sendable () -> [String: String]
@@ -16,6 +17,7 @@ public struct AnthropicClient: LLMClient, Sendable {
         apiKey: String,
         model: String? = nil,
         maxTokens: Int = 8192,
+        contextWindowSize: Int? = nil,
         baseURL: URL = AnthropicClient.anthropicBaseURL,
         additionalHeaders: @Sendable @escaping () -> [String: String] = { [:] },
         session: URLSession = .shared,
@@ -27,6 +29,7 @@ public struct AnthropicClient: LLMClient, Sendable {
         self.apiKey = apiKey
         modelIdentifier = model
         self.maxTokens = maxTokens
+        self.contextWindowSize = contextWindowSize
         self.baseURL = baseURL
         self.additionalHeaders = additionalHeaders
         self.session = session

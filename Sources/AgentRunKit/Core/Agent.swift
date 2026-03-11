@@ -92,19 +92,28 @@ public final class Agent<C: ToolContext>: Sendable {
         )
 
         var totalUsage = TokenUsage()
+        var lastTotalTokens: Int?
+        let compactor = ContextCompactor(
+            client: client, toolDefinitions: toolDefinitions, configuration: configuration
+        )
 
         for iteration in 1 ... configuration.maxIterations {
             try Task.checkCancellation()
 
-            let truncatedMessages = truncateIfNeeded(messages)
+            await compactor.compactOrTruncateIfNeeded(
+                &messages, lastTotalTokens: lastTotalTokens, totalUsage: &totalUsage
+            )
             let response = try await client.generate(
-                messages: truncatedMessages,
+                messages: messages,
                 tools: toolDefinitions,
                 responseFormat: nil,
                 requestContext: requestContext
             )
             messages.append(.assistant(response))
-            if let usage = response.tokenUsage { totalUsage += usage }
+            if let usage = response.tokenUsage {
+                totalUsage += usage
+                lastTotalTokens = usage.total
+            }
 
             if let finishCall = response.toolCalls.first(where: { $0.name == "finish" }) {
                 return try parseFinishResult(
@@ -124,17 +133,15 @@ public final class Agent<C: ToolContext>: Sendable {
                     response.toolCalls, context: context.withParentHistory(messages)
                 )
                 for (call, result) in results {
-                    messages.append(.tool(id: call.id, name: call.name, content: result.content))
+                    let content = ContextCompactor.truncateToolResult(
+                        result.content, configuration: configuration
+                    )
+                    messages.append(.tool(id: call.id, name: call.name, content: content))
                 }
             }
         }
 
         throw AgentError.maxIterationsReached(iterations: configuration.maxIterations)
-    }
-
-    private func truncateIfNeeded(_ messages: [ChatMessage]) -> [ChatMessage] {
-        guard let maxMessages = configuration.maxMessages else { return messages }
-        return messages.truncated(to: maxMessages, preservingSystemPrompt: true)
     }
 
     public func stream(
@@ -223,21 +230,31 @@ public final class Agent<C: ToolContext>: Sendable {
             userMessage: userMessage, history: history, systemPromptOverride: systemPromptOverride
         )
         var totalUsage = TokenUsage()
+        var lastTotalTokens: Int?
         let policy = StreamPolicy.agent
         let processor = StreamProcessor(client: client, toolDefinitions: toolDefinitions, policy: policy)
+        let compactor = ContextCompactor(
+            client: client, toolDefinitions: toolDefinitions, configuration: configuration
+        )
 
         for iterationNumber in 1 ... configuration.maxIterations {
             try Task.checkCancellation()
 
-            let truncatedMessages = truncateIfNeeded(messages)
+            let compacted = await compactor.compactOrTruncateIfNeeded(
+                &messages, lastTotalTokens: lastTotalTokens, totalUsage: &totalUsage
+            )
+            if compacted, let totalTokens = lastTotalTokens, let windowSize = client.contextWindowSize {
+                continuation.yield(.compacted(totalTokens: totalTokens, windowSize: windowSize))
+            }
             let iteration = try await processor.process(
-                messages: truncatedMessages,
+                messages: messages,
                 totalUsage: &totalUsage,
                 continuation: continuation,
                 requestContext: requestContext
             )
 
             if let usage = iteration.usage {
+                lastTotalTokens = usage.total
                 continuation.yield(.iterationCompleted(usage: usage, iteration: iterationNumber))
             }
 
@@ -256,7 +273,10 @@ public final class Agent<C: ToolContext>: Sendable {
                     executableTools, context: context.withParentHistory(messages), continuation: continuation
                 )
                 for (call, result) in results {
-                    messages.append(.tool(id: call.id, name: call.name, content: result.content))
+                    let content = ContextCompactor.truncateToolResult(
+                        result.content, configuration: configuration
+                    )
+                    messages.append(.tool(id: call.id, name: call.name, content: content))
                 }
             }
 

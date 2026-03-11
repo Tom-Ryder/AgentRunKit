@@ -122,6 +122,8 @@ public final class AgentStream<C: ToolContext> {
             break
         case let .iterationCompleted(usage, _):
             iterationUsages.append(usage)
+        case .compacted:
+            break
         }
     }
 }

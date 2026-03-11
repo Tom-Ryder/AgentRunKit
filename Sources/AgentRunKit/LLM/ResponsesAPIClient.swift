@@ -3,6 +3,7 @@ import Foundation
 public actor ResponsesAPIClient: LLMClient {
     public nonisolated let modelIdentifier: String?
     public nonisolated let maxOutputTokens: Int?
+    public nonisolated let contextWindowSize: Int?
     nonisolated let apiKey: String?
     nonisolated let baseURL: URL
     nonisolated let responsesPath: String
@@ -19,6 +20,7 @@ public actor ResponsesAPIClient: LLMClient {
         apiKey: String? = nil,
         model: String? = nil,
         maxOutputTokens: Int? = nil,
+        contextWindowSize: Int? = nil,
         baseURL: URL,
         responsesPath: String = "responses",
         additionalHeaders: @Sendable @escaping () -> [String: String] = { [:] },
@@ -30,6 +32,7 @@ public actor ResponsesAPIClient: LLMClient {
         self.apiKey = apiKey
         modelIdentifier = model
         self.maxOutputTokens = maxOutputTokens
+        self.contextWindowSize = contextWindowSize
         self.baseURL = baseURL
         self.responsesPath = responsesPath
         self.additionalHeaders = additionalHeaders

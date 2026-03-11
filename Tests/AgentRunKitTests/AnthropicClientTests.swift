@@ -568,7 +568,9 @@ struct AnthropicConversationCachingTests {
         let msgs = json["messages"] as? [[String: Any]]
         #expect(msgs?.count == 4)
 
-        #expect(msgs?[0]["content"] as? String == "Find info")
+        let firstContent = msgs?[0]["content"] as? [[String: Any]]
+        #expect(firstContent?[0]["text"] as? String == "Find info")
+        #expect(firstContent?[0]["cache_control"] != nil)
 
         let toolResultUser = msgs?[2]["content"] as? [[String: Any]]
         #expect(toolResultUser?[0]["type"] as? String == "tool_result")
