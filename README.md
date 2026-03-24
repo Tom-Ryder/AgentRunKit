@@ -7,7 +7,7 @@
 <p align="center">
   <img src="https://img.shields.io/badge/Swift-6.0-orange" alt="Swift 6.0">
   <img src="https://img.shields.io/badge/Platforms-iOS%2018%20%7C%20macOS%2015-blue" alt="Platforms">
-  <img src="https://img.shields.io/badge/On--Device-MLX%20%7C%20Apple%20Silicon-8B5CF6" alt="On-Device MLX">
+  <img src="https://img.shields.io/badge/On--Device-MLX%20%7C%20Foundation%20Models-8B5CF6" alt="On-Device MLX + Foundation Models">
   <img src="https://img.shields.io/badge/SPM-compatible-brightgreen" alt="SPM">
   <img src="https://img.shields.io/badge/License-MIT-lightgrey" alt="License">
 </p>
@@ -37,6 +37,7 @@
   - [Observable Streaming (SwiftUI)](#observable-streaming-swiftui)
   - [Reasoning Models](#reasoning-models)
   - [Local Inference (MLX)](#local-inference-mlx)
+  - [Apple Foundation Models](#apple-foundation-models)
   - [Multimodal Input](#multimodal-input)
   - [Audio Output](#audio-output)
   - [Text-to-Speech](#text-to-speech)
@@ -55,6 +56,7 @@
   - [ChatGPT Subscription (OAuth)](#chatgpt-subscription-oauth)
   - [Proxy Mode](#proxy-mode)
   - [MLX (On-Device)](#mlx-on-device)
+  - [Apple Foundation Models (On-Device)](#apple-foundation-models-on-device)
 - [API Reference](#api-reference)
 - [Requirements](#requirements)
 
@@ -82,6 +84,14 @@ let container = try await LLMModelFactory.shared.loadContainer(
     configuration: ModelConfiguration(id: "mlx-community/Qwen3.5-4B-4bit")
 )
 let client = MLXClient(container: container)
+```
+
+```swift
+// Or on-device with Apple Foundation Models
+import AgentRunKitFoundationModels
+
+let agent = Agent.onDevice(tools: [weatherTool], context: EmptyContext())
+let result = try await agent.run(userMessage: "What's the weather?", context: EmptyContext())
 ```
 
 ```swift
@@ -131,6 +141,16 @@ dependencies: [
 ])
 ```
 
+For Apple Foundation Models (iOS 26+ / macOS 26+), no external dependencies needed:
+
+```swift
+// On-device via Apple Foundation Models
+.target(name: "YourApp", dependencies: [
+    "AgentRunKit",
+    "AgentRunKitFoundationModels",
+])
+```
+
 ---
 
 ## Core Concepts
@@ -147,7 +167,7 @@ dependencies: [
 
 > **Note:** `Agent` requires the model to call its `finish` tool. For simple chat, use `Chat` to avoid `maxIterationsReached` errors.
 
-> All interfaces work identically with cloud (`OpenAIClient`, `AnthropicClient`, `ResponsesAPIClient`) and local (`MLXClient`) backends. Swap the client at construction time — everything else stays the same.
+> All interfaces work identically with cloud (`OpenAIClient`, `AnthropicClient`, `ResponsesAPIClient`) and local (`MLXClient`, `FoundationModelsClient`) backends. Swap the client at construction time — everything else stays the same.
 
 ### Defining Tools
 
@@ -574,6 +594,64 @@ let response = try await client.generate(
 - Metal GPU acceleration via MLX
 - Models download from Hugging Face Hub on first use (~2-4 GB for 4-bit quantized models)
 - `AgentRunKitMLX` is a separate target — the core `AgentRunKit` library remains dependency-free
+
+</details>
+
+### Apple Foundation Models
+
+Run agents on Apple's built-in on-device model via the `FoundationModels` framework. The same tools work on-device and in the cloud with no code changes.
+
+```swift
+import AgentRunKitFoundationModels
+
+let agent = Agent.onDevice(
+    tools: [weatherTool, calculatorTool],
+    context: EmptyContext(),
+    instructions: "You are a helpful assistant."
+)
+let result = try await agent.run(userMessage: "What is 42 * 17?", context: EmptyContext())
+```
+
+`FoundationModelsClient` conforms to `LLMClient` and bridges `AnyTool<C>` to Apple's `Tool` protocol via `GeneratedContent` arguments with runtime-constructed `DynamicGenerationSchema`. The on-device model uses constrained decoding for tool arguments — the same schema that drives cloud APIs drives on-device generation.
+
+**Streaming** works with the same `Agent.stream()` API:
+
+```swift
+for try await event in agent.stream(userMessage: "What's the weather?", context: EmptyContext()) {
+    switch event {
+    case .delta(let text): print(text, terminator: "")
+    case .finished(_, let content, _, _): print("\nDone: \(content ?? "")")
+    default: break
+    }
+}
+```
+
+You can also use `FoundationModelsClient` directly without the agent loop:
+
+```swift
+let client = FoundationModelsClient(tools: [myTool], context: EmptyContext())
+let response = try await client.generate(messages: [.user("Hello")], tools: [])
+```
+
+<details>
+<summary><b>How It Works</b></summary>
+
+Apple's `LanguageModelSession` auto-dispatches tools — the developer never sees raw tool calls. `FoundationModelsClient` adapts this by:
+
+1. Converting `JSONSchema` to `DynamicGenerationSchema` for FM's constrained decoding
+2. Wrapping each `AnyTool<C>` as a `FoundationModels.Tool` via `FMToolAdapter`
+3. Letting the session execute tools internally
+4. Synthesizing a `finish` tool call to terminate the agent loop in one iteration
+
+</details>
+
+<details>
+<summary><b>Platform Requirements</b></summary>
+
+- macOS 26+ / iOS 26+ (Apple Intelligence required)
+- No external dependencies — `FoundationModels` is a system framework
+- 4096-token context window (on-device model constraint)
+- `AgentRunKitFoundationModels` is a separate target — the core library remains dependency-free
 
 </details>
 
@@ -1329,6 +1407,19 @@ let client = MLXClient(container: container)
 
 Reasoning models (Qwen 3.5 and others that emit `<think>` tags) automatically populate `AssistantMessage.reasoning` — the same contract as `AnthropicClient` and `ResponsesAPIClient`. For models with non-standard thinking tags, configure the parser via `ThinkTagParser(openTag:closeTag:)`.
 
+### Apple Foundation Models (On-Device)
+
+`FoundationModelsClient` runs agents on Apple's built-in on-device model via the `FoundationModels` framework (iOS 26+ / macOS 26+). Same `LLMClient` protocol — the same tools work on-device and in the cloud.
+
+```swift
+import AgentRunKitFoundationModels
+
+let agent = Agent.onDevice(tools: [myTool], context: EmptyContext())
+let result = try await agent.run(userMessage: "Hello", context: EmptyContext())
+```
+
+The client bridges `AnyTool` definitions to Apple's `Tool` protocol at runtime via `DynamicGenerationSchema`, enabling constrained decoding for tool arguments without requiring `@Generable` annotations on your parameter types.
+
 ---
 
 ## API Reference
@@ -1384,6 +1475,7 @@ Reasoning models (Qwen 3.5 and others that emit `<think>` tags) automatically po
 | `OpenAIClient` | Chat Completions client (OpenAI, OpenRouter, Groq, etc.) |
 | `ResponsesAPIClient` | OpenAI Responses API client (GPT-5.2, GPT-5.2-codex) |
 | `MLXClient` | On-device inference via MLX on Apple Silicon (Qwen 3.5, Liquid LFM2.5, etc.) |
+| `FoundationModelsClient` | On-device inference via Apple Foundation Models (iOS 26+ / macOS 26+) |
 | `ThinkTagParser` | Streaming `<think>` tag parser with configurable delimiters |
 | `ResponseFormat` | Structured output configuration |
 | `RetryPolicy` | Exponential backoff settings |

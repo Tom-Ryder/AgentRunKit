@@ -1,6 +1,11 @@
 import Foundation
 
-struct FinishArguments: Codable, Sendable {
-    let content: String
-    let reason: String?
+public struct FinishArguments: Codable, Sendable {
+    public let content: String
+    public let reason: String?
+
+    public init(content: String, reason: String? = nil) {
+        self.content = content
+        self.reason = reason
+    }
 }

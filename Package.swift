@@ -10,7 +10,8 @@ let package = Package(
     ],
     products: [
         .library(name: "AgentRunKit", targets: ["AgentRunKit"]),
-        .library(name: "AgentRunKitMLX", targets: ["AgentRunKitMLX"])
+        .library(name: "AgentRunKitMLX", targets: ["AgentRunKitMLX"]),
+        .library(name: "AgentRunKitFoundationModels", targets: ["AgentRunKitFoundationModels"])
     ],
     dependencies: [
         .package(url: "https://github.com/ml-explore/mlx-swift-lm", .upToNextMinor(from: "2.30.0"))
@@ -26,6 +27,14 @@ let package = Package(
                 .product(name: "MLXLLM", package: "mlx-swift-lm")
             ]
         ),
-        .testTarget(name: "AgentRunKitMLXTests", dependencies: ["AgentRunKitMLX"])
+        .testTarget(name: "AgentRunKitMLXTests", dependencies: ["AgentRunKitMLX"]),
+        .target(
+            name: "AgentRunKitFoundationModels",
+            dependencies: ["AgentRunKit"]
+        ),
+        .testTarget(
+            name: "AgentRunKitFoundationModelsTests",
+            dependencies: ["AgentRunKitFoundationModels"]
+        )
     ]
 )
