@@ -177,7 +177,19 @@ struct VertexAnthropicRequest: Encodable {
     let inner: AnthropicRequest
 
     func encode(to encoder: any Encoder) throws {
-        try inner.encode(to: encoder)
+        // Re-encode the inner request without the `model` field, which is
+        // specified in the Vertex AI URL path and rejected in the body.
+        let withoutModel = AnthropicRequest(
+            model: nil,
+            messages: inner.messages,
+            system: inner.system,
+            tools: inner.tools,
+            maxTokens: inner.maxTokens,
+            stream: inner.stream,
+            thinking: inner.thinking,
+            extraFields: inner.extraFields
+        )
+        try withoutModel.encode(to: encoder)
         var container = encoder.container(keyedBy: DynamicCodingKey.self)
         try container.encode(
             Self.vertexAnthropicVersion,

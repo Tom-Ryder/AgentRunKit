@@ -122,7 +122,7 @@ struct VertexAnthropicRequestTests {
         let json = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
 
         #expect(json["max_tokens"] as? Int == 4096)
-        #expect(json["model"] as? String == "claude-sonnet-4-6")
+        #expect(json["model"] == nil, "model must not appear in Vertex request body")
 
         let messages = json["messages"] as? [[String: Any]]
         #expect(messages?.count == 1)
