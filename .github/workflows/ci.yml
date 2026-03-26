@@ -1,0 +1,68 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+    paths-ignore: ['**.md']
+  pull_request:
+    paths-ignore: ['**.md']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    runs-on: macos-26
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - name: Install Mint
+        run: brew install mint
+      - uses: actions/cache@cdf6c1fa76f9f475f3d7449005a359c84ca0f306 # v5.0.3
+        with:
+          path: ~/.mint
+          key: mint-${{ hashFiles('Mintfile') }}
+          restore-keys: mint-
+      - name: Bootstrap tools
+        run: mint bootstrap
+      - name: SwiftFormat
+        run: mint run swiftformat --lint .
+      - name: SwiftLint
+        run: mint run swiftlint --strict
+
+  test-macos:
+    runs-on: macos-26
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - uses: actions/cache@cdf6c1fa76f9f475f3d7449005a359c84ca0f306 # v5.0.3
+        with:
+          path: .build
+          key: macos-spm-${{ hashFiles('Package.resolved', 'Package.swift') }}
+          restore-keys: macos-spm-
+      - name: Run tests
+        run: swift test --parallel -Xswiftc -warnings-as-errors
+
+  check:
+    if: always()
+    needs: [lint, test-macos]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Verify all jobs passed
+        run: |
+          if [[ "${{ needs.lint.result }}" != "success" || \
+                "${{ needs.test-macos.result }}" != "success" ]]; then
+            echo "Required jobs failed:"
+            echo "  lint: ${{ needs.lint.result }}"
+            echo "  test-macos: ${{ needs.test-macos.result }}"
+            exit 1
+          fi

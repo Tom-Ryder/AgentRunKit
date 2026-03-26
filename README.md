@@ -52,6 +52,7 @@
   - [Per-Request Customization](#per-request-customization)
 - [LLM Providers](#llm-providers)
   - [Anthropic Messages API](#anthropic-messages-api)
+  - [Google Gemini](#google-gemini)
   - [OpenAI Responses API](#openai-responses-api)
   - [ChatGPT Subscription (OAuth)](#chatgpt-subscription-oauth)
   - [Proxy Mode](#proxy-mode)
@@ -459,10 +460,10 @@ let client = OpenAIClient(
     reasoningConfig: .high
 )
 
-// Via OpenAI Responses API (native reasoning with GPT-5.2)
+// Via OpenAI Responses API (native reasoning with GPT-5.4)
 let client = ResponsesAPIClient(
     apiKey: apiKey,
-    model: "gpt-5.2",
+    model: "gpt-5.4",
     baseURL: ResponsesAPIClient.openAIBaseURL,
     reasoningConfig: .medium
 )
@@ -1303,6 +1304,23 @@ The header closure is evaluated per request, enabling dynamic values.
 
 </details>
 
+### Google Gemini
+
+`GeminiClient` speaks the [Gemini REST API](https://ai.google.dev/api/generate-content) natively — thinking, tool calling, structured output, and streaming.
+
+```swift
+let client = GeminiClient(
+    apiKey: ProcessInfo.processInfo.environment["GEMINI_API_KEY"]!,
+    model: "gemini-3.1-pro-preview",
+    reasoningConfig: .high
+)
+
+let agent = Agent<EmptyContext>(client: client, tools: [myTool])
+let result = try await agent.run(userMessage: "Analyze this data", context: EmptyContext())
+```
+
+Works with any Gemini model — 2.5 Flash, 2.5 Pro, 3 Flash, 3.1 Pro, 3.1 Flash-Lite, and the `customtools` variant. Thinking budget and effort levels map to Gemini's native `thinkingConfig`.
+
 ### OpenAI Responses API
 
 `ResponsesAPIClient` speaks OpenAI's [Responses API](https://platform.openai.com/docs/api-reference/responses) — a newer endpoint with native support for reasoning models, server-side conversation state, and structured tool calling.
@@ -1310,7 +1328,7 @@ The header closure is evaluated per request, enabling dynamic values.
 ```swift
 let client = ResponsesAPIClient(
     apiKey: ProcessInfo.processInfo.environment["OPENAI_API_KEY"]!,
-    model: "gpt-5.2",
+    model: "gpt-5.4",
     baseURL: ResponsesAPIClient.openAIBaseURL,
     reasoningConfig: .medium
 )
@@ -1341,7 +1359,7 @@ let auth = try JSONDecoder().decode(CodexAuth.self, from: authData)
 
 // 2. Create client pointing at ChatGPT backend
 let client = ResponsesAPIClient(
-    model: "gpt-5.2",
+    model: "gpt-5.4",
     maxOutputTokens: nil,          // not supported on this endpoint
     baseURL: ResponsesAPIClient.chatGPTBaseURL,
     additionalHeaders: {
@@ -1369,7 +1387,7 @@ The ChatGPT backend enforces specific constraints:
 | `max_output_tokens` | Not supported — set `maxOutputTokens: nil` |
 | `instructions` | Required — always provide a system prompt |
 
-Reasoning models (GPT-5.2, GPT-5.2-codex) work fully, including interleaved thinking with opaque reasoning block echo-back across tool-calling turns.
+Reasoning models (GPT-5.4, GPT-5.3-Codex) work fully, including interleaved thinking with opaque reasoning block echo-back across tool-calling turns.
 
 ### Proxy Mode
 
@@ -1472,8 +1490,9 @@ The client bridges `AnyTool` definitions to Apple's `Tool` protocol at runtime v
 |------|-------------|
 | `LLMClient` | Protocol for LLM implementations |
 | `AnthropicClient` | Anthropic Messages API client (Claude Sonnet, Opus, Haiku) |
+| `GeminiClient` | Google Gemini API client (2.5 Flash/Pro, 3 Flash, 3.1 Pro/Flash-Lite) |
 | `OpenAIClient` | Chat Completions client (OpenAI, OpenRouter, Groq, etc.) |
-| `ResponsesAPIClient` | OpenAI Responses API client (GPT-5.2, GPT-5.2-codex) |
+| `ResponsesAPIClient` | OpenAI Responses API client (GPT-5.4, GPT-5.3-Codex) |
 | `MLXClient` | On-device inference via MLX on Apple Silicon (Qwen 3.5, Liquid LFM2.5, etc.) |
 | `FoundationModelsClient` | On-device inference via Apple Foundation Models (iOS 26+ / macOS 26+) |
 | `ThinkTagParser` | Streaming `<think>` tag parser with configurable delimiters |

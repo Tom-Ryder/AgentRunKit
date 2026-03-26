@@ -1,0 +1,15 @@
+parent_config: ../.swiftlint.yml
+
+disabled_rules:
+  - trailing_comma
+  - function_default_parameter_at_end
+  - no_empty_block
+  - identical_operands
+
+file_length:
+  warning: 1000
+  error: 1500
+
+type_body_length:
+  warning: 400
+  error: 600

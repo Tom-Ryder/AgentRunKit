@@ -1,4 +1,8 @@
-.PHONY: build test lint format check clean
+.PHONY: build test lint format check clean bootstrap
+
+bootstrap:
+	brew install mint
+	mint bootstrap
 
 build:
 	swift build
@@ -7,10 +11,10 @@ test:
 	swift test
 
 lint:
-	swiftlint
+	mint run swiftlint --strict
 
 format:
-	swiftformat .
+	mint run swiftformat .
 
 check: format lint test
 
