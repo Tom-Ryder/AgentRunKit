@@ -5,6 +5,7 @@
 </p>
 
 <p align="center">
+  <a href="https://github.com/Tom-Ryder/AgentRunKit/actions/workflows/ci.yml"><img src="https://github.com/Tom-Ryder/AgentRunKit/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <img src="https://img.shields.io/badge/Swift-6.0-orange" alt="Swift 6.0">
   <img src="https://img.shields.io/badge/Platforms-iOS%2018%20%7C%20macOS%2015-blue" alt="Platforms">
   <img src="https://img.shields.io/badge/On--Device-MLX%20%7C%20Foundation%20Models-8B5CF6" alt="On-Device MLX + Foundation Models">
