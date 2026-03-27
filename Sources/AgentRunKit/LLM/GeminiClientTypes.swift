@@ -47,8 +47,6 @@ struct GeminiRequest: Encodable {
 
 struct GeminiContent: Codable {
     let role: String?
-    /// Optional during decoding — Gemini may omit `parts` for blocked or empty responses.
-    /// Defaults to `[]` when absent. Always populated for outgoing requests.
     let parts: [GeminiPart]
 
     init(role: String?, parts: [GeminiPart]) {
@@ -56,7 +54,7 @@ struct GeminiContent: Codable {
         self.parts = parts
     }
 
-    init(from decoder: Decoder) throws {
+    init(from decoder: any Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         role = try container.decodeIfPresent(String.self, forKey: .role)
         parts = try container.decodeIfPresent([GeminiPart].self, forKey: .parts) ?? []
