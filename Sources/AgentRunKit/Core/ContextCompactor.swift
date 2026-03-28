@@ -52,6 +52,11 @@ struct ContextCompactor {
                let boundary = lastAssistantIndex,
                index < boundary {
                 originalChars += content.count
+                if content == prunedToolResultContent {
+                    prunedChars += content.count
+                    result.append(message)
+                    continue
+                }
                 let firstLine = content.prefix(Self.pruningPreviewLength)
                     .split(separator: "\n", maxSplits: 1).first
                     .map(String.init) ?? String(content.prefix(Self.pruningPreviewLength))

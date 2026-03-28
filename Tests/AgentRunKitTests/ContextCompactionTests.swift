@@ -502,6 +502,29 @@ struct ObservationPruningTests {
         ]
         #expect(compactor.pruneObservations(messages).reductionRatio > 0.2)
     }
+
+    @Test
+    func observationPruningPreservesManualPruneSentinel() {
+        let messages: [ChatMessage] = [
+            .user("Hello"),
+            .assistant(AssistantMessage(content: "", toolCalls: [
+                ToolCall(id: "call_1", name: "read_file", arguments: "{}"),
+            ])),
+            .tool(id: "call_1", name: "read_file", content: prunedToolResultContent),
+            .assistant(AssistantMessage(content: "", toolCalls: [
+                ToolCall(id: "call_2", name: "read_file", arguments: "{}"),
+            ])),
+            .tool(id: "call_2", name: "read_file", content: "small"),
+        ]
+        let (pruned, ratio) = compactor.pruneObservations(messages)
+
+        if case let .tool(_, _, content) = pruned[2] {
+            #expect(content == prunedToolResultContent)
+        } else {
+            Issue.record("Expected tool message at index 2")
+        }
+        #expect(ratio == 0.0)
+    }
 }
 
 // MARK: - Tool Result Truncation Tests

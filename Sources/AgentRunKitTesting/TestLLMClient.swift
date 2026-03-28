@@ -1,7 +1,9 @@
 import AgentRunKit
 import Foundation
 
+/// A schema-walking LLM client that auto-generates valid tool call arguments for offline testing.
 public struct TestLLMClient: LLMClient, Sendable {
+    /// Controls which tools the client calls on each turn.
     public enum CallToolsMode: Sendable, Equatable {
         case all
         case specific([String])
@@ -10,15 +12,21 @@ public struct TestLLMClient: LLMClient, Sendable {
     public let seed: Int
     public let callTools: CallToolsMode
     public let finishContent: String
+    public let contextWindowSize: Int?
+    public let tokenUsage: TokenUsage
 
     public init(
         seed: Int = 0,
         callTools: CallToolsMode = .all,
-        finishContent: String = "Test completed"
+        finishContent: String = "Test completed",
+        contextWindowSize: Int? = nil,
+        tokenUsage: TokenUsage = TokenUsage(input: 1, output: 1)
     ) {
         self.seed = seed
         self.callTools = callTools
         self.finishContent = finishContent
+        self.contextWindowSize = contextWindowSize
+        self.tokenUsage = tokenUsage
     }
 
     public func generate(
@@ -31,7 +39,7 @@ public struct TestLLMClient: LLMClient, Sendable {
         return AssistantMessage(
             content: response.content,
             toolCalls: response.toolCalls,
-            tokenUsage: TokenUsage(input: 1, output: 1)
+            tokenUsage: tokenUsage
         )
     }
 
@@ -49,7 +57,7 @@ public struct TestLLMClient: LLMClient, Sendable {
                 continuation.yield(.toolCallStart(index: index, id: call.id, name: call.name))
                 continuation.yield(.toolCallDelta(index: index, arguments: call.arguments))
             }
-            continuation.yield(.finished(usage: TokenUsage(input: 1, output: 1)))
+            continuation.yield(.finished(usage: tokenUsage))
             continuation.finish()
         }
     }
@@ -72,7 +80,7 @@ private extension TestLLMClient {
         }
 
         let reservedFinishTool = tools.first(where: isReservedFinishTool)
-        let selectableTools = tools.filter { !isReservedFinishTool($0) && toolMatchesMode($0) }
+        let selectableTools = tools.filter { !isReservedTool($0) && toolMatchesMode($0) }
 
         if hasToolResultsAfterLastUserMessage(messages) || selectableTools.isEmpty {
             if reservedFinishTool != nil {
@@ -121,6 +129,14 @@ private extension TestLLMClient {
 
     func isReservedFinishTool(_ tool: ToolDefinition) -> Bool {
         tool == reservedFinishToolDefinition
+    }
+
+    func isReservedPruneTool(_ tool: ToolDefinition) -> Bool {
+        tool == reservedPruneContextToolDefinition
+    }
+
+    func isReservedTool(_ tool: ToolDefinition) -> Bool {
+        isReservedFinishTool(tool) || isReservedPruneTool(tool)
     }
 }
 

@@ -323,6 +323,65 @@ struct AgentStreamTests {
         #expect(stream.iterationUsages.count == 1)
         #expect(stream.iterationUsages[0] == TokenUsage(input: 20, output: 10))
     }
+
+    @MainActor @Test
+    func contextBudgetUpdatedFromBudgetEvents() async {
+        let deltas: [StreamDelta] = [
+            .toolCallStart(index: 0, id: "call_1", name: "finish"),
+            .toolCallDelta(index: 0, arguments: #"{"content": "done"}"#),
+            .finished(usage: TokenUsage(input: 700, output: 100)),
+        ]
+        let client = StreamingMockLLMClient(
+            streamSequences: [deltas],
+            contextWindowSize: 1000
+        )
+        let config = AgentConfiguration(
+            contextBudget: ContextBudgetConfig(softThreshold: 0.75)
+        )
+        let agent = Agent<EmptyContext>(client: client, tools: [], configuration: config)
+        let stream = AgentStream(agent: agent)
+
+        stream.send("Budget", context: EmptyContext())
+        await awaitCompletion(stream)
+
+        #expect(stream.contextBudget == ContextBudget(
+            windowSize: 1000,
+            currentUsage: 800,
+            softThreshold: 0.75
+        ))
+    }
+
+    @MainActor @Test
+    func contextBudgetResetsOnNewSend() async {
+        let firstDeltas: [StreamDelta] = [
+            .toolCallStart(index: 0, id: "call_1", name: "finish"),
+            .toolCallDelta(index: 0, arguments: #"{"content": "done1"}"#),
+            .finished(usage: TokenUsage(input: 700, output: 100)),
+        ]
+        let secondDeltas: [StreamDelta] = [
+            .toolCallStart(index: 0, id: "call_2", name: "finish"),
+            .toolCallDelta(index: 0, arguments: #"{"content": "done2"}"#),
+            .finished(usage: TokenUsage(input: 200, output: 100)),
+        ]
+        let client = StreamingMockLLMClient(
+            streamSequences: [firstDeltas, secondDeltas],
+            contextWindowSize: 1000
+        )
+        let config = AgentConfiguration(
+            contextBudget: ContextBudgetConfig(softThreshold: 0.75)
+        )
+        let agent = Agent<EmptyContext>(client: client, tools: [], configuration: config)
+        let stream = AgentStream(agent: agent)
+
+        stream.send("First", context: EmptyContext())
+        await awaitCompletion(stream)
+        #expect(stream.contextBudget?.currentUsage == 800)
+
+        stream.send("Second", context: EmptyContext())
+        #expect(stream.contextBudget == nil)
+        await awaitCompletion(stream)
+        #expect(stream.contextBudget?.currentUsage == 300)
+    }
 }
 
 private struct EchoParams: Codable, SchemaProviding {

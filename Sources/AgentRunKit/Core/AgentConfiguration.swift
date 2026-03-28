@@ -1,5 +1,8 @@
 import Foundation
 
+/// Configuration for the agent loop.
+///
+/// For a guide, see <doc:AgentAndChat>.
 public struct AgentConfiguration: Sendable, Equatable {
     public let maxIterations: Int
     public let toolTimeout: Duration
@@ -8,6 +11,7 @@ public struct AgentConfiguration: Sendable, Equatable {
     public let compactionThreshold: Double?
     public let compactionPrompt: String?
     public let maxToolResultCharacters: Int?
+    public let contextBudget: ContextBudgetConfig?
 
     public init(
         maxIterations: Int = 10,
@@ -16,7 +20,8 @@ public struct AgentConfiguration: Sendable, Equatable {
         maxMessages: Int? = nil,
         compactionThreshold: Double? = nil,
         compactionPrompt: String? = nil,
-        maxToolResultCharacters: Int? = nil
+        maxToolResultCharacters: Int? = nil,
+        contextBudget: ContextBudgetConfig? = nil
     ) {
         precondition(maxIterations >= 1, "maxIterations must be at least 1")
         precondition(toolTimeout >= .milliseconds(1), "toolTimeout must be at least 1ms")
@@ -39,5 +44,6 @@ public struct AgentConfiguration: Sendable, Equatable {
         self.compactionThreshold = compactionThreshold
         self.compactionPrompt = compactionPrompt
         self.maxToolResultCharacters = maxToolResultCharacters
+        self.contextBudget = contextBudget
     }
 }

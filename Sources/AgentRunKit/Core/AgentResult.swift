@@ -1,5 +1,6 @@
 import Foundation
 
+/// How the agent loop terminated.
 public enum FinishReason: Sendable, Equatable, CustomStringConvertible {
     case completed
     case error

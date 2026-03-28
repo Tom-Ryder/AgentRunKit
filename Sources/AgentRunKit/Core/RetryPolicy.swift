@@ -1,5 +1,6 @@
 import Foundation
 
+/// Exponential backoff with jitter for retrying transient LLM failures.
 public struct RetryPolicy: Sendable, Equatable {
     public let maxAttempts: Int
     public let baseDelay: Duration

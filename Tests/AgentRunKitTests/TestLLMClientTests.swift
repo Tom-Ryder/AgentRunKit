@@ -658,6 +658,22 @@ struct TestLLMClientTests {
     }
 }
 
+struct TestLLMClientReservedToolTests {
+    @Test
+    func pruneReservedToolDoesNotTriggerSyntheticFinish() async throws {
+        let client = TestLLMClient(finishContent: "Done")
+        let response = try await client.generate(
+            messages: [.user("Hi")],
+            tools: [reservedPruneContextToolDefinition],
+            responseFormat: nil,
+            requestContext: nil
+        )
+
+        #expect(response.toolCalls.isEmpty)
+        #expect(response.content == "Done")
+    }
+}
+
 private func generatedToolArgumentsJSON(
     schema: JSONSchema,
     seed: Int = 0,

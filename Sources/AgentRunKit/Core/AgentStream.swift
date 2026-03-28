@@ -13,6 +13,9 @@ public struct ToolCallInfo: Sendable, Identifiable {
     }
 }
 
+/// An `@Observable` wrapper around `Agent.stream()` for SwiftUI.
+///
+/// For a guide, see <doc:StreamingAndSwiftUI>.
 @Observable
 @MainActor
 public final class AgentStream<C: ToolContext> {
@@ -25,6 +28,7 @@ public final class AgentStream<C: ToolContext> {
     public private(set) var history: [ChatMessage] = []
     public private(set) var toolCalls: [ToolCallInfo] = []
     public private(set) var iterationUsages: [TokenUsage] = []
+    public private(set) var contextBudget: ContextBudget?
 
     private let agent: Agent<C>
     private var activeTask: Task<Void, Never>?
@@ -93,6 +97,7 @@ public final class AgentStream<C: ToolContext> {
         history = []
         toolCalls = []
         iterationUsages = []
+        contextBudget = nil
     }
 
     private func handle(_ event: StreamEvent) {
@@ -109,7 +114,9 @@ public final class AgentStream<C: ToolContext> {
                     ? .failed(result.content)
                     : .completed(result.content)
             }
-        case .audioData, .audioTranscript, .audioFinished:
+        case .audioData, .audioTranscript, .audioFinished,
+             .subAgentStarted, .subAgentEvent, .subAgentCompleted,
+             .compacted, .budgetAdvisory:
             break
         case let .finished(usage, finishContent, reason, hist):
             tokenUsage = usage
@@ -118,12 +125,10 @@ public final class AgentStream<C: ToolContext> {
             if let finishContent, content.isEmpty {
                 content = finishContent
             }
-        case .subAgentStarted, .subAgentEvent, .subAgentCompleted:
-            break
         case let .iterationCompleted(usage, _):
             iterationUsages.append(usage)
-        case .compacted:
-            break
+        case let .budgetUpdated(budget):
+            contextBudget = budget
         }
     }
 }

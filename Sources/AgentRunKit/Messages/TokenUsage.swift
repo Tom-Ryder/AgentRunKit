@@ -1,5 +1,6 @@
 import Foundation
 
+/// Token counts for a single LLM request or accumulated across an agent run.
 public struct TokenUsage: Sendable, Equatable, Codable {
     public let input: Int
     public let output: Int
@@ -9,6 +10,10 @@ public struct TokenUsage: Sendable, Equatable, Codable {
 
     public var total: Int {
         saturatingAdd(saturatingAdd(input, output), reasoning)
+    }
+
+    var inputOutputTotal: Int {
+        saturatingAdd(input, output)
     }
 
     public init(

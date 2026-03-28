@@ -1,5 +1,6 @@
 import Foundation
 
+/// Describes how an SSE stream was malformed.
 public enum MalformedStreamReason: Sendable, Equatable, CustomStringConvertible {
     case toolCallDeltaWithoutStart(index: Int)
     case missingToolCallId(index: Int)
@@ -20,6 +21,7 @@ public enum MalformedStreamReason: Sendable, Equatable, CustomStringConvertible 
     }
 }
 
+/// Errors thrown by the agent loop.
 public enum AgentError: Error, Sendable, Equatable, LocalizedError {
     case maxIterationsReached(iterations: Int)
     case toolNotFound(name: String)
@@ -34,6 +36,8 @@ public enum AgentError: Error, Sendable, Equatable, LocalizedError {
     case schemaInferenceFailed(type: String, message: String)
     case maxDepthExceeded(depth: Int)
     case tokenBudgetExceeded(budget: Int, used: Int)
+    case contextBudgetUsageUnavailable
+    case contextBudgetWindowSizeUnavailable
 
     public var errorDescription: String? {
         switch self {
@@ -63,6 +67,10 @@ public enum AgentError: Error, Sendable, Equatable, LocalizedError {
             "Sub-agent max depth exceeded (current depth: \(depth))"
         case let .tokenBudgetExceeded(budget, used):
             "Token budget exceeded (budget: \(budget), used: \(used))"
+        case .contextBudgetUsageUnavailable:
+            "Context budget requires provider-reported token usage for every budgeted turn"
+        case .contextBudgetWindowSizeUnavailable:
+            "Context budget requires a client contextWindowSize for usage-based features"
         }
     }
 
@@ -81,6 +89,10 @@ public enum AgentError: Error, Sendable, Equatable, LocalizedError {
         case let .schemaInferenceFailed(type, message): "Error: Schema inference failed for '\(type)': \(message)"
         case let .maxDepthExceeded(depth): "Error: Sub-agent max depth exceeded (current depth: \(depth))."
         case let .tokenBudgetExceeded(budget, used): "Error: Token budget exceeded (budget: \(budget), used: \(used))."
+        case .contextBudgetUsageUnavailable:
+            "Error: Context budget requires provider-reported token usage for every budgeted turn."
+        case .contextBudgetWindowSizeUnavailable:
+            "Error: Context budget requires a client contextWindowSize for usage-based features."
         }
     }
 }

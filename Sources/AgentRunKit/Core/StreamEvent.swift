@@ -1,5 +1,8 @@
 import Foundation
 
+/// Events emitted during agent streaming.
+///
+/// For a guide, see <doc:StreamingAndSwiftUI>.
 public enum StreamEvent: Sendable, Equatable {
     case delta(String)
     case reasoningDelta(String)
@@ -14,4 +17,8 @@ public enum StreamEvent: Sendable, Equatable {
     case subAgentCompleted(toolCallId: String, toolName: String, result: ToolResult)
     case iterationCompleted(usage: TokenUsage, iteration: Int)
     case compacted(totalTokens: Int, windowSize: Int)
+    /// Emitted after each provider response when a budget snapshot is available.
+    case budgetUpdated(budget: ContextBudget)
+    /// Emitted once when the configured soft threshold is crossed.
+    case budgetAdvisory(budget: ContextBudget)
 }

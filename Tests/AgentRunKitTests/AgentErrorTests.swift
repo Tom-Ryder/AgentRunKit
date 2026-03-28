@@ -156,6 +156,14 @@ struct AgentErrorTests {
         let error11 = AgentError.malformedStream(.missingToolCallName(index: 7))
         #expect(error11.feedbackMessage.contains("7"))
         #expect(error11.feedbackMessage.contains("name"))
+
+        let error12 = AgentError.contextBudgetUsageUnavailable
+        #expect(error12.feedbackMessage.contains("Context budget"))
+        #expect(error12.feedbackMessage.contains("token usage"))
+
+        let error13 = AgentError.contextBudgetWindowSizeUnavailable
+        #expect(error13.feedbackMessage.contains("Context budget"))
+        #expect(error13.feedbackMessage.contains("contextWindowSize"))
     }
 }
 

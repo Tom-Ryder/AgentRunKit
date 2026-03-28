@@ -1,5 +1,8 @@
 import Foundation
 
+/// A multi-turn conversation interface with optional tool calling and structured output.
+///
+/// For a guide, see <doc:AgentAndChat>.
 public struct Chat<C: ToolContext>: Sendable {
     private let client: any LLMClient
     private let tools: [any AnyTool<C>]

@@ -1,3 +1,6 @@
+/// A depth-tracking wrapper around a `ToolContext` for sub-agent composition.
+///
+/// For a guide, see <doc:SubAgents>.
 public struct SubAgentContext<C: ToolContext>: ToolContext {
     public let inner: C
     public let currentDepth: Int

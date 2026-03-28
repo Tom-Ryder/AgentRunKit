@@ -2,14 +2,20 @@
 import Foundation
 
 actor StreamingMockLLMClient: LLMClient {
+    let contextWindowSize: Int?
     private let generateResponses: [AssistantMessage]
     private let streamSequences: [[StreamDelta]]
     private var generateIndex = 0
     private var streamIndex = 0
 
-    init(generateResponses: [AssistantMessage] = [], streamSequences: [[StreamDelta]] = []) {
+    init(
+        generateResponses: [AssistantMessage] = [],
+        streamSequences: [[StreamDelta]] = [],
+        contextWindowSize: Int? = nil
+    ) {
         self.generateResponses = generateResponses
         self.streamSequences = streamSequences
+        self.contextWindowSize = contextWindowSize
     }
 
     func generate(
