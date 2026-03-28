@@ -1,5 +1,6 @@
 import Foundation
 
+/// Configuration for extended thinking in reasoning models.
 public struct ReasoningConfig: Sendable, Equatable {
     public enum Effort: String, Sendable, Codable {
         case xhigh, high, medium, low, minimal, none

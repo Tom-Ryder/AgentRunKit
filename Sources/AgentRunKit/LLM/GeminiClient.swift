@@ -1,5 +1,6 @@
 import Foundation
 
+/// An LLM client for the Google Gemini API.
 public struct GeminiClient: LLMClient, Sendable {
     public let modelIdentifier: String?
     public let maxOutputTokens: Int

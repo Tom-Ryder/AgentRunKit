@@ -1,5 +1,6 @@
 import Foundation
 
+/// Extended thinking content from a reasoning model.
 public struct ReasoningContent: Sendable, Equatable, Codable {
     public let content: String
     public let signature: String?

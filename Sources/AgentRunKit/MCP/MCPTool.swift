@@ -1,5 +1,6 @@
 import Foundation
 
+/// Adapts an MCP-discovered tool to the ``AnyTool`` protocol.
 public struct MCPTool<C: ToolContext>: AnyTool, Sendable {
     public typealias Context = C
 

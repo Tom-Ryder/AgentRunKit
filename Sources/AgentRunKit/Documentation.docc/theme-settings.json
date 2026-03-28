@@ -1,0 +1,14 @@
+{
+    "theme": {
+        "color": {
+            "standard-blue": {
+                "light": "#0066CC",
+                "dark": "#4DA3FF"
+            },
+            "documentation-intro-fill": {
+                "light": "#F5F5F7",
+                "dark": "#1D1D1F"
+            }
+        }
+    }
+}

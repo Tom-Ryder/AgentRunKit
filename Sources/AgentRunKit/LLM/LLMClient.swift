@@ -1,5 +1,8 @@
 import Foundation
 
+/// The interface all LLM provider clients conform to.
+///
+/// For provider-specific setup, see <doc:LLMProviders>.
 public protocol LLMClient: Sendable {
     var contextWindowSize: Int? { get }
 

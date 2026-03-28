@@ -1,5 +1,8 @@
 import Foundation
 
+/// Coordinates multiple MCP server connections with scoped tool access.
+///
+/// For a guide on integrating MCP servers, see <doc:MCPIntegration>.
 public struct MCPSession: Sendable {
     private let configurations: [MCPServerConfiguration]
     private let transportFactory: @Sendable (MCPServerConfiguration) -> any MCPTransport
@@ -26,6 +29,7 @@ public struct MCPSession: Sendable {
         self.transportFactory = transportFactory
     }
 
+    /// Connects to all configured servers, discovers tools, passes them to the closure, then shuts down.
     public func withTools<C: ToolContext, R: Sendable>(
         _ body: @Sendable ([any AnyTool<C>]) async throws -> R
     ) async throws -> R {

@@ -1,5 +1,6 @@
 import Foundation
 
+/// Content returned from an MCP tool call.
 public enum MCPContent: Sendable, Equatable {
     case text(String)
     case image(data: Data, mimeType: String)
@@ -73,6 +74,7 @@ extension MCPContent: Decodable {
     }
 }
 
+/// The result of an MCP tools/call request.
 public struct MCPCallResult: Sendable, Equatable, Decodable {
     public let content: [MCPContent]
     public let structuredContent: Data?
@@ -111,6 +113,7 @@ public struct MCPCallResult: Sendable, Equatable, Decodable {
         content = items
     }
 
+    /// Converts MCP content to a text-based tool result, preferring structured content when available.
     public func toToolResult() -> ToolResult {
         if let structured = structuredContent,
            let text = String(data: structured, encoding: .utf8) {

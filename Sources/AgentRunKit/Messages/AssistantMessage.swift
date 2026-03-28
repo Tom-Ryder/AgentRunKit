@@ -1,5 +1,6 @@
 import Foundation
 
+/// The model's response to a generation request.
 public struct AssistantMessage: Sendable, Equatable, Codable {
     public let content: String
     public let toolCalls: [ToolCall]

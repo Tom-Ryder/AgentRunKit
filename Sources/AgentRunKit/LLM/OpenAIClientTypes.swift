@@ -1,5 +1,6 @@
 import Foundation
 
+/// A type-safe representation of arbitrary JSON values.
 public enum JSONValue: Sendable, Equatable, Codable {
     case string(String)
     case int(Int)
@@ -79,6 +80,7 @@ public enum JSONValue: Sendable, Equatable, Codable {
     }
 }
 
+/// Per-request metadata and provider-specific parameters.
 public struct RequestContext: Sendable {
     public let extraFields: [String: JSONValue]
     public let onResponse: (@Sendable (HTTPURLResponse) -> Void)?

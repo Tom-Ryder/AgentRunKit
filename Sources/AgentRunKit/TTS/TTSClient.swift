@@ -1,5 +1,8 @@
 import Foundation
 
+/// Generates speech from text with chunking, concurrent synthesis, and ordered reassembly.
+///
+/// For a guide on audio workflows, see <doc:MultimodalAndAudio>.
 public struct TTSClient<P: TTSProvider>: Sendable {
     public let provider: P
     public let maxConcurrent: Int

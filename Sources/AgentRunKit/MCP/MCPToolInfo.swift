@@ -1,5 +1,6 @@
 import Foundation
 
+/// Metadata for a tool discovered from an MCP server.
 public struct MCPToolInfo: Sendable, Equatable, Decodable {
     public let name: String
     public let description: String

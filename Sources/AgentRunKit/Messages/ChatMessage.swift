@@ -1,5 +1,6 @@
 import Foundation
 
+/// A message in the conversation history.
 public enum ChatMessage: Sendable, Equatable, Codable {
     case system(String)
     case user(String)

@@ -1,6 +1,8 @@
 import Foundation
 
 #if os(macOS)
+    /// An MCP transport that communicates over process stdin/stdout.
+    ///
     /// @unchecked Sendable justification: Process and Pipe are not Sendable.
     /// Mutable state (process, stdinPipe) follows strict lifecycle: written once
     /// in connect(), read in send()/disconnect(), cleared in disconnect().

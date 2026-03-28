@@ -1,5 +1,8 @@
 import Foundation
 
+/// A JSON Schema representation for tool parameter validation.
+///
+/// For guidance on defining tools, see <doc:DefiningTools>.
 public indirect enum JSONSchema: Sendable, Equatable {
     case string(description: String? = nil, enumValues: [String]? = nil)
     case integer(description: String? = nil)
@@ -12,6 +15,7 @@ public indirect enum JSONSchema: Sendable, Equatable {
 }
 
 public extension JSONSchema {
+    /// Wraps this schema in an `anyOf` with `null` to represent an optional value.
     func optional() -> JSONSchema {
         .anyOf([self, .null])
     }

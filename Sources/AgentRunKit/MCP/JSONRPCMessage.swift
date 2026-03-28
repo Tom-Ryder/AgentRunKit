@@ -45,6 +45,7 @@ public struct JSONRPCRequest: Sendable, Codable {
     }
 }
 
+/// A JSON-RPC 2.0 notification (no response expected).
 public struct JSONRPCNotification: Sendable, Codable {
     public let jsonrpc: String
     public let method: String

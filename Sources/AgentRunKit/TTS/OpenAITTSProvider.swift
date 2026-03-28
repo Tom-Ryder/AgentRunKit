@@ -1,5 +1,6 @@
 import Foundation
 
+/// A ``TTSProvider`` that uses the OpenAI TTS API.
 public struct OpenAITTSProvider: TTSProvider, Sendable {
     public let config: TTSProviderConfig
     let apiKey: String

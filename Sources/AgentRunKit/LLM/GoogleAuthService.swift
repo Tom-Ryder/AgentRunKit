@@ -26,6 +26,7 @@ private struct TokenResponse: Decodable {
     }
 }
 
+/// Fetches OAuth2 access tokens from Google Application Default Credentials.
 public actor GoogleAuthService {
     public enum GoogleAuthError: Error, LocalizedError, Sendable {
         case credentialsFileNotFound(path: String)

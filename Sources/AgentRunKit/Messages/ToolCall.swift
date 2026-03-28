@@ -1,5 +1,6 @@
 import Foundation
 
+/// A tool call requested by the model during generation.
 public struct ToolCall: Sendable, Equatable, Codable {
     public let id: String
     public let name: String

@@ -1,5 +1,6 @@
 import Foundation
 
+/// Supported audio formats for multimodal input.
 public enum AudioInputFormat: String, Sendable, Codable, CaseIterable {
     case wav
     case mp3
@@ -33,6 +34,9 @@ public enum AudioInputFormat: String, Sendable, Codable, CaseIterable {
     }
 }
 
+/// A single piece of content within a user message.
+///
+/// See <doc:MultimodalAndAudio> for usage examples.
 public enum ContentPart: Sendable, Equatable {
     case text(String)
     case imageURL(String)

@@ -1,3 +1,4 @@
+/// A type that can provide its own JSON Schema representation.
 public protocol SchemaProviding: Sendable {
     static var jsonSchema: JSONSchema { get }
     static func validateSchema() throws(AgentError)

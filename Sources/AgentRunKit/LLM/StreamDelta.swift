@@ -1,5 +1,6 @@
 import Foundation
 
+/// Incremental deltas from an LLM streaming response.
 public enum StreamDelta: Sendable, Equatable {
     case content(String)
     case reasoning(String)

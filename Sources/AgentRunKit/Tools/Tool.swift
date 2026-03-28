@@ -1,5 +1,8 @@
 import Foundation
 
+/// A typed tool with compile-time schema validation.
+///
+/// For guidance on defining tools, see <doc:DefiningTools>.
 public struct Tool<P: Codable & SchemaProviding & Sendable, O: Codable & Sendable, C: ToolContext>: AnyTool {
     public typealias Context = C
 

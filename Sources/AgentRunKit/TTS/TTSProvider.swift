@@ -1,14 +1,17 @@
 import Foundation
 
+/// Audio formats supported for TTS output.
 public enum TTSAudioFormat: String, Sendable, Codable, CaseIterable {
     case mp3, opus, aac, flac, wav, pcm
 }
 
+/// A speech synthesis backend that converts text to audio.
 public protocol TTSProvider: Sendable {
     var config: TTSProviderConfig { get }
     func generate(text: String, voice: String, options: TTSOptions) async throws -> Data
 }
 
+/// Configuration for a TTSProvider's chunking and default settings.
 public struct TTSProviderConfig: Sendable, Equatable {
     public let maxChunkCharacters: Int
     public let defaultVoice: String
@@ -23,6 +26,7 @@ public struct TTSProviderConfig: Sendable, Equatable {
     }
 }
 
+/// Per-request options for speech generation.
 public struct TTSOptions: Sendable, Equatable {
     public let speed: Double?
     public let responseFormat: TTSAudioFormat?

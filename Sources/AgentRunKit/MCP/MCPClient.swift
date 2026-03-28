@@ -15,6 +15,9 @@ private struct MCPToolsListResult: Decodable {
     let nextCursor: String?
 }
 
+/// Manages a connection to a single MCP server.
+///
+/// For a guide on integrating MCP servers, see <doc:MCPIntegration>.
 public actor MCPClient {
     enum State {
         case created

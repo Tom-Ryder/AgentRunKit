@@ -1,5 +1,6 @@
 import Foundation
 
+/// Errors from HTTP transport and response parsing.
 public enum TransportError: Error, Sendable, Equatable, CustomStringConvertible {
     case networkError(description: String)
     case invalidResponse

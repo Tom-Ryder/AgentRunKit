@@ -1,5 +1,6 @@
 import Foundation
 
+/// Errors from the TTS pipeline.
 public enum TTSError: Error, Sendable, Equatable, LocalizedError {
     case emptyText
     case chunkFailed(index: Int, total: Int, TransportError)

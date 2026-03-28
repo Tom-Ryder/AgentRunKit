@@ -1,5 +1,6 @@
 import Foundation
 
+/// A wire-format tool description sent to LLM providers.
 public struct ToolDefinition: Sendable, Equatable {
     public let name: String
     public let description: String

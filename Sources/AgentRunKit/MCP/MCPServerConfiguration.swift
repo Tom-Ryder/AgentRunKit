@@ -1,5 +1,6 @@
 import Foundation
 
+/// Configuration for launching and connecting to an MCP server.
 public struct MCPServerConfiguration: Sendable, Equatable {
     public let name: String
     public let command: String

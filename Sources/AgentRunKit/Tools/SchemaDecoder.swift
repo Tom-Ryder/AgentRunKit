@@ -1,5 +1,6 @@
 import Foundation
 
+/// Infers JSON schemas from Decodable types by walking the Decoder protocol.
 public enum SchemaDecoder {
     public static func decode<T: Decodable>(_: T.Type) throws -> JSONSchema {
         let impl = SchemaDecoderImpl()

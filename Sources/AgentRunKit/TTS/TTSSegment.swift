@@ -1,5 +1,6 @@
 import Foundation
 
+/// A single audio segment from a chunked TTS generation.
 public struct TTSSegment: Sendable, Equatable {
     public let index: Int
     public let total: Int

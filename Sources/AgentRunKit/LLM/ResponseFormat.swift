@@ -1,5 +1,8 @@
 import Foundation
 
+/// Specifies a JSON schema constraint on the model's response.
+///
+/// For usage details, see <doc:StructuredOutput>.
 public struct ResponseFormat: Sendable, Encodable {
     private let type: String
     private let jsonSchema: ResponseJSONSchema

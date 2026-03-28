@@ -1,5 +1,8 @@
 import Foundation
 
+/// A type-erased tool that an agent can call.
+///
+/// For guidance on defining tools, see <doc:DefiningTools>.
 public protocol AnyTool<Context>: Sendable {
     associatedtype Context: ToolContext
 

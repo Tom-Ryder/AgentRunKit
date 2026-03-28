@@ -1,5 +1,6 @@
 import Foundation
 
+/// An LLM client for the OpenAI Responses API.
 public actor ResponsesAPIClient: LLMClient {
     public nonisolated let modelIdentifier: String?
     public nonisolated let maxOutputTokens: Int?

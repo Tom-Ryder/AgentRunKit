@@ -1,5 +1,8 @@
 import Foundation
 
+/// Wraps an Agent as a callable tool with depth control and token budgets.
+///
+/// For guidance on composing sub-agents, see <doc:SubAgents>.
 public struct SubAgentTool<P: Codable & SchemaProviding & Sendable, InnerContext: ToolContext>: AnyTool,
     StreamableSubAgentTool, TimeoutOverriding {
     public typealias Context = SubAgentContext<InnerContext>
@@ -96,6 +99,7 @@ public struct SubAgentTool<P: Codable & SchemaProviding & Sendable, InnerContext
     }
 }
 
+/// Creates a SubAgentTool with improved type inference at the call site.
 public func subAgentTool<P: Codable & SchemaProviding & Sendable, InnerContext: ToolContext>(
     name: String,
     description: String,

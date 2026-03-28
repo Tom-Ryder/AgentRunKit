@@ -1,5 +1,6 @@
 import Foundation
 
+/// Errors from MCP server communication and tool execution.
 public enum MCPError: Error, Sendable, Equatable, LocalizedError {
     case connectionFailed(String)
     case protocolVersionMismatch(requested: String, supported: String)

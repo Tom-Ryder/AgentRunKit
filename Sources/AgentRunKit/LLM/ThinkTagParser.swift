@@ -1,5 +1,6 @@
 import Foundation
 
+/// Extracts reasoning content from think-tag delimited text.
 public struct ThinkTagParser: Sendable {
     private enum State {
         case lookingForOpen
