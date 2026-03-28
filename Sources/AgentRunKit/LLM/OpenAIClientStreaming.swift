@@ -110,6 +110,7 @@ extension OpenAIClient {
 
     func extractDeltas(from chunk: StreamingChunk) throws -> [StreamDelta] {
         var deltas: [StreamDelta] = []
+        var emittedFinished = false
         for choice in chunk.choices ?? [] {
             if let reasoning = choice.delta.reasoning ?? choice.delta.reasoningContent, !reasoning.isEmpty {
                 deltas.append(.reasoning(reasoning))
@@ -121,7 +122,11 @@ extension OpenAIClient {
             try extractAudioDeltas(from: choice.delta, into: &deltas)
             if choice.finishReason != nil {
                 deltas.append(.finished(usage: chunk.usage.map(\.tokenUsage)))
+                emittedFinished = true
             }
+        }
+        if !emittedFinished, let usage = chunk.usage {
+            deltas.append(.finished(usage: usage.tokenUsage))
         }
         return deltas
     }

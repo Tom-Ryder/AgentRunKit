@@ -406,7 +406,7 @@ struct StreamingChunkParsingTests {
     }
 
     @Test
-    func streamingChunkWithoutChoicesDecodesCleanly() throws {
+    func streamingChunkWithUsageOnlyEmitsFinished() throws {
         let json = """
         {
             "usage": {
@@ -419,9 +419,13 @@ struct StreamingChunkParsingTests {
         let chunk = try client.parseStreamingChunk(Data(json.utf8))
         let deltas = try client.extractDeltas(from: chunk)
 
-        #expect(deltas.isEmpty)
-        #expect(chunk.usage?.promptTokens == 100)
-        #expect(chunk.usage?.completionTokens == 50)
+        #expect(deltas.count == 1)
+        if case let .finished(usage) = deltas.first {
+            #expect(usage?.input == 100)
+            #expect(usage?.output == 50)
+        } else {
+            Issue.record("Expected .finished delta with usage")
+        }
     }
 
     @Test
