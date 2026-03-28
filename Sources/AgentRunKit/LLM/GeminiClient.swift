@@ -133,10 +133,12 @@ extension GeminiClient {
         let level = effortToLevel(config.effort)
         let budget = config.budgetTokens
 
+        // Gemini requires exactly one of thinkingBudget or thinkingLevel.
+        // If an explicit budget is set, prefer it; otherwise use the level.
         return GeminiThinkingConfig(
             includeThoughts: true,
             thinkingBudget: budget,
-            thinkingLevel: level
+            thinkingLevel: budget == nil ? level : nil
         )
     }
 

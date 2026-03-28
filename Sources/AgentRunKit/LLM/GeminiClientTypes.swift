@@ -151,6 +151,17 @@ struct GeminiThinkingConfig: Encodable {
     let includeThoughts: Bool
     let thinkingBudget: Int?
     let thinkingLevel: String?
+
+    private enum CodingKeys: String, CodingKey {
+        case includeThoughts, thinkingBudget, thinkingLevel
+    }
+
+    func encode(to encoder: any Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(includeThoughts, forKey: .includeThoughts)
+        try container.encodeIfPresent(thinkingBudget, forKey: .thinkingBudget)
+        try container.encodeIfPresent(thinkingLevel, forKey: .thinkingLevel)
+    }
 }
 
 struct GeminiResponse: Decodable {

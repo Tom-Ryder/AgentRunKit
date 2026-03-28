@@ -135,6 +135,7 @@ struct GeminiRequestSerializationTests {
         let thinking = genConfig?["thinkingConfig"] as? [String: Any]
         #expect(thinking?["includeThoughts"] as? Bool == true)
         #expect(thinking?["thinkingLevel"] as? String == "HIGH")
+        #expect(thinking?["thinkingBudget"] == nil)
     }
 
     @Test
@@ -167,6 +168,22 @@ struct GeminiRequestSerializationTests {
         let thinking = genConfig?["thinkingConfig"] as? [String: Any]
         #expect(thinking?["includeThoughts"] as? Bool == true)
         #expect(thinking?["thinkingBudget"] as? Int == 10000)
+        #expect(thinking?["thinkingLevel"] == nil)
+    }
+
+    @Test
+    func effortWithBudgetSendsOnlyBudget() throws {
+        // Simulates what ProviderService produces: effort + budgetTokens.
+        let config = ReasoningConfig(effort: .medium, budgetTokens: 32000)
+        let client = makeClient(reasoningConfig: config)
+        let request = try client.buildRequest(messages: [.user("Hi")], tools: [])
+        let json = try encodeRequest(request)
+
+        let genConfig = json["generationConfig"] as? [String: Any]
+        let thinking = genConfig?["thinkingConfig"] as? [String: Any]
+        #expect(thinking?["includeThoughts"] as? Bool == true)
+        #expect(thinking?["thinkingBudget"] as? Int == 32000)
+        #expect(thinking?["thinkingLevel"] == nil)
     }
 
     @Test
