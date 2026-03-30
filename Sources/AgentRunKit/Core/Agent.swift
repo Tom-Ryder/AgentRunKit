@@ -36,11 +36,16 @@ public final class Agent<C: ToolContext>: Sendable {
         history: [ChatMessage] = [],
         context: C,
         tokenBudget: Int? = nil,
-        requestContext: RequestContext? = nil
+        requestContext: RequestContext? = nil,
+        approvalHandler: ToolApprovalHandler? = nil
     ) async throws -> AgentResult {
-        try await run(
-            userMessage: .user(userMessage), history: history, context: context,
-            tokenBudget: tokenBudget, requestContext: requestContext, systemPromptOverride: nil
+        let options = InvocationOptions(
+            tokenBudget: tokenBudget, requestContext: requestContext,
+            systemPromptOverride: nil, approvalHandler: approvalHandler
+        )
+        return try await run(
+            userMessage: .user(userMessage), history: history,
+            context: context, options: options
         )
     }
 
@@ -49,11 +54,16 @@ public final class Agent<C: ToolContext>: Sendable {
         history: [ChatMessage] = [],
         context: C,
         tokenBudget: Int? = nil,
-        requestContext: RequestContext? = nil
+        requestContext: RequestContext? = nil,
+        approvalHandler: ToolApprovalHandler? = nil
     ) async throws -> AgentResult {
-        try await run(
-            userMessage: userMessage, history: history, context: context,
-            tokenBudget: tokenBudget, requestContext: requestContext, systemPromptOverride: nil
+        let options = InvocationOptions(
+            tokenBudget: tokenBudget, requestContext: requestContext,
+            systemPromptOverride: nil, approvalHandler: approvalHandler
+        )
+        return try await run(
+            userMessage: userMessage, history: history,
+            context: context, options: options
         )
     }
 
@@ -62,14 +72,16 @@ public final class Agent<C: ToolContext>: Sendable {
         history: [ChatMessage] = [],
         context: C,
         tokenBudget: Int? = nil,
-        requestContext: RequestContext? = nil
+        requestContext: RequestContext? = nil,
+        approvalHandler: ToolApprovalHandler? = nil
     ) -> AsyncThrowingStream<StreamEvent, Error> {
-        stream(
-            userMessage: .user(userMessage),
-            history: history,
-            context: context,
-            tokenBudget: tokenBudget,
-            requestContext: requestContext
+        let options = InvocationOptions(
+            tokenBudget: tokenBudget, requestContext: requestContext,
+            systemPromptOverride: nil, approvalHandler: approvalHandler
+        )
+        return stream(
+            userMessage: .user(userMessage), history: history,
+            context: context, options: options
         )
     }
 
@@ -78,11 +90,16 @@ public final class Agent<C: ToolContext>: Sendable {
         history: [ChatMessage] = [],
         context: C,
         tokenBudget: Int? = nil,
-        requestContext: RequestContext? = nil
+        requestContext: RequestContext? = nil,
+        approvalHandler: ToolApprovalHandler? = nil
     ) -> AsyncThrowingStream<StreamEvent, Error> {
-        stream(
-            userMessage: userMessage, history: history, context: context,
-            tokenBudget: tokenBudget, requestContext: requestContext, systemPromptOverride: nil
+        let options = InvocationOptions(
+            tokenBudget: tokenBudget, requestContext: requestContext,
+            systemPromptOverride: nil, approvalHandler: approvalHandler
+        )
+        return stream(
+            userMessage: userMessage, history: history,
+            context: context, options: options
         )
     }
 }
@@ -93,11 +110,16 @@ extension Agent {
         history: [ChatMessage] = [],
         context: C,
         tokenBudget: Int? = nil,
-        systemPromptOverride: String?
+        systemPromptOverride: String?,
+        approvalHandler: ToolApprovalHandler? = nil
     ) async throws -> AgentResult {
-        try await run(
-            userMessage: .user(userMessage), history: history, context: context,
-            tokenBudget: tokenBudget, requestContext: nil, systemPromptOverride: systemPromptOverride
+        let options = InvocationOptions(
+            tokenBudget: tokenBudget, requestContext: nil,
+            systemPromptOverride: systemPromptOverride, approvalHandler: approvalHandler
+        )
+        return try await run(
+            userMessage: .user(userMessage), history: history,
+            context: context, options: options
         )
     }
 
@@ -105,17 +127,23 @@ extension Agent {
         userMessage: ChatMessage,
         history: [ChatMessage],
         context: C,
-        tokenBudget: Int?,
-        requestContext: RequestContext?,
-        systemPromptOverride: String?
+        options: InvocationOptions
     ) async throws -> AgentResult {
-        if let tokenBudget { precondition(tokenBudget >= 1, "tokenBudget must be at least 1") }
+        if let tokenBudget = options.tokenBudget {
+            precondition(tokenBudget >= 1, "tokenBudget must be at least 1")
+        }
+        precondition(
+            configuration.approvalPolicy == .none || options.approvalHandler != nil,
+            "approvalHandler is required when approvalPolicy is not .none"
+        )
         var messages = buildInitialMessages(
-            userMessage: userMessage, history: history, systemPromptOverride: systemPromptOverride
+            userMessage: userMessage, history: history,
+            systemPromptOverride: options.systemPromptOverride
         )
 
         var totalUsage = TokenUsage()
         var lastTotalTokens: Int?
+        var sessionAllowlist: Set<String> = []
         let compactor = ContextCompactor(
             client: client, toolDefinitions: toolDefinitions, configuration: configuration
         )
@@ -131,7 +159,7 @@ extension Agent {
                 messages: messages,
                 tools: toolDefinitions,
                 responseFormat: nil,
-                requestContext: requestContext
+                requestContext: options.requestContext
             )
             messages.append(.assistant(response))
             if let usage = response.tokenUsage {
@@ -149,7 +177,7 @@ extension Agent {
                 )
             }
 
-            if let tokenBudget, totalUsage.total > tokenBudget {
+            if let tokenBudget = options.tokenBudget, totalUsage.total > tokenBudget {
                 throw AgentError.tokenBudgetExceeded(budget: tokenBudget, used: totalUsage.total)
             }
 
@@ -157,7 +185,10 @@ extension Agent {
             let regularCalls = response.toolCalls.filter { $0.name != "finish" && $0.name != "prune_context" }
 
             executePruneCalls(pruneCalls, messages: &messages)
-            try await executeAndAppendResults(regularCalls, context: context, messages: &messages)
+            try await executeAndAppendResults(
+                regularCalls, context: context, messages: &messages,
+                approvalHandler: options.approvalHandler, allowlist: &sessionAllowlist
+            )
             if let budgetUsage {
                 applyBudgetPhase(&budgetPhase, usage: budgetUsage, messages: &messages)
             }
@@ -171,11 +202,16 @@ extension Agent {
         history: [ChatMessage] = [],
         context: C,
         tokenBudget: Int? = nil,
-        systemPromptOverride: String?
+        systemPromptOverride: String?,
+        approvalHandler: ToolApprovalHandler? = nil
     ) -> AsyncThrowingStream<StreamEvent, Error> {
-        stream(
-            userMessage: .user(userMessage), history: history, context: context,
-            tokenBudget: tokenBudget, requestContext: nil, systemPromptOverride: systemPromptOverride
+        let options = InvocationOptions(
+            tokenBudget: tokenBudget, requestContext: nil,
+            systemPromptOverride: systemPromptOverride, approvalHandler: approvalHandler
+        )
+        return stream(
+            userMessage: .user(userMessage), history: history,
+            context: context, options: options
         )
     }
 }
@@ -185,11 +221,15 @@ private extension Agent {
         userMessage: ChatMessage,
         history: [ChatMessage],
         context: C,
-        tokenBudget: Int?,
-        requestContext: RequestContext?,
-        systemPromptOverride: String?
+        options: InvocationOptions
     ) -> AsyncThrowingStream<StreamEvent, Error> {
-        if let tokenBudget { precondition(tokenBudget >= 1, "tokenBudget must be at least 1") }
+        if let tokenBudget = options.tokenBudget {
+            precondition(tokenBudget >= 1, "tokenBudget must be at least 1")
+        }
+        precondition(
+            configuration.approvalPolicy == .none || options.approvalHandler != nil,
+            "approvalHandler is required when approvalPolicy is not .none"
+        )
         return AsyncThrowingStream { continuation in
             let task = Task {
                 do {
@@ -197,9 +237,7 @@ private extension Agent {
                         userMessage: userMessage,
                         history: history,
                         context: context,
-                        tokenBudget: tokenBudget,
-                        requestContext: requestContext,
-                        systemPromptOverride: systemPromptOverride,
+                        options: options,
                         continuation: continuation
                     )
                 } catch {
@@ -216,16 +254,16 @@ private extension Agent {
         userMessage: ChatMessage,
         history: [ChatMessage],
         context: C,
-        tokenBudget: Int?,
-        requestContext: RequestContext?,
-        systemPromptOverride: String?,
+        options: InvocationOptions,
         continuation: AsyncThrowingStream<StreamEvent, Error>.Continuation
     ) async throws {
         var messages = buildInitialMessages(
-            userMessage: userMessage, history: history, systemPromptOverride: systemPromptOverride
+            userMessage: userMessage, history: history,
+            systemPromptOverride: options.systemPromptOverride
         )
         var totalUsage = TokenUsage()
         var lastTotalTokens: Int?
+        var sessionAllowlist: Set<String> = []
         let policy = StreamPolicy.agent
         let processor = StreamProcessor(client: client, toolDefinitions: toolDefinitions, policy: policy)
         let compactor = ContextCompactor(
@@ -246,7 +284,7 @@ private extension Agent {
                 messages: messages,
                 totalUsage: &totalUsage,
                 continuation: continuation,
-                requestContext: requestContext
+                requestContext: options.requestContext
             )
 
             if let usage = iteration.usage {
@@ -254,14 +292,7 @@ private extension Agent {
                 continuation.yield(.iterationCompleted(usage: usage, iteration: iterationNumber))
             }
 
-            let reasoning = iteration.reasoning.isEmpty ? nil : ReasoningContent(content: iteration.reasoning)
-            let details = iteration.reasoningDetails.isEmpty ? nil : iteration.reasoningDetails
-            messages.append(.assistant(AssistantMessage(
-                content: iteration.effectiveContent,
-                toolCalls: iteration.toolCalls,
-                reasoning: reasoning,
-                reasoningDetails: details
-            )))
+            messages.append(.assistant(iteration.toAssistantMessage()))
 
             let filteredTools = policy.executableToolCalls(from: iteration.toolCalls)
             let pruneCalls = filteredTools.filter { $0.name == "prune_context" }
@@ -269,10 +300,6 @@ private extension Agent {
             let shouldTerminate = policy.shouldTerminateAfterIteration(toolCalls: iteration.toolCalls)
             let budgetUsage = try requireBudgetUsage(iteration.usage, budgetPhase: budgetPhase)
 
-            executePruneCalls(pruneCalls, messages: &messages, continuation: continuation)
-            try await executeStreamingAndAppendResults(
-                regularCalls, context: context, messages: &messages, continuation: continuation
-            )
             if let budgetUsage {
                 applyBudgetPhase(
                     &budgetPhase,
@@ -291,7 +318,14 @@ private extension Agent {
                 return
             }
 
-            if let tokenBudget, totalUsage.total > tokenBudget {
+            executePruneCalls(pruneCalls, messages: &messages, continuation: continuation)
+            try await executeStreamingAndAppendResults(
+                regularCalls, context: context, messages: &messages,
+                continuation: continuation,
+                approvalHandler: options.approvalHandler, allowlist: &sessionAllowlist
+            )
+
+            if let tokenBudget = options.tokenBudget, totalUsage.total > tokenBudget {
                 continuation.finish(
                     throwing: AgentError.tokenBudgetExceeded(budget: tokenBudget, used: totalUsage.total)
                 )

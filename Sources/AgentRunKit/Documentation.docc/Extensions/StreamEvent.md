@@ -12,6 +12,11 @@
 - ``toolCallStarted(name:id:)``
 - ``toolCallCompleted(id:name:result:)``
 
+### Approval Events
+
+- ``toolApprovalRequested(_:)``
+- ``toolApprovalResolved(toolCallId:decision:)``
+
 ### Audio Events
 
 - ``audioData(_:)``

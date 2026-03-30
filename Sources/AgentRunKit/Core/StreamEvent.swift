@@ -21,4 +21,6 @@ public enum StreamEvent: Sendable, Equatable {
     case budgetUpdated(budget: ContextBudget)
     /// Emitted once when the configured soft threshold is crossed.
     case budgetAdvisory(budget: ContextBudget)
+    case toolApprovalRequested(ToolApprovalRequest)
+    case toolApprovalResolved(toolCallId: String, decision: ToolApprovalDecision)
 }

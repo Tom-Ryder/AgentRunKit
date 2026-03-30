@@ -11,13 +11,19 @@ Real-time token delivery and tool progress via ``StreamEvent``, with an `@Observ
 Call `stream()` on an ``Agent`` to get an `AsyncThrowingStream<StreamEvent, Error>`:
 
 ```swift
-let stream = agent.stream(userMessage: "Summarize this paper.", context: ctx)
+let stream = agent.stream(
+    userMessage: "Summarize this paper.",
+    context: ctx,
+    approvalHandler: approvalHandler
+)
 for try await event in stream {
     switch event {
     case .delta(let text):
         print(text, terminator: "")
     case .toolCallStarted(let name, _):
         print("\n[calling \(name)...]")
+    case .toolApprovalRequested(let request):
+        print("\n[approval needed for \(request.toolName)]")
     case .toolCallCompleted(_, let name, let result):
         print("[\(name) returned \(result.content)]")
     case .finished(let usage, _, _, _):
@@ -46,6 +52,8 @@ The stream yields events until the model calls `finish` or an error occurs. Canc
 | Case | Payload | Description |
 |---|---|---|
 | `.toolCallStarted` | `name`, `id` | Tool execution is beginning |
+| `.toolApprovalRequested` | ``ToolApprovalRequest`` | A gated tool call is waiting for approval |
+| `.toolApprovalResolved` | `toolCallId`, ``ToolApprovalDecision`` | Approval was granted, modified, or denied |
 | `.toolCallCompleted` | `id`, `name`, ``ToolResult`` | Tool execution finished |
 
 **Audio:**
@@ -93,14 +101,16 @@ The stream yields events until the model calls `finish` or an error occurs. Canc
 | `tokenUsage` | ``TokenUsage``? | Final cumulative usage from `.finished` |
 | `finishReason` | `FinishReason?` | Reason from `.finished` |
 | `history` | `[ChatMessage]` | Full conversation history from `.finished` |
-| `toolCalls` | [``ToolCallInfo``] | Tool calls with live state (`.running`, `.completed`, `.failed`) |
+| `toolCalls` | [``ToolCallInfo``] | Top-level and nested tool calls with live state (`.running`, `.awaitingApproval`, `.completed`, `.failed`) |
 | `iterationUsages` | [``TokenUsage``] | Per-iteration usage, one entry per `.iterationCompleted` |
 | `contextBudget` | ``ContextBudget``? | Latest budget snapshot from `.budgetUpdated` |
 
 **Methods:**
 
-- `send(_:history:context:tokenBudget:requestContext:)` cancels any active stream, resets state, and starts a new one.
+- `send(_:history:context:tokenBudget:requestContext:approvalHandler:)` cancels any active stream, resets state, and starts a new one.
 - `cancel()` cancels the active stream without resetting state.
+
+When sub-agents emit nested tool events, `toolCalls` flattens them into the same collection and prefixes names using `parent > child`.
 
 ## SwiftUI Example
 
@@ -118,6 +128,7 @@ struct ChatView: View {
                         Text(call.name)
                         switch call.state {
                         case .running: ProgressView().controlSize(.small)
+                        case .awaitingApproval: Text("Needs approval")
                         case .completed: Image(systemName: "checkmark.circle")
                         case .failed: Image(systemName: "xmark.circle")
                         }

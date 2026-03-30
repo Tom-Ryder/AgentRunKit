@@ -56,6 +56,15 @@ struct StreamIteration {
     var effectiveContent: String {
         content.isEmpty && !audioTranscript.isEmpty ? audioTranscript : content
     }
+
+    func toAssistantMessage() -> AssistantMessage {
+        AssistantMessage(
+            content: effectiveContent,
+            toolCalls: toolCalls,
+            reasoning: reasoning.isEmpty ? nil : ReasoningContent(content: reasoning),
+            reasoningDetails: reasoningDetails.isEmpty ? nil : reasoningDetails
+        )
+    }
 }
 
 private struct AudioAccumulator {

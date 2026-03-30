@@ -397,6 +397,61 @@ struct SubAgentToolTests {
         let result = try await parentAgent.run(userMessage: "Go", context: ctx)
         #expect(result.content == "parent done")
     }
+
+    @Test
+    func approvalHandlerPropagatesToChildWhenParentPolicyIsNone() async throws {
+        let childNoopTool = try Tool<NoopParams, NoopOutput, SubAgentContext<EmptyContext>>(
+            name: "child_noop",
+            description: "Child no-op",
+            executor: { _, _ in NoopOutput() }
+        )
+        let childClient = MockLLMClient(responses: [
+            AssistantMessage(
+                content: "",
+                toolCalls: [ToolCall(id: "child_tool", name: "child_noop", arguments: "{}")]
+            ),
+            AssistantMessage(
+                content: "",
+                toolCalls: [ToolCall(id: "child_finish", name: "finish", arguments: #"{"content":"child done"}"#)]
+            ),
+        ])
+        let childAgent = Agent<SubAgentContext<EmptyContext>>(
+            client: childClient,
+            tools: [childNoopTool],
+            configuration: AgentConfiguration(approvalPolicy: .allTools)
+        )
+        let tool = try SubAgentTool<QueryParams, EmptyContext>(
+            name: "delegate",
+            description: "Delegates work",
+            agent: childAgent,
+            messageBuilder: { $0.query }
+        )
+
+        let parentClient = MockLLMClient(responses: [
+            AssistantMessage(
+                content: "",
+                toolCalls: [ToolCall(id: "parent_tool", name: "delegate", arguments: #"{"query":"go"}"#)]
+            ),
+            AssistantMessage(
+                content: "",
+                toolCalls: [ToolCall(id: "parent_finish", name: "finish", arguments: #"{"content":"parent done"}"#)]
+            ),
+        ])
+        let parentAgent = Agent<SubAgentContext<EmptyContext>>(client: parentClient, tools: [tool])
+        let counter = CountingApprovalHandler()
+
+        let ctx = SubAgentContext(inner: EmptyContext(), maxDepth: 3)
+        let result = try await parentAgent.run(
+            userMessage: "Go",
+            context: ctx,
+            approvalHandler: counter.handler
+        )
+
+        #expect(result.content == "parent done")
+
+        let requests = await counter.requests
+        #expect(requests.map(\.toolName) == ["child_noop"])
+    }
 }
 
 struct SubAgentInheritParentMessagesTests {

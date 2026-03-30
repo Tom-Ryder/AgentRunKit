@@ -587,3 +587,169 @@ struct ChatAudioStreamingTests {
         #expect(audioEvents.isEmpty)
     }
 }
+
+struct ChatApprovalTests {
+    @Test
+    func unknownToolSkipsApprovalHandler() async throws {
+        let firstStreamDeltas: [StreamDelta] = [
+            .toolCallStart(index: 0, id: "call_1", name: "nonexistent"),
+            .toolCallDelta(index: 0, arguments: "{}"),
+            .finished(usage: nil),
+        ]
+        let secondStreamDeltas: [StreamDelta] = [
+            .content("Recovered"),
+            .finished(usage: nil),
+        ]
+
+        let client = StreamingMockLLMClient(streamSequences: [firstStreamDeltas, secondStreamDeltas])
+        let chat = Chat<EmptyContext>(client: client, approvalPolicy: .allTools)
+        let counter = CountingApprovalHandler()
+
+        var events: [StreamEvent] = []
+        for try await event in chat.stream(
+            "Run nonexistent",
+            context: EmptyContext(),
+            approvalHandler: counter.handler
+        ) {
+            events.append(event)
+        }
+
+        let count = await counter.requestCount
+        #expect(count == 0)
+
+        let requestedApproval = events.contains { event in
+            if case .toolApprovalRequested = event { return true }
+            return false
+        }
+        #expect(!requestedApproval)
+
+        let toolCompletedEvent = events.first { event in
+            if case let .toolCallCompleted(_, _, result) = event {
+                return result.isError && result.content.contains("does not exist")
+            }
+            return false
+        }
+        #expect(toolCompletedEvent != nil)
+    }
+
+    @Test
+    func subAgentToolForwardsApprovalHandler() async throws {
+        let childNoopTool = try Tool<NoopParams, NoopOutput, SubAgentContext<EmptyContext>>(
+            name: "child_noop",
+            description: "Child no-op",
+            executor: { _, _ in NoopOutput() }
+        )
+        let childClient = MockLLMClient(responses: [
+            AssistantMessage(
+                content: "",
+                toolCalls: [ToolCall(id: "child_tool", name: "child_noop", arguments: "{}")]
+            ),
+            AssistantMessage(
+                content: "",
+                toolCalls: [ToolCall(id: "child_finish", name: "finish", arguments: #"{"content":"child done"}"#)]
+            ),
+        ])
+        let childAgent = Agent<SubAgentContext<EmptyContext>>(
+            client: childClient,
+            tools: [childNoopTool],
+            configuration: AgentConfiguration(approvalPolicy: .allTools)
+        )
+        let delegateTool = try SubAgentTool<EchoParams, EmptyContext>(
+            name: "delegate",
+            description: "Delegates work",
+            agent: childAgent,
+            messageBuilder: { $0.message }
+        )
+
+        let firstStreamDeltas: [StreamDelta] = [
+            .toolCallStart(index: 0, id: "delegate_call", name: "delegate"),
+            .toolCallDelta(index: 0, arguments: #"{"message":"research"}"#),
+            .finished(usage: nil),
+        ]
+        let secondStreamDeltas: [StreamDelta] = [
+            .content("done"),
+            .finished(usage: nil),
+        ]
+
+        let client = StreamingMockLLMClient(streamSequences: [firstStreamDeltas, secondStreamDeltas])
+        let chat = Chat<SubAgentContext<EmptyContext>>(
+            client: client,
+            tools: [delegateTool],
+            approvalPolicy: .allTools
+        )
+        let counter = CountingApprovalHandler()
+
+        var events: [StreamEvent] = []
+        let context = SubAgentContext(inner: EmptyContext(), maxDepth: 3)
+        for try await event in chat.stream("Go", context: context, approvalHandler: counter.handler) {
+            events.append(event)
+        }
+
+        let requests = await counter.requests
+        #expect(requests.map(\.toolName) == ["delegate", "child_noop"])
+
+        let toolCompletedEvent = events.first { event in
+            if case let .toolCallCompleted(id, name, result) = event {
+                return id == "delegate_call" && name == "delegate"
+                    && result.content == "child done" && !result.isError
+            }
+            return false
+        }
+        #expect(toolCompletedEvent != nil)
+    }
+
+    @Test
+    func subAgentApprovalPropagatesWhenParentPolicyIsNone() async throws {
+        let childNoopTool = try Tool<NoopParams, NoopOutput, SubAgentContext<EmptyContext>>(
+            name: "child_noop",
+            description: "Child no-op",
+            executor: { _, _ in NoopOutput() }
+        )
+        let childClient = MockLLMClient(responses: [
+            AssistantMessage(
+                content: "",
+                toolCalls: [ToolCall(id: "child_tool", name: "child_noop", arguments: "{}")]
+            ),
+            AssistantMessage(
+                content: "",
+                toolCalls: [ToolCall(id: "child_finish", name: "finish", arguments: #"{"content":"child done"}"#)]
+            ),
+        ])
+        let childAgent = Agent<SubAgentContext<EmptyContext>>(
+            client: childClient,
+            tools: [childNoopTool],
+            configuration: AgentConfiguration(approvalPolicy: .allTools)
+        )
+        let delegateTool = try SubAgentTool<EchoParams, EmptyContext>(
+            name: "delegate",
+            description: "Delegates work",
+            agent: childAgent,
+            messageBuilder: { $0.message }
+        )
+
+        let firstStreamDeltas: [StreamDelta] = [
+            .toolCallStart(index: 0, id: "delegate_call", name: "delegate"),
+            .toolCallDelta(index: 0, arguments: #"{"message":"research"}"#),
+            .finished(usage: nil),
+        ]
+        let secondStreamDeltas: [StreamDelta] = [
+            .content("done"),
+            .finished(usage: nil),
+        ]
+
+        let client = StreamingMockLLMClient(streamSequences: [firstStreamDeltas, secondStreamDeltas])
+        let chat = Chat<SubAgentContext<EmptyContext>>(
+            client: client,
+            tools: [delegateTool],
+            approvalPolicy: .none
+        )
+        let counter = CountingApprovalHandler()
+
+        let context = SubAgentContext(inner: EmptyContext(), maxDepth: 3)
+        for try await _ in chat.stream("Go", context: context, approvalHandler: counter.handler) {}
+
+        let requests = await counter.requests
+        #expect(requests.count == 1)
+        #expect(requests.first?.toolName == "child_noop")
+    }
+}

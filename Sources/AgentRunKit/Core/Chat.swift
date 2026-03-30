@@ -11,6 +11,7 @@ public struct Chat<C: ToolContext>: Sendable {
     private let maxToolRounds: Int
     private let toolTimeout: Duration
     private let maxMessages: Int?
+    private let approvalPolicy: ToolApprovalPolicy
 
     public init(
         client: any LLMClient,
@@ -18,7 +19,8 @@ public struct Chat<C: ToolContext>: Sendable {
         systemPrompt: String? = nil,
         maxToolRounds: Int = 10,
         toolTimeout: Duration = .seconds(30),
-        maxMessages: Int? = nil
+        maxMessages: Int? = nil,
+        approvalPolicy: ToolApprovalPolicy = .none
     ) {
         if let maxMessages {
             precondition(maxMessages >= 1, "maxMessages must be at least 1")
@@ -30,6 +32,7 @@ public struct Chat<C: ToolContext>: Sendable {
         self.maxToolRounds = maxToolRounds
         self.toolTimeout = toolTimeout
         self.maxMessages = maxMessages
+        self.approvalPolicy = approvalPolicy
     }
 
     public func send(
@@ -117,27 +120,40 @@ public struct Chat<C: ToolContext>: Sendable {
         _ message: String,
         history: [ChatMessage] = [],
         context: C,
-        requestContext: RequestContext? = nil
+        requestContext: RequestContext? = nil,
+        approvalHandler: ToolApprovalHandler? = nil
     ) -> AsyncThrowingStream<StreamEvent, Error> {
-        stream(userMessage: .user(message), history: history, context: context, requestContext: requestContext)
+        stream(
+            userMessage: .user(message), history: history, context: context,
+            requestContext: requestContext, approvalHandler: approvalHandler
+        )
     }
 
     public func stream(
         _ parts: [ContentPart],
         history: [ChatMessage] = [],
         context: C,
-        requestContext: RequestContext? = nil
+        requestContext: RequestContext? = nil,
+        approvalHandler: ToolApprovalHandler? = nil
     ) -> AsyncThrowingStream<StreamEvent, Error> {
-        stream(userMessage: .user(parts), history: history, context: context, requestContext: requestContext)
+        stream(
+            userMessage: .user(parts), history: history, context: context,
+            requestContext: requestContext, approvalHandler: approvalHandler
+        )
     }
 
     private func stream(
         userMessage: ChatMessage,
         history: [ChatMessage],
         context: C,
-        requestContext: RequestContext?
+        requestContext: RequestContext?,
+        approvalHandler: ToolApprovalHandler?
     ) -> AsyncThrowingStream<StreamEvent, Error> {
-        AsyncThrowingStream { continuation in
+        precondition(
+            approvalPolicy == .none || approvalHandler != nil,
+            "approvalHandler is required when approvalPolicy is not .none"
+        )
+        return AsyncThrowingStream { continuation in
             let task = Task {
                 do {
                     try await performStream(
@@ -145,6 +161,7 @@ public struct Chat<C: ToolContext>: Sendable {
                         history: history,
                         context: context,
                         requestContext: requestContext,
+                        approvalHandler: approvalHandler,
                         continuation: continuation
                     )
                 } catch {
@@ -162,10 +179,12 @@ public struct Chat<C: ToolContext>: Sendable {
         history: [ChatMessage],
         context: C,
         requestContext: RequestContext?,
+        approvalHandler: ToolApprovalHandler?,
         continuation: AsyncThrowingStream<StreamEvent, Error>.Continuation
     ) async throws {
         var messages = buildMessages(userMessage: userMessage, history: history)
         var totalUsage = TokenUsage()
+        var sessionAllowlist: Set<String> = []
         let policy = StreamPolicy.chat
         let processor = StreamProcessor(client: client, toolDefinitions: toolDefinitions, policy: policy)
 
@@ -180,14 +199,7 @@ public struct Chat<C: ToolContext>: Sendable {
                 requestContext: requestContext
             )
 
-            let reasoning = iteration.reasoning.isEmpty ? nil : ReasoningContent(content: iteration.reasoning)
-            let details = iteration.reasoningDetails.isEmpty ? nil : iteration.reasoningDetails
-            messages.append(.assistant(AssistantMessage(
-                content: iteration.effectiveContent,
-                toolCalls: iteration.toolCalls,
-                reasoning: reasoning,
-                reasoningDetails: details
-            )))
+            messages.append(.assistant(iteration.toAssistantMessage()))
 
             if policy.shouldTerminateAfterIteration(toolCalls: iteration.toolCalls) {
                 continuation.yield(.finished(tokenUsage: totalUsage, content: nil, reason: nil, history: messages))
@@ -196,7 +208,10 @@ public struct Chat<C: ToolContext>: Sendable {
             }
 
             for call in iteration.toolCalls {
-                let result = try await executeToolSafely(call, context: context)
+                let result = try await resolveAndExecuteTool(
+                    call, context: context, approvalHandler: approvalHandler,
+                    allowlist: &sessionAllowlist, continuation: continuation
+                )
                 continuation.yield(.toolCallCompleted(id: call.id, name: call.name, result: result))
                 messages.append(.tool(id: call.id, name: call.name, content: result.content))
             }
@@ -219,18 +234,87 @@ public struct Chat<C: ToolContext>: Sendable {
         guard let maxMessages else { return messages }
         return messages.truncated(to: maxMessages, preservingSystemPrompt: true)
     }
+}
 
-    private func executeToolSafely(_ call: ToolCall, context: C) async throws -> ToolResult {
-        guard let tool = tools.first(where: { $0.name == call.name }) else {
+private extension Chat {
+    func resolveAndExecuteTool(
+        _ call: ToolCall,
+        context: C,
+        approvalHandler: ToolApprovalHandler?,
+        allowlist: inout Set<String>,
+        continuation: AsyncThrowingStream<StreamEvent, Error>.Continuation
+    ) async throws -> ToolResult {
+        guard let tool = tool(named: call.name) else {
             return .error(AgentError.toolNotFound(name: call.name).feedbackMessage)
         }
+
+        guard let handler = approvalHandler,
+              approvalPolicy.requiresApproval(toolName: call.name, allowlist: allowlist)
+        else {
+            return try await executeToolSafely(
+                call,
+                resolvedTool: tool,
+                context: context,
+                approvalHandler: approvalHandler
+            )
+        }
+
+        let request = ToolApprovalRequest(
+            toolCallId: call.id, toolName: call.name,
+            arguments: call.arguments, toolDescription: tool.description
+        )
+        continuation.yield(.toolApprovalRequested(request))
+        let decision = try await awaitApprovalDecision(for: request, using: handler)
+        continuation.yield(.toolApprovalResolved(toolCallId: call.id, decision: decision))
+        try Task.checkCancellation()
+
+        switch decision {
+        case .approve:
+            return try await executeToolSafely(
+                call,
+                resolvedTool: tool,
+                context: context,
+                approvalHandler: approvalHandler
+            )
+        case .approveAlways:
+            allowlist.insert(call.name)
+            return try await executeToolSafely(
+                call,
+                resolvedTool: tool,
+                context: context,
+                approvalHandler: approvalHandler
+            )
+        case let .approveWithModifiedArguments(newArgs):
+            let modified = ToolCall(id: call.id, name: call.name, arguments: newArgs)
+            return try await executeToolSafely(
+                modified,
+                resolvedTool: tool,
+                context: context,
+                approvalHandler: approvalHandler
+            )
+        case let .deny(reason):
+            return .error(reason ?? "Tool call was denied.")
+        }
+    }
+
+    func executeToolSafely(
+        _ call: ToolCall,
+        resolvedTool: any AnyTool<C>,
+        context: C,
+        approvalHandler: ToolApprovalHandler? = nil
+    ) async throws -> ToolResult {
         do {
             return try await withThrowingTaskGroup(of: ToolResult.self) { group in
                 group.addTask {
-                    try await tool.execute(arguments: call.argumentsData, context: context)
+                    try await executeTool(
+                        call,
+                        with: resolvedTool,
+                        context: context,
+                        approvalHandler: approvalHandler
+                    )
                 }
                 group.addTask {
-                    try await Task.sleep(for: toolTimeout)
+                    try await Task.sleep(for: self.toolTimeout)
                     throw AgentError.toolTimeout(tool: call.name)
                 }
 
@@ -247,5 +331,26 @@ public struct Chat<C: ToolContext>: Sendable {
         } catch {
             return .error("Tool failed: \(error)")
         }
+    }
+
+    func executeTool(
+        _ call: ToolCall,
+        with tool: any AnyTool<C>,
+        context: C,
+        approvalHandler: ToolApprovalHandler?
+    ) async throws -> ToolResult {
+        if let handler = approvalHandler,
+           let approvalAware = tool as? any ApprovalAwareSubAgentTool<C> {
+            return try await approvalAware.executeWithApproval(
+                arguments: call.argumentsData,
+                context: context,
+                approvalHandler: handler
+            )
+        }
+        return try await tool.execute(arguments: call.argumentsData, context: context)
+    }
+
+    func tool(named name: String) -> (any AnyTool<C>)? {
+        tools.first(where: { $0.name == name })
     }
 }

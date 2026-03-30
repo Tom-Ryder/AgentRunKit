@@ -9,6 +9,14 @@ private struct QueryParams: Codable, SchemaProviding {
     }
 }
 
+private struct NoopParams: Codable, SchemaProviding {
+    static var jsonSchema: JSONSchema {
+        .object(properties: [:], required: [])
+    }
+}
+
+private struct NoopOutput: Codable {}
+
 struct SubAgentStreamingLifecycleTests {
     @Test
     func emitsLifecycleEvents() async throws {
@@ -515,6 +523,116 @@ struct SubAgentNestingTests {
             return
         }
         #expect(content == "root done")
+    }
+}
+
+struct SubAgentApprovalStreamingTests {
+    @Test
+    func childApprovalEventsPropagateWhenParentPolicyIsNone() async throws {
+        let childNoopTool = try Tool<NoopParams, NoopOutput, SubAgentContext<EmptyContext>>(
+            name: "child_noop",
+            description: "Child no-op",
+            executor: { _, _ in NoopOutput() }
+        )
+        let childDeltas1: [StreamDelta] = [
+            .toolCallStart(index: 0, id: "child_tool", name: "child_noop"),
+            .toolCallDelta(index: 0, arguments: "{}"),
+            .finished(usage: nil),
+        ]
+        let childDeltas2: [StreamDelta] = [
+            .toolCallStart(index: 0, id: "child_finish", name: "finish"),
+            .toolCallDelta(index: 0, arguments: #"{"content":"child done"}"#),
+            .finished(usage: nil),
+        ]
+        let childClient = StreamingMockLLMClient(streamSequences: [childDeltas1, childDeltas2])
+        let childAgent = Agent<SubAgentContext<EmptyContext>>(
+            client: childClient,
+            tools: [childNoopTool],
+            configuration: AgentConfiguration(approvalPolicy: .allTools)
+        )
+        let tool = try SubAgentTool<QueryParams, EmptyContext>(
+            name: "delegate",
+            description: "Delegates work",
+            agent: childAgent,
+            messageBuilder: { $0.query }
+        )
+
+        let parentDeltas1: [StreamDelta] = [
+            .toolCallStart(index: 0, id: "parent_tool", name: "delegate"),
+            .toolCallDelta(index: 0, arguments: #"{"query":"go"}"#),
+            .finished(usage: nil),
+        ]
+        let parentDeltas2: [StreamDelta] = [
+            .toolCallStart(index: 0, id: "parent_finish", name: "finish"),
+            .toolCallDelta(index: 0, arguments: #"{"content":"parent done"}"#),
+            .finished(usage: nil),
+        ]
+        let parentClient = StreamingMockLLMClient(streamSequences: [parentDeltas1, parentDeltas2])
+        let parentAgent = Agent<SubAgentContext<EmptyContext>>(client: parentClient, tools: [tool])
+        let counter = CountingApprovalHandler()
+
+        var events: [StreamEvent] = []
+        let ctx = SubAgentContext(inner: EmptyContext(), maxDepth: 3)
+        for try await event in parentAgent.stream(
+            userMessage: "Go",
+            context: ctx,
+            approvalHandler: counter.handler
+        ) {
+            events.append(event)
+        }
+
+        let requests = await counter.requests
+        #expect(requests.map(\.toolName) == ["child_noop"])
+
+        let nestedApprovalRequested = containsNestedApprovalRequested(events, toolName: "delegate")
+        #expect(nestedApprovalRequested)
+
+        let nestedApprovalResolved = containsNestedApprovalResolved(events, toolName: "delegate")
+        #expect(nestedApprovalResolved)
+
+        let toolCompleted = containsCompletedToolCall(
+            events,
+            id: "parent_tool",
+            name: "delegate",
+            content: "child done"
+        )
+        #expect(toolCompleted)
+    }
+}
+
+private func containsNestedApprovalRequested(_ events: [StreamEvent], toolName: String) -> Bool {
+    events.contains { event in
+        if case let .subAgentEvent(_, innerToolName, innerEvent) = event,
+           innerToolName == toolName,
+           case .toolApprovalRequested = innerEvent {
+            return true
+        }
+        return false
+    }
+}
+
+private func containsNestedApprovalResolved(_ events: [StreamEvent], toolName: String) -> Bool {
+    events.contains { event in
+        if case let .subAgentEvent(_, innerToolName, innerEvent) = event,
+           innerToolName == toolName,
+           case .toolApprovalResolved = innerEvent {
+            return true
+        }
+        return false
+    }
+}
+
+private func containsCompletedToolCall(
+    _ events: [StreamEvent],
+    id: String,
+    name: String,
+    content: String
+) -> Bool {
+    events.contains { event in
+        if case let .toolCallCompleted(eventId, eventName, result) = event {
+            return eventId == id && eventName == name && result.content == content && !result.isError
+        }
+        return false
     }
 }
 

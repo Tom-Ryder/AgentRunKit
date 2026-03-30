@@ -4,7 +4,7 @@ import Foundation
 ///
 /// For guidance on composing sub-agents, see <doc:SubAgents>.
 public struct SubAgentTool<P: Codable & SchemaProviding & Sendable, InnerContext: ToolContext>: AnyTool,
-    StreamableSubAgentTool, TimeoutOverriding {
+    StreamableSubAgentTool, ApprovalAwareSubAgentTool, TimeoutOverriding {
     public typealias Context = SubAgentContext<InnerContext>
 
     public let name: String
@@ -40,6 +40,22 @@ public struct SubAgentTool<P: Codable & SchemaProviding & Sendable, InnerContext
     }
 
     public func execute(arguments: Data, context: SubAgentContext<InnerContext>) async throws -> ToolResult {
+        try await runInner(arguments: arguments, context: context, approvalHandler: nil)
+    }
+
+    func executeWithApproval(
+        arguments: Data,
+        context: SubAgentContext<InnerContext>,
+        approvalHandler: @escaping ToolApprovalHandler
+    ) async throws -> ToolResult {
+        try await runInner(arguments: arguments, context: context, approvalHandler: approvalHandler)
+    }
+
+    private func runInner(
+        arguments: Data,
+        context: SubAgentContext<InnerContext>,
+        approvalHandler: ToolApprovalHandler?
+    ) async throws -> ToolResult {
         let params = try decodeParams(arguments)
         guard context.currentDepth < context.maxDepth else {
             throw AgentError.maxDepthExceeded(depth: context.currentDepth)
@@ -50,7 +66,8 @@ public struct SubAgentTool<P: Codable & SchemaProviding & Sendable, InnerContext
             history: history,
             context: context.descending(),
             tokenBudget: tokenBudget,
-            systemPromptOverride: systemPromptBuilder?(params)
+            systemPromptOverride: systemPromptBuilder?(params),
+            approvalHandler: approvalHandler
         )
         return ToolResult(content: result.content, isError: result.finishReason == .error)
     }
@@ -60,6 +77,19 @@ public struct SubAgentTool<P: Codable & SchemaProviding & Sendable, InnerContext
         arguments: Data,
         context: SubAgentContext<InnerContext>,
         eventHandler: @Sendable (StreamEvent) -> Void
+    ) async throws -> ToolResult {
+        try await executeStreaming(
+            toolCallId: "", arguments: arguments, context: context,
+            eventHandler: eventHandler, approvalHandler: nil
+        )
+    }
+
+    func executeStreaming(
+        toolCallId _: String,
+        arguments: Data,
+        context: SubAgentContext<InnerContext>,
+        eventHandler: @Sendable (StreamEvent) -> Void,
+        approvalHandler: ToolApprovalHandler?
     ) async throws -> ToolResult {
         let params = try decodeParams(arguments)
         guard context.currentDepth < context.maxDepth else {
@@ -71,7 +101,8 @@ public struct SubAgentTool<P: Codable & SchemaProviding & Sendable, InnerContext
             history: history,
             context: context.descending(),
             tokenBudget: tokenBudget,
-            systemPromptOverride: systemPromptBuilder?(params)
+            systemPromptOverride: systemPromptBuilder?(params),
+            approvalHandler: approvalHandler
         )
 
         var finalContent: String?

@@ -12,6 +12,7 @@ public struct AgentConfiguration: Sendable, Equatable {
     public let compactionPrompt: String?
     public let maxToolResultCharacters: Int?
     public let contextBudget: ContextBudgetConfig?
+    public let approvalPolicy: ToolApprovalPolicy
 
     public init(
         maxIterations: Int = 10,
@@ -21,7 +22,8 @@ public struct AgentConfiguration: Sendable, Equatable {
         compactionThreshold: Double? = nil,
         compactionPrompt: String? = nil,
         maxToolResultCharacters: Int? = nil,
-        contextBudget: ContextBudgetConfig? = nil
+        contextBudget: ContextBudgetConfig? = nil,
+        approvalPolicy: ToolApprovalPolicy = .none
     ) {
         precondition(maxIterations >= 1, "maxIterations must be at least 1")
         precondition(toolTimeout >= .milliseconds(1), "toolTimeout must be at least 1ms")
@@ -45,5 +47,6 @@ public struct AgentConfiguration: Sendable, Equatable {
         self.compactionPrompt = compactionPrompt
         self.maxToolResultCharacters = maxToolResultCharacters
         self.contextBudget = contextBudget
+        self.approvalPolicy = approvalPolicy
     }
 }

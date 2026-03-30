@@ -59,27 +59,139 @@ extension Agent {
     }
 
     func executeAndAppendResults(
-        _ calls: [ToolCall], context: C, messages: inout [ChatMessage]
+        _ calls: [ToolCall], context: C, messages: inout [ChatMessage],
+        approvalHandler: ToolApprovalHandler? = nil, allowlist: inout Set<String>
     ) async throws {
         guard !calls.isEmpty else { return }
-        let results = try await executeToolsInParallel(calls, context: context.withParentHistory(messages))
-        for (call, result) in results {
-            let content = ContextCompactor.truncateToolResult(result.content, configuration: configuration)
-            messages.append(.tool(id: call.id, name: call.name, content: content))
+        let executionContext = context.withParentHistory(messages)
+
+        guard let handler = approvalHandler, configuration.approvalPolicy != .none else {
+            let results = try await executeToolsInParallel(
+                calls,
+                context: executionContext,
+                approvalHandler: approvalHandler
+            )
+            for (call, result) in results {
+                let content = ContextCompactor.truncateToolResult(result.content, configuration: configuration)
+                messages.append(.tool(id: call.id, name: call.name, content: content))
+            }
+            return
+        }
+
+        var autoExecute: [IndexedToolCall] = []
+        var needsApproval: [IndexedToolCall] = []
+        for (offset, call) in calls.enumerated() {
+            let indexed = IndexedToolCall(index: offset, call: call)
+            if requiresApproval(call, allowlist: allowlist) {
+                needsApproval.append(indexed)
+            } else {
+                autoExecute.append(indexed)
+            }
+        }
+
+        var allResults: [IndexedToolResult] = []
+
+        if !autoExecute.isEmpty {
+            let results = try await executeToolsInParallel(
+                autoExecute.map(\.call), context: executionContext, approvalHandler: handler
+            )
+            for (position, (call, result)) in results.enumerated() {
+                allResults.append(IndexedToolResult(index: autoExecute[position].index, call: call, result: result))
+            }
+        }
+
+        let (approved, denied) = try await resolveApprovals(
+            needsApproval, handler: handler, allowlist: &allowlist, continuation: nil
+        )
+        try Task.checkCancellation()
+
+        allResults.append(contentsOf: denied)
+
+        if !approved.isEmpty {
+            let results = try await executeToolsInParallel(
+                approved.map(\.call), context: executionContext, approvalHandler: handler
+            )
+            for (position, (call, result)) in results.enumerated() {
+                allResults.append(IndexedToolResult(index: approved[position].index, call: call, result: result))
+            }
+        }
+
+        allResults.sort { $0.index < $1.index }
+        for entry in allResults {
+            let content = ContextCompactor.truncateToolResult(entry.result.content, configuration: configuration)
+            messages.append(.tool(id: entry.call.id, name: entry.call.name, content: content))
         }
     }
 
     func executeStreamingAndAppendResults(
         _ calls: [ToolCall], context: C, messages: inout [ChatMessage],
-        continuation: AsyncThrowingStream<StreamEvent, Error>.Continuation
+        continuation: AsyncThrowingStream<StreamEvent, Error>.Continuation,
+        approvalHandler: ToolApprovalHandler? = nil, allowlist: inout Set<String>
     ) async throws {
         guard !calls.isEmpty else { return }
-        let results = try await executeToolsStreaming(
-            calls, context: context.withParentHistory(messages), continuation: continuation
+        let executionContext = context.withParentHistory(messages)
+
+        guard let handler = approvalHandler, configuration.approvalPolicy != .none else {
+            let results = try await executeToolsStreaming(
+                calls,
+                context: executionContext,
+                continuation: continuation,
+                approvalHandler: approvalHandler
+            )
+            for (call, result) in results {
+                let content = ContextCompactor.truncateToolResult(result.content, configuration: configuration)
+                messages.append(.tool(id: call.id, name: call.name, content: content))
+            }
+            return
+        }
+
+        var autoExecute: [IndexedToolCall] = []
+        var needsApproval: [IndexedToolCall] = []
+        for (offset, call) in calls.enumerated() {
+            let indexed = IndexedToolCall(index: offset, call: call)
+            if requiresApproval(call, allowlist: allowlist) {
+                needsApproval.append(indexed)
+            } else {
+                autoExecute.append(indexed)
+            }
+        }
+
+        var allResults: [IndexedToolResult] = []
+
+        if !autoExecute.isEmpty {
+            let results = try await executeToolsStreaming(
+                autoExecute.map(\.call), context: executionContext,
+                continuation: continuation, approvalHandler: handler
+            )
+            for (position, (call, result)) in results.enumerated() {
+                allResults.append(IndexedToolResult(index: autoExecute[position].index, call: call, result: result))
+            }
+        }
+
+        let (approved, denied) = try await resolveApprovals(
+            needsApproval, handler: handler, allowlist: &allowlist, continuation: continuation
         )
-        for (call, result) in results {
-            let content = ContextCompactor.truncateToolResult(result.content, configuration: configuration)
-            messages.append(.tool(id: call.id, name: call.name, content: content))
+        try Task.checkCancellation()
+
+        for entry in denied {
+            continuation.yield(.toolCallCompleted(id: entry.call.id, name: entry.call.name, result: entry.result))
+            allResults.append(entry)
+        }
+
+        if !approved.isEmpty {
+            let results = try await executeToolsStreaming(
+                approved.map(\.call), context: executionContext,
+                continuation: continuation, approvalHandler: handler
+            )
+            for (position, (call, result)) in results.enumerated() {
+                allResults.append(IndexedToolResult(index: approved[position].index, call: call, result: result))
+            }
+        }
+
+        allResults.sort { $0.index < $1.index }
+        for entry in allResults {
+            let content = ContextCompactor.truncateToolResult(entry.result.content, configuration: configuration)
+            messages.append(.tool(id: entry.call.id, name: entry.call.name, content: content))
         }
     }
 }

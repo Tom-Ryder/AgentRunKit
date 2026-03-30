@@ -4,7 +4,7 @@
 
 ### Creating a Configuration
 
-- ``init(maxIterations:toolTimeout:systemPrompt:maxMessages:compactionThreshold:compactionPrompt:maxToolResultCharacters:contextBudget:)``
+- ``init(maxIterations:toolTimeout:systemPrompt:maxMessages:compactionThreshold:compactionPrompt:maxToolResultCharacters:contextBudget:approvalPolicy:)``
 
 ### Iteration and Timeouts
 
@@ -25,3 +25,7 @@
 ### Context Budget
 
 - ``contextBudget``
+
+### Tool Approval
+
+- ``approvalPolicy``

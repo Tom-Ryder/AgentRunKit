@@ -53,6 +53,13 @@ For a complete walkthrough, see <doc:GettingStarted>.
 - ``AgentStream``
 - ``ToolCallInfo``
 
+### Tool Approval
+
+- <doc:ToolApproval>
+- ``ToolApprovalPolicy``
+- ``ToolApprovalRequest``
+- ``ToolApprovalDecision``
+
 ### Agent Composition
 
 - <doc:SubAgents>

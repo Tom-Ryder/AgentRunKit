@@ -76,4 +76,16 @@ struct ResponsesAPISmokeTests {
         )
         try await assertSmokeMultiTurn(client: persistentClient)
     }
+
+    @Test func approvalGate() async throws {
+        try await assertSmokeApprovalGate(client: makeClient())
+    }
+
+    @Test func approvalDenial() async throws {
+        try await assertSmokeApprovalDenial(client: makeClient())
+    }
+
+    @Test func streamingApproval() async throws {
+        try await assertSmokeStreamingApproval(client: makeClient())
+    }
 }

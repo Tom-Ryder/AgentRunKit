@@ -62,4 +62,16 @@ struct OpenRouterSmokeTests {
     @Test func nestedStructuredOutput() async throws {
         try await assertSmokeNestedStructuredOutput(client: client)
     }
+
+    @Test func approvalGate() async throws {
+        try await assertSmokeApprovalGate(client: client)
+    }
+
+    @Test func approvalDenial() async throws {
+        try await assertSmokeApprovalDenial(client: client)
+    }
+
+    @Test func streamingApproval() async throws {
+        try await assertSmokeStreamingApproval(client: client)
+    }
 }

@@ -29,6 +29,22 @@ struct AgentStreamTests {
         }
     }
 
+    @MainActor
+    private func waitUntil(
+        timeout: Duration = .seconds(1),
+        condition: @MainActor () -> Bool
+    ) async -> Bool {
+        let clock = ContinuousClock()
+        let deadline = clock.now + timeout
+        while clock.now < deadline {
+            if condition() {
+                return true
+            }
+            await Task.yield()
+        }
+        return condition()
+    }
+
     @MainActor @Test
     func contentAccumulatesFromDeltas() async {
         let deltas: [StreamDelta] = [
@@ -412,6 +428,151 @@ private actor FailingStreamMockLLMClient: LLMClient {
     ) -> AsyncThrowingStream<StreamDelta, Error> {
         AsyncThrowingStream { continuation in
             continuation.finish(throwing: AgentError.llmError(.other("Stream failure")))
+        }
+    }
+}
+
+@MainActor
+struct AgentStreamApprovalTests {
+    private func awaitCompletion(_ stream: AgentStream<some ToolContext>) async {
+        while stream.isStreaming {
+            await Task.yield()
+        }
+    }
+
+    private func waitUntil(
+        timeout: Duration = .seconds(1),
+        condition: @MainActor () -> Bool
+    ) async -> Bool {
+        let clock = ContinuousClock()
+        let deadline = clock.now + timeout
+        while clock.now < deadline {
+            if condition() {
+                return true
+            }
+            await Task.yield()
+        }
+        return false
+    }
+
+    @MainActor @Test
+    func toolCallTransitionsThroughAwaitingApproval() async throws {
+        let echoTool = try Tool<EchoParams, EchoOutput, EmptyContext>(
+            name: "echo",
+            description: "Echoes input",
+            executor: { params, _ in EchoOutput(echoed: "Echo: \(params.message)") }
+        )
+
+        let firstDeltas: [StreamDelta] = [
+            .toolCallStart(index: 0, id: "call_1", name: "echo"),
+            .toolCallDelta(index: 0, arguments: #"{"message":"hello"}"#),
+            .finished(usage: TokenUsage(input: 10, output: 5)),
+        ]
+        let secondDeltas: [StreamDelta] = [
+            .toolCallStart(index: 0, id: "call_2", name: "finish"),
+            .toolCallDelta(index: 0, arguments: #"{"content":"done"}"#),
+            .finished(usage: TokenUsage(input: 20, output: 10)),
+        ]
+
+        let client = StreamingMockLLMClient(streamSequences: [firstDeltas, secondDeltas])
+        let config = AgentConfiguration(approvalPolicy: .allTools)
+        let agent = Agent<EmptyContext>(client: client, tools: [echoTool], configuration: config)
+        let stream = AgentStream(agent: agent)
+        let handler = BlockingApprovalHandler()
+
+        stream.send("Echo hello", context: EmptyContext(), approvalHandler: handler.handler)
+
+        let sawAwaitingApproval = await waitUntil {
+            if let echoCall = stream.toolCalls.first(where: { $0.name == "echo" }),
+               case .awaitingApproval = echoCall.state {
+                return true
+            }
+            return false
+        }
+
+        await handler.resume()
+        await awaitCompletion(stream)
+
+        #expect(sawAwaitingApproval)
+
+        let requestCount = await handler.requestCount
+        #expect(requestCount == 1)
+
+        let echoCall = try #require(stream.toolCalls.first(where: { $0.name == "echo" }))
+        if case let .completed(result) = echoCall.state {
+            #expect(result.contains("Echo: hello"))
+        } else {
+            Issue.record("Expected completed state for echo tool")
+        }
+    }
+
+    @MainActor @Test
+    func nestedApprovalAppearsInToolCalls() async throws {
+        let childEchoTool = try Tool<EchoParams, EchoOutput, SubAgentContext<EmptyContext>>(
+            name: "echo",
+            description: "Echoes input",
+            executor: { params, _ in EchoOutput(echoed: "Echo: \(params.message)") }
+        )
+        let childDeltas1: [StreamDelta] = [
+            .toolCallStart(index: 0, id: "child_call", name: "echo"),
+            .toolCallDelta(index: 0, arguments: #"{"message":"child"}"#),
+            .finished(usage: nil),
+        ]
+        let childDeltas2: [StreamDelta] = [
+            .toolCallStart(index: 0, id: "child_finish", name: "finish"),
+            .toolCallDelta(index: 0, arguments: #"{"content":"child done"}"#),
+            .finished(usage: nil),
+        ]
+        let childClient = StreamingMockLLMClient(streamSequences: [childDeltas1, childDeltas2])
+        let childAgent = Agent<SubAgentContext<EmptyContext>>(
+            client: childClient,
+            tools: [childEchoTool],
+            configuration: AgentConfiguration(approvalPolicy: .allTools)
+        )
+        let delegateTool = try SubAgentTool<EchoParams, EmptyContext>(
+            name: "delegate",
+            description: "Delegates work",
+            agent: childAgent,
+            messageBuilder: { $0.message }
+        )
+        let parentDeltas1: [StreamDelta] = [
+            .toolCallStart(index: 0, id: "delegate_call", name: "delegate"),
+            .toolCallDelta(index: 0, arguments: #"{"message":"go"}"#),
+            .finished(usage: nil),
+        ]
+        let parentDeltas2: [StreamDelta] = [
+            .toolCallStart(index: 0, id: "parent_finish", name: "finish"),
+            .toolCallDelta(index: 0, arguments: #"{"content":"parent done"}"#),
+            .finished(usage: nil),
+        ]
+        let parentClient = StreamingMockLLMClient(streamSequences: [parentDeltas1, parentDeltas2])
+        let parentAgent = Agent<SubAgentContext<EmptyContext>>(client: parentClient, tools: [delegateTool])
+        let stream = AgentStream(agent: parentAgent)
+        let handler = BlockingApprovalHandler()
+
+        stream.send(
+            "Go",
+            context: SubAgentContext(inner: EmptyContext(), maxDepth: 3),
+            approvalHandler: handler.handler
+        )
+
+        let sawNestedAwaitingApproval = await waitUntil {
+            if let nestedCall = stream.toolCalls.first(where: { $0.name == "delegate > echo" }),
+               case .awaitingApproval = nestedCall.state {
+                return true
+            }
+            return false
+        }
+        #expect(sawNestedAwaitingApproval)
+
+        await handler.resume()
+        await awaitCompletion(stream)
+
+        let nestedCall = try #require(stream.toolCalls.first(where: { $0.name == "delegate > echo" }))
+        if case let .completed(result) = nestedCall.state {
+            #expect(result.contains("Echo: child"))
+        } else {
+            Issue.record("Expected completed state for nested approval call")
         }
     }
 }

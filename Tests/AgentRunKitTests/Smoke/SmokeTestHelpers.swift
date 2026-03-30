@@ -752,3 +752,128 @@ func assertSmokeIterationCompleted(client: any LLMClient) async throws {
         #expect(event.usage.input > 0)
     }
 }
+
+private actor SmokeApprovalTracker {
+    var callCount = 0
+    var lastToolName: String?
+
+    func record(_ toolName: String) {
+        callCount += 1
+        lastToolName = toolName
+    }
+}
+
+func assertSmokeApprovalGate(client: any LLMClient) async throws {
+    let addTool = try makeSmokeAddTool()
+    let config = AgentConfiguration(
+        maxIterations: 5,
+        systemPrompt: """
+        You are a calculator assistant. When asked to add numbers, use the add tool.
+        After getting the result, use the finish tool with the answer.
+        """,
+        approvalPolicy: .allTools
+    )
+
+    let tracker = SmokeApprovalTracker()
+
+    let agent = Agent<EmptyContext>(client: client, tools: [addTool], configuration: config)
+    let result = try await agent.run(
+        userMessage: "What is 17 + 25?",
+        context: EmptyContext(),
+        approvalHandler: { request in
+            await tracker.record(request.toolName)
+            return .approve
+        }
+    )
+
+    let callCount = await tracker.callCount
+    let toolName = await tracker.lastToolName
+    #expect(callCount >= 1)
+    #expect(toolName == "add")
+    #expect(result.content.contains("42"))
+    #expect(result.iterations >= 2)
+}
+
+func assertSmokeApprovalDenial(client: any LLMClient) async throws {
+    let addTool = try makeSmokeAddTool()
+    let config = AgentConfiguration(
+        maxIterations: 5,
+        systemPrompt: """
+        You are a calculator assistant. When asked to add numbers, use the add tool.
+        If a tool call is denied, explain that you cannot perform the calculation and finish.
+        """,
+        approvalPolicy: .allTools
+    )
+
+    let tracker = SmokeApprovalTracker()
+
+    let agent = Agent<EmptyContext>(client: client, tools: [addTool], configuration: config)
+    let result = try await agent.run(
+        userMessage: "What is 17 + 25?",
+        context: EmptyContext(),
+        approvalHandler: { request in
+            await tracker.record(request.toolName)
+            return .deny(reason: "Calculations are disabled.")
+        }
+    )
+
+    let callCount = await tracker.callCount
+    #expect(callCount >= 1)
+    #expect(!result.content.isEmpty)
+    let denialInHistory = result.history.contains { message in
+        if case let .tool(_, _, content) = message {
+            return content.contains("disabled")
+        }
+        return false
+    }
+    #expect(denialInHistory)
+}
+
+func assertSmokeStreamingApproval(client: any LLMClient) async throws {
+    let addTool = try makeSmokeAddTool()
+    let config = AgentConfiguration(
+        maxIterations: 5,
+        systemPrompt: """
+        You are a calculator assistant. When asked to add numbers, use the add tool.
+        After getting the result, use the finish tool with the answer.
+        """,
+        approvalPolicy: .allTools
+    )
+
+    let agent = Agent<EmptyContext>(client: client, tools: [addTool], configuration: config)
+
+    var approvalRequested = false
+    var approvalResolved = false
+    var toolCompleted = false
+    var finishContent: String?
+
+    for try await event in agent.stream(
+        userMessage: "What is 7 + 8?",
+        context: EmptyContext(),
+        approvalHandler: { request in
+            #expect(request.toolName == "add")
+            return .approve
+        }
+    ) {
+        switch event {
+        case .toolApprovalRequested:
+            approvalRequested = true
+        case .toolApprovalResolved:
+            approvalResolved = true
+        case let .toolCallCompleted(_, name, result):
+            if name == "add" {
+                toolCompleted = true
+                #expect(result.content.contains("15"))
+            }
+        case let .finished(_, content, _, _):
+            finishContent = content
+        default:
+            break
+        }
+    }
+
+    #expect(approvalRequested)
+    #expect(approvalResolved)
+    #expect(toolCompleted)
+    #expect(finishContent?.contains("15") == true)
+}

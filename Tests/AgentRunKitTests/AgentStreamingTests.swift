@@ -401,6 +401,41 @@ struct AgentStreamingTests {
         #expect(toolMessages[0].name == "slow")
         #expect(toolMessages[1].name == "fast")
     }
+
+    @Test
+    func streamingFinishSkipsSiblingTools() async throws {
+        let echoTool = try Tool<EchoParams, EchoOutput, EmptyContext>(
+            name: "echo",
+            description: "Echoes input",
+            executor: { params, _ in EchoOutput(echoed: "Echo: \(params.message)") }
+        )
+
+        let deltas: [StreamDelta] = [
+            .toolCallStart(index: 0, id: "call_echo", name: "echo"),
+            .toolCallDelta(index: 0, arguments: #"{"message": "should not run"}"#),
+            .toolCallStart(index: 1, id: "call_finish", name: "finish"),
+            .toolCallDelta(index: 1, arguments: #"{"content": "done"}"#),
+            .finished(usage: nil),
+        ]
+        let client = StreamingMockLLMClient(streamSequences: [deltas])
+        let agent = Agent<EmptyContext>(client: client, tools: [echoTool])
+
+        var toolCompletedNames: [String] = []
+        var finishContent: String?
+        for try await event in agent.stream(userMessage: "Go", context: EmptyContext()) {
+            switch event {
+            case let .toolCallCompleted(_, name, _):
+                toolCompletedNames.append(name)
+            case let .finished(_, content, _, _):
+                finishContent = content
+            default:
+                break
+            }
+        }
+
+        #expect(toolCompletedNames.isEmpty)
+        #expect(finishContent == "done")
+    }
 }
 
 struct StreamingReasoningTests {
