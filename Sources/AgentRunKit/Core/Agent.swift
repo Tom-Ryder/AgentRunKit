@@ -148,24 +148,19 @@ extension Agent {
             client: client, toolDefinitions: toolDefinitions, configuration: configuration
         )
         var budgetPhase = try makeBudgetPhase()
+        var historyWasRewrittenLocally = false
 
         for iteration in 1 ... configuration.maxIterations {
             try Task.checkCancellation()
 
-            await compactor.compactOrTruncateIfNeeded(
-                &messages, lastTotalTokens: lastTotalTokens, totalUsage: &totalUsage
-            )
-            let response = try await client.generate(
-                messages: messages,
-                tools: toolDefinitions,
-                responseFormat: nil,
+            let response = try await executeRunIteration(
+                messages: &messages,
+                totalUsage: &totalUsage,
+                lastTotalTokens: &lastTotalTokens,
+                compactor: &compactor,
+                historyWasRewrittenLocally: &historyWasRewrittenLocally,
                 requestContext: options.requestContext
             )
-            messages.append(.assistant(response))
-            if let usage = response.tokenUsage {
-                totalUsage += usage
-                lastTotalTokens = usage.total
-            }
             let budgetUsage = try requireBudgetUsage(response.tokenUsage, budgetPhase: budgetPhase)
 
             if let finishCall = response.toolCalls.first(where: { $0.name == "finish" }) {
@@ -189,7 +184,13 @@ extension Agent {
             let pruneCalls = response.toolCalls.filter { $0.name == "prune_context" }
             let regularCalls = response.toolCalls.filter { $0.name != "finish" && $0.name != "prune_context" }
 
-            executePruneCalls(pruneCalls, messages: &messages)
+            let pruneRewroteHistory = executePruneCalls(
+                pruneCalls,
+                messages: &messages
+            )
+            if pruneRewroteHistory {
+                historyWasRewrittenLocally = true
+            }
             try await executeAndAppendResults(
                 regularCalls, context: context, messages: &messages,
                 approvalHandler: options.approvalHandler, allowlist: &sessionAllowlist
@@ -281,10 +282,14 @@ extension Agent {
         for iterationNumber in 1 ... configuration.maxIterations {
             try Task.checkCancellation()
 
-            let compacted = await compactor.compactOrTruncateIfNeeded(
+            let compactionOutcome = await compactor.compactOrTruncateIfNeeded(
                 &messages, lastTotalTokens: lastTotalTokens, totalUsage: &totalUsage
             )
-            emitCompactionEventIfNeeded(compacted, lastTotalTokens: lastTotalTokens, continuation: continuation)
+            emitCompactionEventIfNeeded(
+                compactionOutcome.emitsCompactionEvent,
+                lastTotalTokens: lastTotalTokens,
+                continuation: continuation
+            )
             let iteration = try await processor.process(
                 messages: messages, totalUsage: &totalUsage, continuation: continuation,
                 requestContext: options.requestContext
@@ -376,28 +381,6 @@ extension Agent {
         )
     }
 
-    func parseFinishResult(
-        _ call: ToolCall,
-        tokenUsage: TokenUsage,
-        iterations: Int,
-        history: [ChatMessage]
-    ) throws -> AgentResult {
-        let data = call.argumentsData
-        let decoded: FinishArguments
-        do {
-            decoded = try JSONDecoder().decode(FinishArguments.self, from: data)
-        } catch {
-            throw AgentError.finishDecodingFailed(message: String(describing: error))
-        }
-        return AgentResult(
-            finishReason: FinishReason(decoded.reason ?? "completed"),
-            content: decoded.content,
-            totalTokenUsage: tokenUsage,
-            iterations: iterations,
-            history: history
-        )
-    }
-
     private func makeFinishedEvent(
         tokenUsage: TokenUsage,
         content: String?,
@@ -410,21 +393,6 @@ extension Agent {
             reason: reason,
             history: history
         ))
-    }
-
-    private func makeTerminalResult(
-        reason: FinishReason,
-        tokenUsage: TokenUsage,
-        iterations: Int,
-        history: [ChatMessage]
-    ) -> AgentResult {
-        AgentResult(
-            finishReason: reason,
-            content: nil,
-            totalTokenUsage: tokenUsage,
-            iterations: iterations,
-            history: history
-        )
     }
 
     private func emitCompactionEventIfNeeded(

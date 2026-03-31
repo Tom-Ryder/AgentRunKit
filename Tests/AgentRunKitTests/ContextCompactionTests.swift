@@ -329,7 +329,7 @@ struct CompactionFallbackTests {
         let result = await compactor.compactOrTruncateIfNeeded(
             &messages, lastTotalTokens: 900, totalUsage: &usage
         )
-        #expect(result)
+        #expect(result == .compacted)
         #expect(hasBridge(messages))
     }
 
@@ -371,7 +371,7 @@ struct CompactionFallbackTests {
         let pruned = await compactor.compactOrTruncateIfNeeded(
             &pruningMessages, lastTotalTokens: 900, totalUsage: &usage
         )
-        #expect(pruned)
+        #expect(pruned == .compacted)
         #expect(await client.generateCallCount == 2)
 
         for _ in 0 ..< 3 {
@@ -412,6 +412,111 @@ struct CompactionFallbackTests {
         let allMessages = await client.allCapturedMessages
         #expect(allMessages.count == 2)
         #expect(!hasBridge(allMessages[1]))
+    }
+}
+
+struct ReactiveCompactionTests {
+    @Test
+    func reactiveTruncationOnlySucceedsWhenHistoryShrinks() {
+        let client = CompactionMockLLMClient(responses: [], contextWindowSize: 1000)
+        var compactor = ContextCompactor(
+            client: client,
+            toolDefinitions: [],
+            configuration: AgentConfiguration(maxMessages: 2)
+        )
+        var messages: [ChatMessage] = [
+            .user("one"),
+            .assistant(AssistantMessage(content: "two")),
+            .user("three"),
+        ]
+        let shrunk = compactor.reactiveCompact(&messages)
+
+        #expect(shrunk == .rewritten)
+        #expect(messages.count == 2)
+
+        let unchanged = compactor.reactiveCompact(&messages)
+        #expect(unchanged == .unchanged)
+    }
+
+    @Test
+    func reactiveCompactionNeverCallsSummarization() async {
+        let client = CompactionMockLLMClient(
+            responses: [],
+            contextWindowSize: 1000,
+            failSummarization: true
+        )
+        var compactor = ContextCompactor(
+            client: client,
+            toolDefinitions: [],
+            configuration: AgentConfiguration(compactionThreshold: 0.5)
+        )
+        var messages: [ChatMessage] = [
+            .user("Earlier task"),
+            .assistant(AssistantMessage(content: "", toolCalls: [
+                ToolCall(id: "call_1", name: "search", arguments: "{}"),
+            ])),
+            .tool(id: "call_1", name: "search", content: String(repeating: "x", count: 5000)),
+            .assistant(AssistantMessage(content: "Working state")),
+            .user("Continue"),
+        ]
+        let outcome = compactor.reactiveCompact(&messages)
+
+        #expect(outcome == .rewritten)
+        #expect(await client.generateCallCount == 0)
+        guard case let .tool(_, _, content) = messages[2] else {
+            Issue.record("Expected pruned tool message")
+            return
+        }
+        #expect(content.contains("(pruned)"))
+    }
+
+    @Test
+    func reactivePruningRequiresCompactionThreshold() async {
+        let client = CompactionMockLLMClient(responses: [], contextWindowSize: 1000)
+        var compactor = ContextCompactor(
+            client: client,
+            toolDefinitions: [],
+            configuration: AgentConfiguration()
+        )
+        var messages: [ChatMessage] = [
+            .user("Earlier task"),
+            .assistant(AssistantMessage(content: "", toolCalls: [
+                ToolCall(id: "call_1", name: "search", arguments: "{}"),
+            ])),
+            .tool(id: "call_1", name: "search", content: String(repeating: "x", count: 5000)),
+            .assistant(AssistantMessage(content: "Working state")),
+            .user("Continue"),
+        ]
+        let original = messages
+        let outcome = compactor.reactiveCompact(&messages)
+
+        #expect(outcome == .unchanged)
+        #expect(messages == original)
+        #expect(await client.generateCallCount == 0)
+    }
+
+    @Test
+    func reactivePruningRequiresRealLocalReduction() {
+        let client = CompactionMockLLMClient(responses: [], contextWindowSize: 1000)
+        var compactor = ContextCompactor(
+            client: client,
+            toolDefinitions: [],
+            configuration: AgentConfiguration(compactionThreshold: 0.5)
+        )
+        var messages: [ChatMessage] = [
+            .user("Earlier task"),
+            .assistant(AssistantMessage(content: "", toolCalls: [
+                ToolCall(id: "call_1", name: "extremely_verbose_tool_name", arguments: "{}"),
+            ])),
+            .tool(id: "call_1", name: "extremely_verbose_tool_name", content: "ok"),
+            .assistant(AssistantMessage(content: "Working state")),
+            .user("Continue"),
+        ]
+        let original = messages
+        let outcome = compactor.reactiveCompact(&messages)
+
+        #expect(outcome == .unchanged)
+        #expect(messages == original)
     }
 }
 

@@ -1,7 +1,7 @@
 import Foundation
 
 /// An LLM client for the OpenAI Responses API.
-public actor ResponsesAPIClient: LLMClient {
+public actor ResponsesAPIClient: LLMClient, HistoryRewriteAwareClient {
     public nonisolated let modelIdentifier: String?
     public nonisolated let maxOutputTokens: Int?
     public nonisolated let contextWindowSize: Int?
@@ -42,18 +42,40 @@ public actor ResponsesAPIClient: LLMClient {
         self.reasoningConfig = reasoningConfig
         self.store = store
     }
+}
 
+extension ResponsesAPIClient {
     public func generate(
         messages: [ChatMessage],
         tools: [ToolDefinition],
         responseFormat: ResponseFormat?,
         requestContext: RequestContext?
     ) async throws -> AssistantMessage {
+        try await generate(
+            messages: messages,
+            tools: tools,
+            responseFormat: responseFormat,
+            requestContext: requestContext,
+            requestMode: .auto
+        )
+    }
+
+    func generate(
+        messages: [ChatMessage],
+        tools: [ToolDefinition],
+        responseFormat: ResponseFormat?,
+        requestContext: RequestContext?,
+        requestMode: RunRequestMode
+    ) async throws -> AssistantMessage {
+        if shouldResetConversationBeforeRequest(messages: messages, requestMode: requestMode) {
+            resetConversation()
+        }
         let request = try buildRequest(
             messages: messages,
             tools: tools,
             responseFormat: responseFormat,
-            extraFields: requestContext?.extraFields ?? [:]
+            extraFields: requestContext?.extraFields ?? [:],
+            requestMode: requestMode
         )
         let urlRequest = try buildURLRequest(request)
         let (data, httpResponse) = try await HTTPRetry.performData(
@@ -101,8 +123,19 @@ public actor ResponsesAPIClient: LLMClient {
         tools: [ToolDefinition],
         stream: Bool = false,
         responseFormat: ResponseFormat? = nil,
-        extraFields: [String: JSONValue] = [:]
+        extraFields: [String: JSONValue] = [:],
+        requestMode: RunRequestMode = .auto
     ) throws -> ResponsesRequest {
+        if requestMode == .forceFullRequest {
+            return try buildFullRequest(
+                messages: messages,
+                tools: tools,
+                stream: stream,
+                responseFormat: responseFormat,
+                extraFields: extraFields
+            )
+        }
+
         if store, let previousId = lastResponseId, messages.count >= lastMessageCount {
             return try buildDeltaRequest(
                 messages: messages,
@@ -114,11 +147,6 @@ public actor ResponsesAPIClient: LLMClient {
             )
         }
 
-        if store, messages.count < lastMessageCount {
-            lastResponseId = nil
-            lastMessageCount = 0
-        }
-
         return try buildFullRequest(
             messages: messages,
             tools: tools,
@@ -126,6 +154,13 @@ public actor ResponsesAPIClient: LLMClient {
             responseFormat: responseFormat,
             extraFields: extraFields
         )
+    }
+
+    func shouldResetConversationBeforeRequest(
+        messages: [ChatMessage],
+        requestMode: RunRequestMode
+    ) -> Bool {
+        requestMode == .forceFullRequest || (store && messages.count < lastMessageCount)
     }
 
     func mapMessages(

@@ -36,19 +36,23 @@ extension Agent {
         }
     }
 
+    @discardableResult
     func executePruneCalls(
         _ calls: [ToolCall],
         messages: inout [ChatMessage],
         continuation: AsyncThrowingStream<StreamEvent, Error>.Continuation? = nil
-    ) {
+    ) -> Bool {
         let pruneEnabled = configuration.contextBudget?.enablePruneTool == true
+        var historyWasRewritten = false
         for call in calls {
             let result: ToolResult
             if !pruneEnabled {
                 result = .error("Tool not available: prune_context is disabled.")
             } else {
                 do {
-                    result = try executePruneContext(arguments: call.argumentsData, messages: &messages)
+                    let pruneResult = try executePruneContext(arguments: call.argumentsData, messages: &messages)
+                    result = pruneResult.toolResult
+                    historyWasRewritten = historyWasRewritten || pruneResult.historyWasRewritten
                 } catch {
                     result = .error("prune_context failed: \(error)")
                 }
@@ -56,6 +60,7 @@ extension Agent {
             messages.append(.tool(id: call.id, name: call.name, content: result.content))
             continuation?.yield(.make(.toolCallCompleted(id: call.id, name: call.name, result: result)))
         }
+        return historyWasRewritten
     }
 
     func executeAndAppendResults(

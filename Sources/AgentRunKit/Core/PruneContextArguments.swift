@@ -10,7 +10,12 @@ struct PruneContextArguments: Codable {
 
 let prunedToolResultContent = "[pruned]"
 
-func executePruneContext(arguments: Data, messages: inout [ChatMessage]) throws -> ToolResult {
+struct PruneContextExecutionResult {
+    let toolResult: ToolResult
+    let historyWasRewritten: Bool
+}
+
+func executePruneContext(arguments: Data, messages: inout [ChatMessage]) throws -> PruneContextExecutionResult {
     let decoded = try JSONDecoder().decode(PruneContextArguments.self, from: arguments)
     let targetIds = Set(decoded.toolCallIds)
     var prunedCount = 0
@@ -24,7 +29,10 @@ func executePruneContext(arguments: Data, messages: inout [ChatMessage]) throws 
         }
     }
 
-    return .success("Pruned \(prunedCount) tool result(s).")
+    return PruneContextExecutionResult(
+        toolResult: .success("Pruned \(prunedCount) tool result(s)."),
+        historyWasRewritten: prunedCount > 0
+    )
 }
 
 package let reservedPruneContextToolDefinition = ToolDefinition(

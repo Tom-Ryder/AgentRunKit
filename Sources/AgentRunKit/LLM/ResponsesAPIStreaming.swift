@@ -10,6 +10,9 @@ extension ResponsesAPIClient {
         onResponse: (@Sendable (HTTPURLResponse) -> Void)?,
         continuation: AsyncThrowingStream<StreamDelta, Error>.Continuation
     ) async throws {
+        if shouldResetConversationBeforeRequest(messages: messages, requestMode: .auto) {
+            resetConversation()
+        }
         let request = try buildRequest(
             messages: messages, tools: tools,
             stream: true, extraFields: extraFields

@@ -228,7 +228,8 @@ struct ContextBudgetPhasePruneTests {
         let args = try JSONEncoder().encode(PruneContextArguments(toolCallIds: ["call_1"]))
         let result = try executePruneContext(arguments: args, messages: &messages)
 
-        #expect(result.content == "Pruned 1 tool result(s).")
+        #expect(result.toolResult.content == "Pruned 1 tool result(s).")
+        #expect(result.historyWasRewritten)
         if case let .tool(_, _, content) = messages[2] {
             #expect(content == prunedToolResultContent)
         } else {
@@ -245,7 +246,8 @@ struct ContextBudgetPhasePruneTests {
         let args = try JSONEncoder().encode(PruneContextArguments(toolCallIds: ["call_1", "call_3"]))
         let result = try executePruneContext(arguments: args, messages: &messages)
 
-        #expect(result.content == "Pruned 2 tool result(s).")
+        #expect(result.toolResult.content == "Pruned 2 tool result(s).")
+        #expect(result.historyWasRewritten)
         if case let .tool(_, _, content) = messages[0] {
             #expect(content == prunedToolResultContent)
         } else { Issue.record("Expected tool message at index 0") }
@@ -264,7 +266,8 @@ struct ContextBudgetPhasePruneTests {
         let args = try JSONEncoder().encode(PruneContextArguments(toolCallIds: ["nonexistent"]))
         let result = try executePruneContext(arguments: args, messages: &messages)
 
-        #expect(result.content == "Pruned 0 tool result(s).")
+        #expect(result.toolResult.content == "Pruned 0 tool result(s).")
+        #expect(!result.historyWasRewritten)
         if case let .tool(_, _, content) = messages[0] { #expect(content == "data") }
     }
 
@@ -275,7 +278,8 @@ struct ContextBudgetPhasePruneTests {
         let args = try JSONEncoder().encode(PruneContextArguments(toolCallIds: ["call_1"]))
         let result = try executePruneContext(arguments: args, messages: &messages)
 
-        #expect(result.content == "Pruned 0 tool result(s).")
+        #expect(result.toolResult.content == "Pruned 0 tool result(s).")
+        #expect(!result.historyWasRewritten)
     }
 
     @Test func pruneEmptyArrayIsNoOp() throws {
@@ -285,7 +289,8 @@ struct ContextBudgetPhasePruneTests {
         let args = try JSONEncoder().encode(PruneContextArguments(toolCallIds: []))
         let result = try executePruneContext(arguments: args, messages: &messages)
 
-        #expect(result.content == "Pruned 0 tool result(s).")
+        #expect(result.toolResult.content == "Pruned 0 tool result(s).")
+        #expect(!result.historyWasRewritten)
     }
 
     @Test func prunePreservesMessageArrayCount() throws {

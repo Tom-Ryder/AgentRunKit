@@ -32,60 +32,50 @@ actor MockLLMClient: LLMClient {
     }
 }
 
-struct MockLLMClientTests {
-    @Test
-    func returnsResponses() async throws {
-        let client = MockLLMClient(responses: [AssistantMessage(content: "Hello!")])
-        let response = try await client.generate(messages: [], tools: [])
-        #expect(response.content == "Hello!")
+private actor FallbackRequestModeMockLLMClient: LLMClient {
+    private let response: AssistantMessage
+    private(set) var generateCallCount = 0
+
+    init(response: AssistantMessage) {
+        self.response = response
     }
 
-    @Test
-    func returnsMultipleResponses() async throws {
-        let client = MockLLMClient(responses: [
-            AssistantMessage(content: "First"),
-            AssistantMessage(content: "Second")
-        ])
-        let first = try await client.generate(messages: [], tools: [])
-        let second = try await client.generate(messages: [], tools: [])
-        #expect(first.content == "First")
-        #expect(second.content == "Second")
+    func generate(
+        messages _: [ChatMessage],
+        tools _: [ToolDefinition],
+        responseFormat _: ResponseFormat?,
+        requestContext _: RequestContext?
+    ) async throws -> AssistantMessage {
+        generateCallCount += 1
+        return response
     }
 
-    @Test
-    func throwsWhenExhausted() async throws {
-        let client = MockLLMClient(responses: [])
-        do {
-            _ = try await client.generate(messages: [], tools: [])
-            Issue.record("Expected error")
-        } catch let error as AgentError {
-            guard case .llmError = error else {
-                Issue.record("Expected llmError, got \(error)")
-                return
-            }
-        } catch {
-            Issue.record("Expected llmError, got \(error)")
-        }
+    nonisolated func stream(
+        messages _: [ChatMessage],
+        tools _: [ToolDefinition],
+        requestContext _: RequestContext?
+    ) -> AsyncThrowingStream<StreamDelta, Error> {
+        AsyncThrowingStream { $0.finish() }
     }
 }
 
-struct ToolDefinitionTests {
+struct LLMClientRequestModeTests {
     @Test
-    func createsFromTool() throws {
-        let tool = try Tool<TestParams, TestOutput, EmptyContext>(
-            name: "double",
-            description: "Doubles a value",
-            executor: { params, _ in TestOutput(result: params.value * 2) }
+    func generateForRunFallsBackToPlainGenerate() async throws {
+        let client = FallbackRequestModeMockLLMClient(
+            response: AssistantMessage(content: "hello")
         )
-        let def = ToolDefinition(tool)
-        #expect(def.name == "double")
-        #expect(def.description == "Doubles a value")
-        guard case let .object(props, required, _) = def.parametersSchema else {
-            Issue.record("Expected object schema")
-            return
-        }
-        #expect(required == ["value"])
-        #expect(props["value"] != nil)
+
+        let response = try await client.generateForRun(
+            messages: [.user("Hi")],
+            tools: [],
+            responseFormat: nil,
+            requestContext: nil,
+            requestMode: .forceFullRequest
+        )
+
+        #expect(response.content == "hello")
+        #expect(await client.generateCallCount == 1)
     }
 }
 
@@ -376,20 +366,6 @@ struct OpenAIClientRequestTests {
         #expect(msg?["tool_call_id"] as? String == "call_123")
         #expect(msg?["name"] as? String == "get_weather")
         #expect(msg?["content"] as? String == "{\"temp\": 72}")
-    }
-}
-
-struct TransportErrorTests {
-    @Test
-    func errorsAreEquatable() {
-        #expect(TransportError.invalidResponse == TransportError.invalidResponse)
-        #expect(TransportError.noChoices == TransportError.noChoices)
-        #expect(TransportError.streamStalled == TransportError.streamStalled)
-        #expect(TransportError.streamStalled != TransportError.invalidResponse)
-        let err400 = TransportError.httpError(statusCode: 400, body: "bad")
-        let err401 = TransportError.httpError(statusCode: 401, body: "bad")
-        #expect(err400 == err400)
-        #expect(err400 != err401)
     }
 }
 

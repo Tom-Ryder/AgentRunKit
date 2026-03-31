@@ -1,6 +1,22 @@
 import Foundation
 
 struct ContextCompactor {
+    typealias SummaryGenerator = ([ChatMessage]) async throws -> AssistantMessage
+
+    enum Outcome: Equatable {
+        case unchanged
+        case rewritten
+        case compacted
+
+        var didRewriteHistory: Bool {
+            self != .unchanged
+        }
+
+        var emitsCompactionEvent: Bool {
+            self == .compacted
+        }
+    }
+
     let client: any LLMClient
     let toolDefinitions: [ToolDefinition]
     let configuration: AgentConfiguration
@@ -21,40 +37,55 @@ struct ContextCompactor {
     mutating func compactOrTruncateIfNeeded(
         _ messages: inout [ChatMessage],
         lastTotalTokens: Int?,
-        totalUsage: inout TokenUsage
-    ) async -> Bool {
+        totalUsage: inout TokenUsage,
+        summaryGenerator: SummaryGenerator? = nil
+    ) async -> Outcome {
         guard let totalTokens = lastTotalTokens,
               let windowSize = client.contextWindowSize,
               let threshold = configuration.compactionThreshold,
               Double(totalTokens) / Double(windowSize) >= threshold
         else {
-            truncateIfNeeded(&messages)
-            return false
+            return truncateIfNeeded(&messages) ? .rewritten : .unchanged
         }
 
-        let (pruned, reductionRatio) = pruneObservations(messages)
-        if reductionRatio > Self.minimumPruningReduction {
-            messages = pruned
+        let pruning = pruneObservations(messages)
+        if pruning.messages != messages, pruning.reductionRatio > Self.minimumPruningReduction {
+            messages = pruning.messages
             consecutiveSummarizationFailures = 0
-            return true
+            return .compacted
         }
 
         guard consecutiveSummarizationFailures < Self.maxConsecutiveSummarizationFailures else {
-            truncateIfNeeded(&messages)
-            return false
+            return truncateIfNeeded(&messages) ? .rewritten : .unchanged
         }
 
         do {
-            let (compacted, compactionUsage) = try await summarize(pruned)
+            let response = try await summaryResponse(pruning.messages, summaryGenerator: summaryGenerator)
+            let compacted = compactedMessages(from: pruning.messages, summary: response.content)
+            let compactionUsage = response.tokenUsage ?? TokenUsage()
             messages = compacted
             totalUsage += compactionUsage
             consecutiveSummarizationFailures = 0
-            return true
+            return .compacted
         } catch {
             consecutiveSummarizationFailures += 1
-            truncateIfNeeded(&messages)
-            return false
+            return truncateIfNeeded(&messages) ? .rewritten : .unchanged
         }
+    }
+
+    @discardableResult
+    mutating func reactiveCompact(
+        _ messages: inout [ChatMessage]
+    ) -> Outcome {
+        var didRewriteHistory = truncateIfNeeded(&messages)
+        if configuration.compactionThreshold != nil {
+            let pruning = pruneObservations(messages)
+            if pruning.messages != messages, pruning.reductionRatio > 0 {
+                messages = pruning.messages
+                didRewriteHistory = true
+            }
+        }
+        return didRewriteHistory ? .rewritten : .unchanged
     }
 
     func pruneObservations(_ messages: [ChatMessage]) -> (messages: [ChatMessage], reductionRatio: Double) {
@@ -95,26 +126,40 @@ struct ContextCompactor {
         return (result, ratio)
     }
 
-    func summarize(_ messages: [ChatMessage]) async throws -> (messages: [ChatMessage], usage: TokenUsage) {
-        let taskContext = extractTaskContext(messages)
-        let recentContext = extractRecentContext(messages)
-
+    func summaryResponse(
+        _ messages: [ChatMessage],
+        summaryGenerator: SummaryGenerator?
+    ) async throws -> AssistantMessage {
         let prompt = configuration.compactionPrompt ?? Self.summarizationPrompt
         let summaryRequest = Self.stripMedia(messages) + [.user(prompt)]
-        let response = try await client.generate(
-            messages: summaryRequest, tools: toolDefinitions, responseFormat: nil, requestContext: nil
+        if let summaryGenerator {
+            return try await summaryGenerator(summaryRequest)
+        }
+        return try await client.generate(
+            messages: summaryRequest,
+            tools: toolDefinitions,
+            responseFormat: nil,
+            requestContext: nil
         )
+    }
 
-        let compactionUsage = response.tokenUsage ?? TokenUsage()
-        let bridge = Self.bridgeMessage(summary: response.content)
+    func summarize(_ messages: [ChatMessage]) async throws -> (messages: [ChatMessage], usage: TokenUsage) {
+        let response = try await summaryResponse(messages, summaryGenerator: nil)
+        let compacted = compactedMessages(from: messages, summary: response.content)
+        return (compacted, response.tokenUsage ?? TokenUsage())
+    }
+
+    func compactedMessages(from messages: [ChatMessage], summary: String) -> [ChatMessage] {
+        let taskContext = extractTaskContext(messages)
+        let recentContext = extractRecentContext(messages)
+        let bridge = Self.bridgeMessage(summary: summary)
         let acknowledgment = AssistantMessage(content: "Understood. Resuming from the checkpoint.")
 
         var compacted = taskContext
         compacted.append(bridge)
         compacted.append(.assistant(acknowledgment))
         compacted.append(contentsOf: recentContext)
-
-        return (compacted, compactionUsage)
+        return compacted
     }
 
     static func truncateToolResult(_ content: String, configuration: AgentConfiguration) -> String {
@@ -127,9 +172,12 @@ struct ContextCompactor {
         return "\(content.prefix(headBudget))\(marker)\(content.suffix(tailBudget))"
     }
 
-    private func truncateIfNeeded(_ messages: inout [ChatMessage]) {
-        guard let maxMessages = configuration.maxMessages else { return }
-        messages = messages.truncated(to: maxMessages, preservingSystemPrompt: true)
+    private func truncateIfNeeded(_ messages: inout [ChatMessage]) -> Bool {
+        guard let maxMessages = configuration.maxMessages else { return false }
+        let truncated = messages.truncated(to: maxMessages, preservingSystemPrompt: true)
+        guard truncated != messages else { return false }
+        messages = truncated
+        return true
     }
 }
 
