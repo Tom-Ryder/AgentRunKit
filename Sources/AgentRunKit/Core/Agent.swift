@@ -144,7 +144,7 @@ extension Agent {
         var totalUsage = TokenUsage()
         var lastTotalTokens: Int?
         var sessionAllowlist: Set<String> = []
-        let compactor = ContextCompactor(
+        var compactor = ContextCompactor(
             client: client, toolDefinitions: toolDefinitions, configuration: configuration
         )
         var budgetPhase = try makeBudgetPhase()
@@ -266,7 +266,7 @@ private extension Agent {
         var sessionAllowlist: Set<String> = []
         let policy = StreamPolicy.agent
         let processor = StreamProcessor(client: client, toolDefinitions: toolDefinitions, policy: policy)
-        let compactor = ContextCompactor(
+        var compactor = ContextCompactor(
             client: client, toolDefinitions: toolDefinitions, configuration: configuration
         )
         var budgetPhase = try makeBudgetPhase()

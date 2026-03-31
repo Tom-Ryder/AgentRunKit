@@ -5,11 +5,20 @@ struct ContextCompactor {
     let toolDefinitions: [ToolDefinition]
     let configuration: AgentConfiguration
 
+    init(client: any LLMClient, toolDefinitions: [ToolDefinition], configuration: AgentConfiguration) {
+        self.client = client
+        self.toolDefinitions = toolDefinitions
+        self.configuration = configuration
+    }
+
     private static let minimumPruningReduction = 0.2
     private static let pruningPreviewLength = 80
+    private static let maxConsecutiveSummarizationFailures = 3
+
+    private var consecutiveSummarizationFailures = 0
 
     @discardableResult
-    func compactOrTruncateIfNeeded(
+    mutating func compactOrTruncateIfNeeded(
         _ messages: inout [ChatMessage],
         lastTotalTokens: Int?,
         totalUsage: inout TokenUsage
@@ -26,15 +35,23 @@ struct ContextCompactor {
         let (pruned, reductionRatio) = pruneObservations(messages)
         if reductionRatio > Self.minimumPruningReduction {
             messages = pruned
+            consecutiveSummarizationFailures = 0
             return true
+        }
+
+        guard consecutiveSummarizationFailures < Self.maxConsecutiveSummarizationFailures else {
+            truncateIfNeeded(&messages)
+            return false
         }
 
         do {
             let (compacted, compactionUsage) = try await summarize(pruned)
             messages = compacted
             totalUsage += compactionUsage
+            consecutiveSummarizationFailures = 0
             return true
         } catch {
+            consecutiveSummarizationFailures += 1
             truncateIfNeeded(&messages)
             return false
         }
@@ -82,7 +99,8 @@ struct ContextCompactor {
         let taskContext = extractTaskContext(messages)
         let recentContext = extractRecentContext(messages)
 
-        let summaryRequest = messages + [.user(configuration.compactionPrompt ?? Self.summarizationPrompt)]
+        let prompt = configuration.compactionPrompt ?? Self.summarizationPrompt
+        let summaryRequest = Self.stripMedia(messages) + [.user(prompt)]
         let response = try await client.generate(
             messages: summaryRequest, tools: toolDefinitions, responseFormat: nil, requestContext: nil
         )
@@ -104,8 +122,9 @@ struct ContextCompactor {
               content.count > max else { return content }
         let marker = "\n\n...[truncated]...\n\n"
         let contentBudget = Swift.max(max - marker.count, 0)
-        let half = contentBudget / 2
-        return "\(content.prefix(half))\(marker)\(content.suffix(half))"
+        let headBudget = contentBudget * 3 / 5
+        let tailBudget = contentBudget - headBudget
+        return "\(content.prefix(headBudget))\(marker)\(content.suffix(tailBudget))"
     }
 
     private func truncateIfNeeded(_ messages: inout [ChatMessage]) {
@@ -115,6 +134,22 @@ struct ContextCompactor {
 }
 
 private extension ContextCompactor {
+    static func stripMedia(_ messages: [ChatMessage]) -> [ChatMessage] {
+        messages.map { message in
+            guard case let .userMultimodal(parts) = message else { return message }
+            let stripped = parts.map { part -> ContentPart in
+                switch part {
+                case .text: return part
+                case .imageURL, .imageBase64: return .text("[image]")
+                case .videoBase64: return .text("[video]")
+                case .pdfBase64: return .text("[PDF]")
+                case .audioBase64: return .text("[audio]")
+                }
+            }
+            return .userMultimodal(stripped)
+        }
+    }
+
     func extractTaskContext(_ messages: [ChatMessage]) -> [ChatMessage] {
         var context: [ChatMessage] = []
         for message in messages {

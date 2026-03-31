@@ -9,6 +9,7 @@ private actor CompactionMockLLMClient: LLMClient {
     private let responses: [AssistantMessage]
     private var callIndex: Int = 0
     private(set) var allCapturedMessages: [[ChatMessage]] = []
+    private(set) var generateCallCount: Int = 0
     private let failSummarization: Bool
 
     init(
@@ -25,6 +26,7 @@ private actor CompactionMockLLMClient: LLMClient {
         messages: [ChatMessage], tools _: [ToolDefinition],
         responseFormat _: ResponseFormat?, requestContext _: RequestContext?
     ) async throws -> AssistantMessage {
+        generateCallCount += 1
         if failSummarization, case let .user(text) = messages.last,
            text.contains("CONTEXT CHECKPOINT") {
             throw AgentError.llmError(.other("Summarization failed"))
@@ -269,6 +271,120 @@ struct CompactionTriggerTests {
 // MARK: - Compaction Fallback Tests
 
 struct CompactionFallbackTests {
+    @Test
+    func circuitBreakerSkipsSummarizationAfterConsecutiveFailures() async {
+        let client = CompactionMockLLMClient(
+            responses: [], contextWindowSize: 1000, failSummarization: true
+        )
+        var compactor = ContextCompactor(
+            client: client,
+            toolDefinitions: [],
+            configuration: AgentConfiguration(maxMessages: 20, compactionThreshold: 0.5)
+        )
+        var messages: [ChatMessage] = [
+            .user("Hello"),
+            .assistant(AssistantMessage(content: "", toolCalls: [
+                ToolCall(id: "call_1", name: "search", arguments: "{}"),
+            ])),
+            .tool(id: "call_1", name: "search", content: String(repeating: "x", count: 10)),
+            .assistant(AssistantMessage(content: "Done")),
+        ]
+        var usage = TokenUsage()
+
+        for _ in 0 ..< 3 {
+            await compactor.compactOrTruncateIfNeeded(
+                &messages, lastTotalTokens: 900, totalUsage: &usage
+            )
+        }
+        let callsAfterTripping = await client.generateCallCount
+        #expect(callsAfterTripping == 3)
+
+        await compactor.compactOrTruncateIfNeeded(
+            &messages, lastTotalTokens: 900, totalUsage: &usage
+        )
+        let callsAfterSkip = await client.generateCallCount
+        #expect(callsAfterSkip == 3)
+    }
+
+    @Test
+    func circuitBreakerResetsOnSuccess() async {
+        var compactor = ContextCompactor(
+            client: CompactionMockLLMClient(
+                responses: [
+                    AssistantMessage(content: "Summary.", tokenUsage: TokenUsage(input: 50, output: 100)),
+                ],
+                contextWindowSize: 1000, failSummarization: false
+            ),
+            toolDefinitions: [],
+            configuration: AgentConfiguration(compactionThreshold: 0.5)
+        )
+        var messages: [ChatMessage] = [
+            .user("Hello"),
+            .assistant(AssistantMessage(content: "Done")),
+        ]
+        var usage = TokenUsage()
+
+        let result = await compactor.compactOrTruncateIfNeeded(
+            &messages, lastTotalTokens: 900, totalUsage: &usage
+        )
+        #expect(result)
+        #expect(hasBridge(messages))
+    }
+
+    @Test
+    func circuitBreakerResetsAfterPruningSuccess() async {
+        let client = CompactionMockLLMClient(
+            responses: [], contextWindowSize: 1000, failSummarization: true
+        )
+        var compactor = ContextCompactor(
+            client: client,
+            toolDefinitions: [],
+            configuration: AgentConfiguration(maxMessages: 20, compactionThreshold: 0.5)
+        )
+        var summarizationMessages: [ChatMessage] = [
+            .user("Hello"),
+            .assistant(AssistantMessage(content: "", toolCalls: [
+                ToolCall(id: "call_1", name: "search", arguments: "{}"),
+            ])),
+            .tool(id: "call_1", name: "search", content: String(repeating: "x", count: 10)),
+            .assistant(AssistantMessage(content: "Done")),
+        ]
+        var pruningMessages: [ChatMessage] = [
+            .user("Hello"),
+            .assistant(AssistantMessage(content: "", toolCalls: [
+                ToolCall(id: "call_2", name: "read_file", arguments: "{}"),
+            ])),
+            .tool(id: "call_2", name: "read_file", content: String(repeating: "x", count: 5000)),
+            .assistant(AssistantMessage(content: "Done")),
+        ]
+        var usage = TokenUsage()
+
+        for _ in 0 ..< 2 {
+            await compactor.compactOrTruncateIfNeeded(
+                &summarizationMessages, lastTotalTokens: 900, totalUsage: &usage
+            )
+        }
+        #expect(await client.generateCallCount == 2)
+
+        let pruned = await compactor.compactOrTruncateIfNeeded(
+            &pruningMessages, lastTotalTokens: 900, totalUsage: &usage
+        )
+        #expect(pruned)
+        #expect(await client.generateCallCount == 2)
+
+        for _ in 0 ..< 3 {
+            await compactor.compactOrTruncateIfNeeded(
+                &summarizationMessages, lastTotalTokens: 900, totalUsage: &usage
+            )
+        }
+        #expect(await client.generateCallCount == 5)
+
+        await compactor.compactOrTruncateIfNeeded(
+            &summarizationMessages, lastTotalTokens: 900, totalUsage: &usage
+        )
+        #expect(await client.generateCallCount == 5)
+    }
+
     @Test
     func compactionFallsBackToTruncationOnError() async throws {
         let client = CompactionMockLLMClient(
@@ -527,6 +643,67 @@ struct ObservationPruningTests {
     }
 }
 
+// MARK: - Media Stripping Tests
+
+struct MediaStrippingTests {
+    @Test
+    func summarizationStripsMediaFromMultimodalMessages() async throws {
+        let client = CompactionMockLLMClient(
+            responses: [
+                AssistantMessage(content: "Summary.", tokenUsage: TokenUsage(input: 50, output: 100)),
+            ]
+        )
+        let compactor = ContextCompactor(
+            client: client, toolDefinitions: [], configuration: AgentConfiguration()
+        )
+        let messages: [ChatMessage] = [
+            .user([
+                .text("Describe this"),
+                .image(data: Data(repeating: 0xFF, count: 1000), mimeType: "image/png"),
+                .audio(data: Data(repeating: 0xAA, count: 500), format: .mp3),
+                .video(data: Data(repeating: 0xBB, count: 500), mimeType: "video/mp4"),
+                .pdf(data: Data(repeating: 0xCC, count: 500)),
+            ]),
+            .assistant(AssistantMessage(content: "I see an image.")),
+        ]
+        _ = try await compactor.summarize(messages)
+
+        let captured = await client.allCapturedMessages
+        guard case let .userMultimodal(parts) = captured[0][0] else {
+            Issue.record("Expected userMultimodal"); return
+        }
+        #expect(parts.count == 5)
+        #expect(parts.allSatisfy { if case .text = $0 { true } else { false } })
+        #expect(parts.contains { if case let .text(text) = $0 { text == "[image]" } else { false } })
+        #expect(parts.contains { if case let .text(text) = $0 { text == "[audio]" } else { false } })
+        #expect(parts.contains { if case let .text(text) = $0 { text == "[video]" } else { false } })
+        #expect(parts.contains { if case let .text(text) = $0 { text == "[PDF]" } else { false } })
+    }
+
+    @Test
+    func summarizationPreservesTextOnlyMessages() async throws {
+        let client = CompactionMockLLMClient(
+            responses: [
+                AssistantMessage(content: "Summary.", tokenUsage: TokenUsage(input: 50, output: 100)),
+            ]
+        )
+        let compactor = ContextCompactor(
+            client: client, toolDefinitions: [], configuration: AgentConfiguration()
+        )
+        let messages: [ChatMessage] = [
+            .user("Plain text message"),
+            .assistant(AssistantMessage(content: "Response")),
+        ]
+        _ = try await compactor.summarize(messages)
+
+        let captured = await client.allCapturedMessages
+        guard case let .user(text) = captured[0][0] else {
+            Issue.record("Expected user string message"); return
+        }
+        #expect(text == "Plain text message")
+    }
+}
+
 // MARK: - Tool Result Truncation Tests
 
 struct ToolResultTruncationTests {
@@ -578,8 +755,8 @@ struct ToolResultTruncationTests {
             + String(repeating: "Z", count: 100)
         let config = AgentConfiguration(maxToolResultCharacters: 60)
         let truncated = ContextCompactor.truncateToolResult(content, configuration: config)
-        #expect(truncated.hasPrefix(String(repeating: "A", count: 19)))
-        #expect(truncated.hasSuffix(String(repeating: "Z", count: 19)))
+        #expect(truncated.hasPrefix(String(repeating: "A", count: 22)))
+        #expect(truncated.hasSuffix(String(repeating: "Z", count: 16)))
         #expect(truncated.count <= 60)
         #expect(truncated.contains("truncated"))
     }
