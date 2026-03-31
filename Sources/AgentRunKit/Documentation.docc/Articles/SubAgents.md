@@ -110,7 +110,7 @@ The `subAgentEvent` case is `indirect`, so a three-level hierarchy produces nest
 
 ## Error Propagation
 
-If a child agent finishes with ``FinishReason/error``, the ``SubAgentTool`` returns a ``ToolResult`` with `isError: true`. The parent agent sees this as a failed tool call and can retry or handle the failure.
+If a child agent finishes with ``FinishReason/error``, the ``SubAgentTool`` returns a ``ToolResult`` with `isError: true`. Structural child terminal reasons, including ``FinishReason/maxIterationsReached(limit:)`` and ``FinishReason/tokenBudgetExceeded(budget:used:)``, are also surfaced to the parent as tool errors with standardized messages. The parent agent continues to see these as failed tool calls and can retry or handle the failure explicitly.
 
 ## See Also
 

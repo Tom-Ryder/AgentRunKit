@@ -173,6 +173,56 @@ struct AgentStreamTests {
     }
 
     @MainActor @Test
+    func structuralMaxIterationsCapturedWithoutError() async throws {
+        let loopTool = try Tool<EchoParams, EchoOutput, EmptyContext>(
+            name: "loop",
+            description: "Loops",
+            executor: { params, _ in EchoOutput(echoed: params.message) }
+        )
+        let loopDeltas: [StreamDelta] = [
+            .toolCallStart(index: 0, id: "call_1", name: "loop"),
+            .toolCallDelta(index: 0, arguments: #"{"message":"again"}"#),
+            .finished(usage: nil),
+        ]
+        let client = StreamingMockLLMClient(streamSequences: [loopDeltas, loopDeltas])
+        let agent = Agent<EmptyContext>(
+            client: client,
+            tools: [loopTool],
+            configuration: AgentConfiguration(maxIterations: 2)
+        )
+        let stream = AgentStream(agent: agent)
+
+        stream.send("Loop", context: EmptyContext())
+        await awaitCompletion(stream)
+
+        #expect(stream.finishReason == .maxIterationsReached(limit: 2))
+        #expect(stream.error == nil)
+    }
+
+    @MainActor @Test
+    func structuralTokenBudgetCapturedWithoutError() async throws {
+        let noopTool = try Tool<EchoParams, EchoOutput, EmptyContext>(
+            name: "noop",
+            description: "No-op",
+            executor: { params, _ in EchoOutput(echoed: params.message) }
+        )
+        let firstDeltas: [StreamDelta] = [
+            .toolCallStart(index: 0, id: "call_1", name: "noop"),
+            .toolCallDelta(index: 0, arguments: #"{"message":"budget"}"#),
+            .finished(usage: TokenUsage(input: 40, output: 40)),
+        ]
+        let client = StreamingMockLLMClient(streamSequences: [firstDeltas])
+        let agent = Agent<EmptyContext>(client: client, tools: [noopTool])
+        let stream = AgentStream(agent: agent)
+
+        stream.send("Budget", context: EmptyContext(), tokenBudget: 50)
+        await awaitCompletion(stream)
+
+        #expect(stream.finishReason == .tokenBudgetExceeded(budget: 50, used: 80))
+        #expect(stream.error == nil)
+    }
+
+    @MainActor @Test
     func sendResetsState() async {
         let deltas1: [StreamDelta] = [
             .content("First"),

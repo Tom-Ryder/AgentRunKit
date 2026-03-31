@@ -14,7 +14,7 @@ struct AgentErrorTests {
         let agent = Agent<EmptyContext>(client: client, tools: [])
 
         let result = try await agent.run(userMessage: "Unknown", context: EmptyContext())
-        #expect(result.content == "recovered")
+        #expect(try requireContent(result) == "recovered")
 
         let capturedMessages = await client.capturedMessages
         let toolMessage = capturedMessages.compactMap { msg -> (String, String)? in
@@ -60,7 +60,7 @@ struct AgentErrorTests {
         let agent = Agent<EmptyContext>(client: client, tools: [failingTool])
 
         let result = try await agent.run(userMessage: "Fail", context: EmptyContext())
-        #expect(result.content == "recovered")
+        #expect(try requireContent(result) == "recovered")
 
         let capturedMessages = await client.capturedMessages
         let toolMessage = capturedMessages.compactMap { msg -> (String, String)? in
@@ -87,7 +87,7 @@ struct AgentErrorTests {
         let agent = Agent<EmptyContext>(client: client, tools: [echoTool])
 
         let result = try await agent.run(userMessage: "Bad args", context: EmptyContext())
-        #expect(result.content == "recovered")
+        #expect(try requireContent(result) == "recovered")
 
         let capturedMessages = await client.capturedMessages
         let toolMessage = capturedMessages.compactMap { msg -> (String, String)? in
@@ -136,34 +136,30 @@ struct AgentErrorTests {
         #expect(error5.feedbackMessage.contains("encoder"))
         #expect(error5.feedbackMessage.contains("invalid utf8"))
 
-        let error6 = AgentError.maxIterationsReached(iterations: 10)
-        #expect(error6.feedbackMessage.contains("10"))
-        #expect(error6.feedbackMessage.contains("iterations"))
+        let error6 = AgentError.finishDecodingFailed(message: "unexpected token")
+        #expect(error6.feedbackMessage.contains("unexpected token"))
 
-        let error7 = AgentError.finishDecodingFailed(message: "unexpected token")
-        #expect(error7.feedbackMessage.contains("unexpected token"))
+        let error7 = AgentError.llmError(.other("rate limited"))
+        #expect(error7.feedbackMessage.contains("rate limited"))
 
-        let error8 = AgentError.llmError(.other("rate limited"))
-        #expect(error8.feedbackMessage.contains("rate limited"))
+        let error8 = AgentError.malformedStream(.toolCallDeltaWithoutStart(index: 3))
+        #expect(error8.feedbackMessage.contains("3"))
 
-        let error9 = AgentError.malformedStream(.toolCallDeltaWithoutStart(index: 3))
-        #expect(error9.feedbackMessage.contains("3"))
+        let error9 = AgentError.malformedStream(.missingToolCallId(index: 5))
+        #expect(error9.feedbackMessage.contains("5"))
+        #expect(error9.feedbackMessage.contains("ID"))
 
-        let error10 = AgentError.malformedStream(.missingToolCallId(index: 5))
-        #expect(error10.feedbackMessage.contains("5"))
-        #expect(error10.feedbackMessage.contains("ID"))
+        let error10 = AgentError.malformedStream(.missingToolCallName(index: 7))
+        #expect(error10.feedbackMessage.contains("7"))
+        #expect(error10.feedbackMessage.contains("name"))
 
-        let error11 = AgentError.malformedStream(.missingToolCallName(index: 7))
-        #expect(error11.feedbackMessage.contains("7"))
-        #expect(error11.feedbackMessage.contains("name"))
+        let error11 = AgentError.contextBudgetUsageUnavailable
+        #expect(error11.feedbackMessage.contains("Context budget"))
+        #expect(error11.feedbackMessage.contains("token usage"))
 
-        let error12 = AgentError.contextBudgetUsageUnavailable
+        let error12 = AgentError.contextBudgetWindowSizeUnavailable
         #expect(error12.feedbackMessage.contains("Context budget"))
-        #expect(error12.feedbackMessage.contains("token usage"))
-
-        let error13 = AgentError.contextBudgetWindowSizeUnavailable
-        #expect(error13.feedbackMessage.contains("Context budget"))
-        #expect(error13.feedbackMessage.contains("contextWindowSize"))
+        #expect(error12.feedbackMessage.contains("contextWindowSize"))
     }
 }
 

@@ -16,7 +16,7 @@ struct AgentTests {
         let agent = Agent<EmptyContext>(client: client, tools: [])
         let result = try await agent.run(userMessage: "Hello", context: EmptyContext())
 
-        #expect(result.content == "Done!")
+        #expect(try requireContent(result) == "Done!")
         #expect(result.finishReason == .custom("success"))
         #expect(result.iterations == 1)
         #expect(result.totalTokenUsage.input == 10)
@@ -65,7 +65,7 @@ struct AgentTests {
         let agent = Agent<EmptyContext>(client: client, tools: [echoTool])
         let result = try await agent.run(userMessage: "Use echo", context: EmptyContext())
 
-        #expect(result.content == "Completed after echo")
+        #expect(try requireContent(result) == "Completed after echo")
         #expect(result.iterations == 2)
         #expect(result.totalTokenUsage.input == 30)
         #expect(result.totalTokenUsage.output == 15)
@@ -100,7 +100,7 @@ struct AgentTests {
         let agent = Agent<EmptyContext>(client: client, tools: [addTool])
         let result = try await agent.run(userMessage: "Add stuff", context: EmptyContext())
 
-        #expect(result.content == "Both sums computed")
+        #expect(try requireContent(result) == "Both sums computed")
         #expect(result.iterations == 2)
     }
 
@@ -121,16 +121,15 @@ struct AgentTests {
 
         let config = AgentConfiguration(maxIterations: 3)
         let agent = Agent<EmptyContext>(client: client, tools: [noopTool], configuration: config)
+        let result = try await agent.run(userMessage: "Loop", context: EmptyContext())
 
-        do {
-            _ = try await agent.run(userMessage: "Loop", context: EmptyContext())
-            Issue.record("Expected maxIterationsReached error")
-        } catch let error as AgentError {
-            guard case let .maxIterationsReached(iterations) = error else {
-                Issue.record("Expected maxIterationsReached, got \(error)")
-                return
-            }
-            #expect(iterations == 3)
+        #expect(result.finishReason == .maxIterationsReached(limit: 3))
+        #expect(result.content == nil)
+        #expect(result.iterations == 3)
+        #expect(result.history.count == 7)
+        guard case .tool = result.history.last else {
+            Issue.record("Expected final history entry to be a tool result")
+            return
         }
     }
 
@@ -186,7 +185,7 @@ struct AgentTests {
         let agent = Agent<EmptyContext>(client: client, tools: [slowTool], configuration: config)
 
         let result = try await agent.run(userMessage: "Timeout", context: EmptyContext())
-        #expect(result.content == "recovered")
+        #expect(try requireContent(result) == "recovered")
 
         let capturedMessages = await client.capturedMessages
         let toolMessage = capturedMessages.compactMap { msg -> (String, String)? in
@@ -256,17 +255,15 @@ struct AgentTokenBudgetTests {
             AssistantMessage(content: "", toolCalls: [finishCall])
         ])
         let agent = Agent<EmptyContext>(client: client, tools: [noopTool])
+        let result = try await agent.run(userMessage: "Go", context: EmptyContext(), tokenBudget: 50)
 
-        do {
-            _ = try await agent.run(userMessage: "Go", context: EmptyContext(), tokenBudget: 50)
-            Issue.record("Expected tokenBudgetExceeded")
-        } catch let error as AgentError {
-            guard case let .tokenBudgetExceeded(budget, used) = error else {
-                Issue.record("Expected tokenBudgetExceeded, got \(error)")
-                return
-            }
-            #expect(budget == 50)
-            #expect(used == 80)
+        #expect(result.finishReason == .tokenBudgetExceeded(budget: 50, used: 80))
+        #expect(result.content == nil)
+        #expect(result.iterations == 1)
+        #expect(result.history.count == 2)
+        guard case .assistant = result.history.last else {
+            Issue.record("Expected final history entry to be the over-budget assistant response")
+            return
         }
     }
 
@@ -283,7 +280,7 @@ struct AgentTokenBudgetTests {
         let agent = Agent<EmptyContext>(client: client, tools: [])
 
         let result = try await agent.run(userMessage: "Go", context: EmptyContext())
-        #expect(result.content == "done")
+        #expect(try requireContent(result) == "done")
     }
 
     @Test
@@ -302,7 +299,7 @@ struct AgentTokenBudgetTests {
         let agent = Agent<EmptyContext>(client: client, tools: [noopTool])
 
         let result = try await agent.run(userMessage: "Go", context: EmptyContext(), tokenBudget: 100)
-        #expect(result.content == "done")
+        #expect(try requireContent(result) == "done")
     }
 
     @Test
@@ -321,7 +318,7 @@ struct AgentTokenBudgetTests {
         let agent = Agent<EmptyContext>(client: client, tools: [noopTool])
 
         let result = try await agent.run(userMessage: "Go", context: EmptyContext(), tokenBudget: 100)
-        #expect(result.content == "done")
+        #expect(try requireContent(result) == "done")
     }
 
     @Test
@@ -337,7 +334,7 @@ struct AgentTokenBudgetTests {
         let agent = Agent<EmptyContext>(client: client, tools: [])
 
         let result = try await agent.run(userMessage: "Go", context: EmptyContext(), tokenBudget: 50)
-        #expect(result.content == "completed")
+        #expect(try requireContent(result) == "completed")
     }
 }
 

@@ -16,7 +16,9 @@ let result = try await agent.run(
     userMessage: "Find the population of Tokyo and convert it to hex.",
     context: EmptyContext()
 )
-print(result.content) // "0xD59F2C0"
+if let content = result.content {
+    print(content)
+}
 ```
 
 ``Agent`` also exposes `stream()`, which returns an `AsyncThrowingStream<StreamEvent, Error>` for real-time token delivery and tool progress. See <doc:StreamingAndSwiftUI>.
@@ -26,6 +28,8 @@ Key behaviors:
 - Enforces ``AgentConfiguration/maxIterations`` to prevent runaway loops (default: 10).
 - Supports context compaction via ``AgentConfiguration/compactionThreshold`` and ``AgentConfiguration/compactionPrompt``.
 - Accepts a `tokenBudget` parameter on each `run()` or `stream()` call.
+- Returns structural terminal reasons for expected runtime limits. `run()` returns ``AgentResult`` with `.maxIterationsReached(limit:)` or `.tokenBudgetExceeded(budget:used:)`, and `stream()` emits `.finished(..., reason: ...)` for the same states instead of throwing.
+- Cancellation remains cancellation. `run()` still propagates `CancellationError`, and cancelling a consumer of `stream()` does not guarantee a terminal `.finished` event.
 
 ## Chat
 
@@ -45,7 +49,7 @@ let (result, _) = try await chat.send("Analyze: 'Great product!'", returning: Se
 print(result.score) // 0.95
 ```
 
-``Chat`` also supports streaming via `stream()` and tool execution (up to `maxToolRounds` per send). It does not perform compaction or manage token budgets.
+``Chat`` also supports streaming via `stream()` and tool execution (up to `maxToolRounds` per send). When `stream()` exhausts `maxToolRounds`, it emits `.finished(reason: .maxIterationsReached(limit: maxToolRounds))` and completes normally. ``Chat`` does not perform compaction or manage token budgets.
 
 ## Choosing an Entry Point
 
@@ -64,7 +68,7 @@ print(result.score) // 0.95
 
 | Property | Default | Description |
 |---|---|---|
-| `maxIterations` | 10 | Maximum generate/tool-call cycles before throwing |
+| `maxIterations` | 10 | Maximum generate/tool-call cycles before returning `.maxIterationsReached(limit:)` |
 | `toolTimeout` | 30s | Per-tool execution timeout |
 
 **System prompt:**
@@ -96,11 +100,13 @@ See <doc:ContextManagement> for details on compaction and context budgets.
 
 | Field | Type | Description |
 |---|---|---|
-| `content` | `String` | The text passed to the finish tool |
-| `finishReason` | ``FinishReason`` | `.completed`, `.error`, or `.custom(_:)` |
+| `content` | `String?` | The text passed to the finish tool, or `nil` when the loop ends structurally without one |
+| `finishReason` | ``FinishReason`` | `.completed`, `.error`, `.maxIterationsReached(limit:)`, `.tokenBudgetExceeded(budget:used:)`, or `.custom(_:)` |
 | `totalTokenUsage` | ``TokenUsage`` | Accumulated input/output tokens across all iterations |
 | `iterations` | `Int` | Number of generate/tool-call cycles executed |
 | `history` | `[ChatMessage]` | Full conversation including system prompt, user messages, assistant responses, and tool results |
+
+Completed finish-tool paths still produce non-`nil` content. Structural runtime termination does not synthesize an empty string.
 
 ## Multi-Turn History
 

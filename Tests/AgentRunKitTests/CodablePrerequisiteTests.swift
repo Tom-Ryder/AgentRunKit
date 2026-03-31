@@ -20,6 +20,17 @@ struct FinishReasonCodableTests {
         #expect(try roundTrip(.custom("stopped")) == .custom("stopped"))
     }
 
+    @Test func maxIterationsReachedRoundTrips() throws {
+        #expect(try roundTrip(.maxIterationsReached(limit: 7)) == .maxIterationsReached(limit: 7))
+    }
+
+    @Test func tokenBudgetExceededRoundTrips() throws {
+        #expect(try roundTrip(.tokenBudgetExceeded(budget: 100, used: 140)) == .tokenBudgetExceeded(
+            budget: 100,
+            used: 140
+        ))
+    }
+
     @Test func emptyCustomRoundTrips() throws {
         #expect(try roundTrip(.custom("")) == .custom(""))
     }
@@ -47,6 +58,25 @@ struct FinishReasonCodableTests {
         let json = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
         #expect(json["type"] as? String == "custom")
         #expect(json["value"] as? String == "stopped")
+    }
+
+    @Test func maxIterationsReachedDiscriminatorIsStable() throws {
+        let data = try JSONEncoder().encode(FinishReason.maxIterationsReached(limit: 9))
+        let json = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        #expect(json["type"] as? String == "maxIterationsReached")
+        #expect(json["limit"] as? Int == 9)
+    }
+
+    @Test func tokenBudgetExceededDiscriminatorIsStable() throws {
+        let data = try JSONEncoder().encode(FinishReason.tokenBudgetExceeded(budget: 10, used: 12))
+        let json = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        #expect(json["type"] as? String == "tokenBudgetExceeded")
+        #expect(json["budget"] as? Int == 10)
+        #expect(json["used"] as? Int == 12)
+    }
+
+    @Test func initMapsArbitraryStringToCustom() {
+        #expect(FinishReason("paused") == .custom("paused"))
     }
 
     @Test func unknownTypeThrowsDecodingError() throws {

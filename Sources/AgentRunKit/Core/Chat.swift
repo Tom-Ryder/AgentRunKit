@@ -219,7 +219,13 @@ public struct Chat<C: ToolContext>: Sendable {
             }
         }
 
-        continuation.finish(throwing: AgentError.maxIterationsReached(iterations: maxToolRounds))
+        continuation.yield(.make(.finished(
+            tokenUsage: totalUsage,
+            content: nil,
+            reason: .maxIterationsReached(limit: maxToolRounds),
+            history: messages
+        )))
+        continuation.finish()
     }
 
     private func buildMessages(userMessage: ChatMessage, history: [ChatMessage]) -> [ChatMessage] {

@@ -67,7 +67,8 @@ struct ToolApprovalAgentTests {
         let client = TestLLMClient(seed: 1)
         let agent = Agent<EmptyContext>(client: client, tools: [echoTool])
         let result = try await agent.run(userMessage: "Go", context: EmptyContext())
-        #expect(!result.content.isEmpty)
+        let content = try requireContent(result)
+        #expect(!content.isEmpty)
     }
 
     @Test
@@ -79,7 +80,8 @@ struct ToolApprovalAgentTests {
         let result = try await agent.run(
             userMessage: "Go", context: EmptyContext(), approvalHandler: counter.handler
         )
-        #expect(!result.content.isEmpty)
+        let content = try requireContent(result)
+        #expect(!content.isEmpty)
         let count = await counter.requestCount
         #expect(count == 0)
     }
@@ -104,7 +106,7 @@ struct ToolApprovalAgentTests {
         let result = try await agent.run(
             userMessage: "Go", context: EmptyContext(), approvalHandler: counter.handler
         )
-        #expect(result.content == "done")
+        #expect(try requireContent(result) == "done")
         let count = await counter.requestCount
         #expect(count == 1)
     }
@@ -129,7 +131,7 @@ struct ToolApprovalAgentTests {
         let result = try await agent.run(
             userMessage: "Go", context: EmptyContext(), approvalHandler: counter.handler
         )
-        #expect(result.content == "denied")
+        #expect(try requireContent(result) == "denied")
         let capturedMessages = await client.capturedMessages
         let toolMessages = capturedMessages.filter {
             if case .tool = $0 { return true }

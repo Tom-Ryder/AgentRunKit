@@ -232,7 +232,7 @@ func assertSmokeAgentLoop(client: any LLMClient) async throws {
     let agent = Agent<EmptyContext>(client: client, tools: [addTool], configuration: config)
     let result = try await agent.run(userMessage: "What is 17 + 25?", context: EmptyContext())
 
-    #expect(result.content.contains("42"))
+    #expect(try requireContent(result).contains("42"))
     #expect(result.iterations >= 1)
 }
 
@@ -391,7 +391,7 @@ func assertSmokeSubAgentRoundTrip(client: any LLMClient) async throws {
         context: SubAgentContext(inner: EmptyContext(), maxDepth: 3)
     )
 
-    #expect(result.content.contains("42"))
+    #expect(try requireContent(result).contains("42"))
     #expect(result.iterations >= 2)
 }
 
@@ -490,7 +490,7 @@ func assertSmokeSubAgentHistoryInheritance(client: any LLMClient) async throws {
         context: SubAgentContext(inner: EmptyContext(), maxDepth: 3)
     )
 
-    #expect(result.content.lowercased().contains("xylophone7"))
+    #expect(try requireContent(result).lowercased().contains("xylophone7"))
 }
 
 struct SmokeAuthor: Codable, SchemaProviding {
@@ -604,7 +604,8 @@ func assertSmokeObservationPruning(client: any LLMClient) async throws {
         context: EmptyContext()
     )
 
-    #expect(!result.content.isEmpty)
+    let content = try requireContent(result)
+    #expect(!content.isEmpty)
     #expect(result.iterations >= 3)
 
     let hasPruned = result.history.contains { message in
@@ -637,7 +638,8 @@ func assertSmokeLLMSummarization(client: any LLMClient) async throws {
         context: EmptyContext()
     )
 
-    #expect(!result.content.isEmpty)
+    let content = try requireContent(result)
+    #expect(!content.isEmpty)
     let hasContinuation = result.history.contains { message in
         if case let .user(content) = message {
             return content.contains("[Context Continuation]")
@@ -790,7 +792,7 @@ func assertSmokeApprovalGate(client: any LLMClient) async throws {
     let toolName = await tracker.lastToolName
     #expect(callCount >= 1)
     #expect(toolName == "add")
-    #expect(result.content.contains("42"))
+    #expect(try requireContent(result).contains("42"))
     #expect(result.iterations >= 2)
 }
 
@@ -819,7 +821,8 @@ func assertSmokeApprovalDenial(client: any LLMClient) async throws {
 
     let callCount = await tracker.callCount
     #expect(callCount >= 1)
-    #expect(!result.content.isEmpty)
+    let content = try requireContent(result)
+    #expect(!content.isEmpty)
     let denialInHistory = result.history.contains { message in
         if case let .tool(_, _, content) = message {
             return content.contains("disabled")

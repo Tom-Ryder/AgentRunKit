@@ -333,7 +333,7 @@ struct SubAgentSystemPromptTests {
 
         let ctx = SubAgentContext(inner: EmptyContext(), maxDepth: 3)
         let result = try await parentAgent.run(userMessage: "Go", context: ctx)
-        #expect(result.content == "parent done")
+        #expect(try requireContent(result) == "parent done")
 
         let captured = await childClient.capturedMessages
         guard case let .system(prompt) = captured.first else {

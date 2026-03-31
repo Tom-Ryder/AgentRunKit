@@ -164,7 +164,7 @@ struct ContextBudgetPruneIntegrationTests {
         let agent = Agent<EmptyContext>(client: client, tools: [noopTool], configuration: config)
         let result = try await agent.run(userMessage: "go", context: EmptyContext())
 
-        #expect(result.content == "done")
+        #expect(try requireContent(result) == "done")
 
         let thirdCallMessages = await client.allCapturedMessages[2]
         let prunedTool = thirdCallMessages.first {
@@ -195,7 +195,7 @@ struct ContextBudgetPruneIntegrationTests {
         let agent = Agent<EmptyContext>(client: client, tools: [], configuration: config)
         let result = try await agent.run(userMessage: "go", context: EmptyContext())
 
-        #expect(result.content == "done")
+        #expect(try requireContent(result) == "done")
         let secondCallMessages = await client.allCapturedMessages[1]
         let errorTool = secondCallMessages.first {
             if case let .tool(id, _, _) = $0 { id == "prune_1" } else { false }
@@ -230,7 +230,7 @@ struct ContextBudgetPruneIntegrationTests {
         let agent = Agent<EmptyContext>(client: client, tools: [noopTool], configuration: config)
         let result = try await agent.run(userMessage: "go", context: EmptyContext())
 
-        #expect(result.content == "done")
+        #expect(try requireContent(result) == "done")
 
         let thirdCallMessages = await client.allCapturedMessages[2]
         let originalTool = thirdCallMessages.first {
@@ -457,7 +457,7 @@ struct ContextBudgetZeroCostTests {
         let agent = Agent<EmptyContext>(client: client, tools: [noopTool])
         let result = try await agent.run(userMessage: "go", context: EmptyContext())
 
-        #expect(result.content == "done")
+        #expect(try requireContent(result) == "done")
         #expect(result.iterations == 2)
 
         let tools = await client.allCapturedTools[0]

@@ -148,7 +148,7 @@ struct AgentStreamingTests {
     }
 
     @Test
-    func maxIterationsThrows() async throws {
+    func maxIterationsProducesStructuralFinishedEvent() async throws {
         let loopingTool = try Tool<NoopParams, NoopOutput, EmptyContext>(
             name: "loop",
             description: "Loops",
@@ -165,16 +165,19 @@ struct AgentStreamingTests {
         let config = AgentConfiguration(maxIterations: 3)
         let agent = Agent<EmptyContext>(client: client, tools: [loopingTool], configuration: config)
 
-        do {
-            for try await _ in agent.stream(userMessage: "Loop forever", context: EmptyContext()) {}
-            Issue.record("Expected maxIterationsReached error")
-        } catch let error as AgentError {
-            guard case let .maxIterationsReached(iterations) = error else {
-                Issue.record("Expected maxIterationsReached, got \(error)")
-                return
-            }
-            #expect(iterations == 3)
+        var events: [StreamEvent] = []
+        for try await event in agent.stream(userMessage: "Loop forever", context: EmptyContext()) {
+            events.append(event)
         }
+
+        guard case let .finished(tokenUsage, content, reason, history) = events.last?.kind else {
+            Issue.record("Expected finished event")
+            return
+        }
+        #expect(tokenUsage == TokenUsage())
+        #expect(content == nil)
+        #expect(reason == .maxIterationsReached(limit: 3))
+        #expect(history.count == 7)
     }
 
     @Test
@@ -826,7 +829,7 @@ struct AgentIterationCompletedTests {
 
 struct AgentStreamingTokenBudgetTests {
     @Test
-    func budgetExceededDuringStreaming() async throws {
+    func budgetExceededDuringStreamingProducesStructuralFinishedEvent() async throws {
         let noopTool = try Tool<NoopParams, NoopOutput, EmptyContext>(
             name: "noop",
             description: "No-op",
@@ -845,21 +848,23 @@ struct AgentStreamingTokenBudgetTests {
         let client = StreamingMockLLMClient(streamSequences: [firstDeltas, secondDeltas])
         let agent = Agent<EmptyContext>(client: client, tools: [noopTool])
 
-        do {
-            for try await _ in agent.stream(
-                userMessage: "Go",
-                context: EmptyContext(),
-                tokenBudget: 50
-            ) {}
-            Issue.record("Expected tokenBudgetExceeded")
-        } catch let error as AgentError {
-            guard case let .tokenBudgetExceeded(budget, used) = error else {
-                Issue.record("Expected tokenBudgetExceeded, got \(error)")
-                return
-            }
-            #expect(budget == 50)
-            #expect(used == 80)
+        var events: [StreamEvent] = []
+        for try await event in agent.stream(
+            userMessage: "Go",
+            context: EmptyContext(),
+            tokenBudget: 50
+        ) {
+            events.append(event)
         }
+
+        guard case let .finished(tokenUsage, content, reason, history) = events.last?.kind else {
+            Issue.record("Expected finished event")
+            return
+        }
+        #expect(tokenUsage == TokenUsage(input: 40, output: 40))
+        #expect(content == nil)
+        #expect(reason == .tokenBudgetExceeded(budget: 50, used: 80))
+        #expect(history.count == 3)
     }
 
     @Test

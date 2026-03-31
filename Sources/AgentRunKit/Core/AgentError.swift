@@ -23,7 +23,6 @@ public enum MalformedStreamReason: Sendable, Equatable, CustomStringConvertible 
 
 /// Errors thrown by the agent loop.
 public enum AgentError: Error, Sendable, Equatable, LocalizedError {
-    case maxIterationsReached(iterations: Int)
     case toolNotFound(name: String)
     case toolDecodingFailed(tool: String, message: String)
     case toolEncodingFailed(tool: String, message: String)
@@ -35,14 +34,11 @@ public enum AgentError: Error, Sendable, Equatable, LocalizedError {
     case malformedStream(MalformedStreamReason)
     case schemaInferenceFailed(type: String, message: String)
     case maxDepthExceeded(depth: Int)
-    case tokenBudgetExceeded(budget: Int, used: Int)
     case contextBudgetUsageUnavailable
     case contextBudgetWindowSizeUnavailable
 
     public var errorDescription: String? {
         switch self {
-        case let .maxIterationsReached(iterations):
-            "Agent reached maximum iterations (\(iterations))"
         case let .toolNotFound(name):
             "Tool '\(name)' not found"
         case let .toolDecodingFailed(tool, message):
@@ -65,8 +61,6 @@ public enum AgentError: Error, Sendable, Equatable, LocalizedError {
             "Schema inference failed for '\(type)': \(message)"
         case let .maxDepthExceeded(depth):
             "Sub-agent max depth exceeded (current depth: \(depth))"
-        case let .tokenBudgetExceeded(budget, used):
-            "Token budget exceeded (budget: \(budget), used: \(used))"
         case .contextBudgetUsageUnavailable:
             "Context budget requires provider-reported token usage for every budgeted turn"
         case .contextBudgetWindowSizeUnavailable:
@@ -81,14 +75,12 @@ public enum AgentError: Error, Sendable, Equatable, LocalizedError {
         case let .toolTimeout(tool): "Error: Tool '\(tool)' timed out."
         case let .toolExecutionFailed(tool, message): "Error: Tool '\(tool)' failed: \(message)"
         case let .toolEncodingFailed(tool, message): "Error: Failed to encode '\(tool)' output: \(message)"
-        case let .maxIterationsReached(count): "Error: Agent reached maximum iterations (\(count))."
         case let .finishDecodingFailed(message): "Error: Failed to decode finish arguments: \(message)"
         case let .structuredOutputDecodingFailed(message): "Error: Failed to decode structured output: \(message)"
         case let .llmError(transportError): "Error: LLM request failed: \(transportError)"
         case let .malformedStream(reason): "Error: Malformed stream: \(reason)"
         case let .schemaInferenceFailed(type, message): "Error: Schema inference failed for '\(type)': \(message)"
         case let .maxDepthExceeded(depth): "Error: Sub-agent max depth exceeded (current depth: \(depth))."
-        case let .tokenBudgetExceeded(budget, used): "Error: Token budget exceeded (budget: \(budget), used: \(used))."
         case .contextBudgetUsageUnavailable:
             "Error: Context budget requires provider-reported token usage for every budgeted turn."
         case .contextBudgetWindowSizeUnavailable:

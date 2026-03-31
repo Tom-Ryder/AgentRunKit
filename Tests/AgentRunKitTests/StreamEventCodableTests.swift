@@ -63,6 +63,26 @@ struct StreamEventKindCodableTests {
         #expect(try roundTrip(kind) == kind)
     }
 
+    @Test func finishedWithMaxIterationsReasonRoundTrips() throws {
+        let kind = StreamEvent.Kind.finished(
+            tokenUsage: TokenUsage(input: 20, output: 10),
+            content: nil,
+            reason: .maxIterationsReached(limit: 4),
+            history: []
+        )
+        #expect(try roundTrip(kind) == kind)
+    }
+
+    @Test func finishedWithTokenBudgetReasonRoundTrips() throws {
+        let kind = StreamEvent.Kind.finished(
+            tokenUsage: TokenUsage(input: 30, output: 20),
+            content: nil,
+            reason: .tokenBudgetExceeded(budget: 40, used: 50),
+            history: []
+        )
+        #expect(try roundTrip(kind) == kind)
+    }
+
     @Test func subAgentStartedRoundTrips() throws {
         let kind = StreamEvent.Kind.subAgentStarted(toolCallId: "tc_sub", toolName: "research")
         #expect(try roundTrip(kind) == kind)

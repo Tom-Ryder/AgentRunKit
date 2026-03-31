@@ -40,8 +40,12 @@ let weatherTool = try Tool<WeatherParams, String, EmptyContext>(
 
 let agent = Agent(client: client, tools: [weatherTool])
 let result = try await agent.run(userMessage: "What's the weather in SF?", context: EmptyContext())
-print(result.content)
+if let content = result.content {
+    print(content)
+}
 ```
+
+`result.content` is optional. Completed runs return finish-tool content, while structural terminal reasons such as max iterations or token budget exhaustion surface through `result.finishReason` with no final content.
 
 ---
 

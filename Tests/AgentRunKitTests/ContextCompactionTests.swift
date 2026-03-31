@@ -145,7 +145,7 @@ struct CompactionTriggerTests {
         let agent = try Agent<EmptyContext>(client: client, tools: [makeNoopTool()], configuration: config)
         let result = try await agent.run(userMessage: "Hello", context: EmptyContext())
 
-        #expect(result.content == "done")
+        #expect(try requireContent(result) == "done")
         let allMessages = await client.allCapturedMessages
         #expect(allMessages.count == 3)
         #expect(hasBridge(allMessages[2]))
@@ -202,7 +202,7 @@ struct CompactionTriggerTests {
         let agent = try Agent<EmptyContext>(client: client, tools: [makeNoopTool()], configuration: config)
         let result = try await agent.run(userMessage: "Hello", context: EmptyContext())
 
-        #expect(result.content == "done")
+        #expect(try requireContent(result) == "done")
         let allMessages = await client.allCapturedMessages
         #expect(!hasBridge(allMessages[1]))
     }
@@ -223,7 +223,8 @@ struct CompactionTriggerTests {
             contextWindowSize: 1000
         )
         let agent = try Agent<EmptyContext>(client: client, tools: [makeNoopTool()])
-        #expect(try await agent.run(userMessage: "Hello", context: EmptyContext()).content == "done")
+        let result = try await agent.run(userMessage: "Hello", context: EmptyContext())
+        #expect(try requireContent(result) == "done")
     }
 
     @Test
@@ -243,7 +244,8 @@ struct CompactionTriggerTests {
         )
         let config = AgentConfiguration(maxIterations: 5, compactionThreshold: 0.5)
         let agent = try Agent<EmptyContext>(client: client, tools: [makeNoopTool()], configuration: config)
-        #expect(try await agent.run(userMessage: "Hello", context: EmptyContext()).content == "done")
+        let result = try await agent.run(userMessage: "Hello", context: EmptyContext())
+        #expect(try requireContent(result) == "done")
     }
 
     @Test
@@ -261,7 +263,7 @@ struct CompactionTriggerTests {
         let agent = Agent<EmptyContext>(client: client, tools: [], configuration: config)
         let result = try await agent.run(userMessage: "Hello", context: EmptyContext())
 
-        #expect(result.content == "done")
+        #expect(try requireContent(result) == "done")
         let allMessages = await client.allCapturedMessages
         #expect(allMessages.count == 1)
         #expect(!hasBridge(allMessages[0]))
@@ -406,7 +408,7 @@ struct CompactionFallbackTests {
         let agent = try Agent<EmptyContext>(client: client, tools: [makeNoopTool()], configuration: config)
         let result = try await agent.run(userMessage: "Hello", context: EmptyContext())
 
-        #expect(result.content == "done")
+        #expect(try requireContent(result) == "done")
         let allMessages = await client.allCapturedMessages
         #expect(allMessages.count == 2)
         #expect(!hasBridge(allMessages[1]))
@@ -724,7 +726,8 @@ struct ToolResultTruncationTests {
         ])
         let config = AgentConfiguration(maxIterations: 5, maxToolResultCharacters: 40)
         let agent = Agent<EmptyContext>(client: client, tools: [echoTool], configuration: config)
-        #expect(try await agent.run(userMessage: "Go", context: EmptyContext()).content == "done")
+        let result = try await agent.run(userMessage: "Go", context: EmptyContext())
+        #expect(try requireContent(result) == "done")
 
         let toolContent = await extractToolContent(client.allCapturedMessages[1])
         #expect(toolContent?.contains("truncated") == true)
@@ -743,7 +746,8 @@ struct ToolResultTruncationTests {
         ])
         let config = AgentConfiguration(maxIterations: 5, maxToolResultCharacters: 1000)
         let agent = Agent<EmptyContext>(client: client, tools: [echoTool], configuration: config)
-        #expect(try await agent.run(userMessage: "Go", context: EmptyContext()).content == "done")
+        let result = try await agent.run(userMessage: "Go", context: EmptyContext())
+        #expect(try requireContent(result) == "done")
 
         let toolContent = await extractToolContent(client.allCapturedMessages[1])
         #expect(toolContent?.contains("truncated") == false)
@@ -777,7 +781,8 @@ struct ToolResultTruncationTests {
         ])
         let config = AgentConfiguration(maxIterations: 5, maxToolResultCharacters: 50)
         let agent = Agent<EmptyContext>(client: client, tools: [failingTool], configuration: config)
-        #expect(try await agent.run(userMessage: "Go", context: EmptyContext()).content == "done")
+        let result = try await agent.run(userMessage: "Go", context: EmptyContext())
+        #expect(try requireContent(result) == "done")
 
         let toolContent = await extractToolContent(client.allCapturedMessages[1])
         #expect(toolContent?.contains("truncated") == true)

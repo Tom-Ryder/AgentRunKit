@@ -1,5 +1,9 @@
 # ``AgentRunKit/AgentStream``
 
+An `@Observable` view-model wrapper over ``Agent/stream(userMessage:history:context:tokenBudget:requestContext:approvalHandler:)-(String,_,_,_,_,_)``.
+
+`finishReason` mirrors the final `.finished` event, including structural reasons such as `.maxIterationsReached(limit:)` and `.tokenBudgetExceeded(budget:used:)`. `cancel()` stops local observation and does not guarantee a terminal `.finished` event.
+
 ## Topics
 
 ### Creating a Stream

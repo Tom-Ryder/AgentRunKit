@@ -69,7 +69,7 @@ public struct SubAgentTool<P: Codable & SchemaProviding & Sendable, InnerContext
             systemPromptOverride: systemPromptBuilder?(params),
             approvalHandler: approvalHandler
         )
-        return ToolResult(content: result.content, isError: result.finishReason == .error)
+        return toolResult(content: result.content, reason: result.finishReason)
     }
 
     func executeStreaming(
@@ -115,10 +115,10 @@ public struct SubAgentTool<P: Codable & SchemaProviding & Sendable, InnerContext
             }
         }
 
-        guard let content = finalContent else {
+        guard let finalReason else {
             return ToolResult.error("Sub-agent stream ended without finishing")
         }
-        return ToolResult(content: content, isError: finalReason == .error)
+        return toolResult(content: finalContent, reason: finalReason)
     }
 
     private func decodeParams(_ arguments: Data) throws -> P {
@@ -127,6 +127,16 @@ public struct SubAgentTool<P: Codable & SchemaProviding & Sendable, InnerContext
         } catch {
             throw AgentError.toolDecodingFailed(tool: name, message: String(describing: error))
         }
+    }
+
+    private func toolResult(content: String?, reason: FinishReason) -> ToolResult {
+        if let message = reason.structuralToolErrorMessage {
+            return .error(message)
+        }
+        guard let content else {
+            preconditionFailure("Finish reason \(reason) requires content")
+        }
+        return ToolResult(content: content, isError: reason == .error)
     }
 }
 

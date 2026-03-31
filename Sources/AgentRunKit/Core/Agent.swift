@@ -178,7 +178,12 @@ extension Agent {
             }
 
             if let tokenBudget = options.tokenBudget, totalUsage.total > tokenBudget {
-                throw AgentError.tokenBudgetExceeded(budget: tokenBudget, used: totalUsage.total)
+                return makeTerminalResult(
+                    reason: .tokenBudgetExceeded(budget: tokenBudget, used: totalUsage.total),
+                    tokenUsage: totalUsage,
+                    iterations: iteration,
+                    history: messages
+                )
             }
 
             let pruneCalls = response.toolCalls.filter { $0.name == "prune_context" }
@@ -194,7 +199,12 @@ extension Agent {
             }
         }
 
-        throw AgentError.maxIterationsReached(iterations: configuration.maxIterations)
+        return makeTerminalResult(
+            reason: .maxIterationsReached(limit: configuration.maxIterations),
+            tokenUsage: totalUsage,
+            iterations: configuration.maxIterations,
+            history: messages
+        )
     }
 
     func stream(
@@ -216,7 +226,7 @@ extension Agent {
     }
 }
 
-private extension Agent {
+extension Agent {
     func stream(
         userMessage: ChatMessage,
         history: [ChatMessage],
@@ -258,17 +268,14 @@ private extension Agent {
         continuation: AsyncThrowingStream<StreamEvent, Error>.Continuation
     ) async throws {
         var messages = buildInitialMessages(
-            userMessage: userMessage, history: history,
-            systemPromptOverride: options.systemPromptOverride
+            userMessage: userMessage, history: history, systemPromptOverride: options.systemPromptOverride
         )
         var totalUsage = TokenUsage()
         var lastTotalTokens: Int?
         var sessionAllowlist: Set<String> = []
         let policy = StreamPolicy.agent
         let processor = StreamProcessor(client: client, toolDefinitions: toolDefinitions, policy: policy)
-        var compactor = ContextCompactor(
-            client: client, toolDefinitions: toolDefinitions, configuration: configuration
-        )
+        var compactor = ContextCompactor(client: client, toolDefinitions: toolDefinitions, configuration: configuration)
         var budgetPhase = try makeBudgetPhase()
 
         for iterationNumber in 1 ... configuration.maxIterations {
@@ -277,63 +284,57 @@ private extension Agent {
             let compacted = await compactor.compactOrTruncateIfNeeded(
                 &messages, lastTotalTokens: lastTotalTokens, totalUsage: &totalUsage
             )
-            if compacted, let totalTokens = lastTotalTokens, let windowSize = client.contextWindowSize {
-                continuation.yield(.make(.compacted(totalTokens: totalTokens, windowSize: windowSize)))
-            }
+            emitCompactionEventIfNeeded(compacted, lastTotalTokens: lastTotalTokens, continuation: continuation)
             let iteration = try await processor.process(
-                messages: messages,
-                totalUsage: &totalUsage,
-                continuation: continuation,
+                messages: messages, totalUsage: &totalUsage, continuation: continuation,
                 requestContext: options.requestContext
             )
 
             if let usage = iteration.usage {
-                lastTotalTokens = usage.total
                 continuation.yield(.make(.iterationCompleted(usage: usage, iteration: iterationNumber)))
             }
-
             messages.append(.assistant(iteration.toAssistantMessage()))
 
-            let filteredTools = policy.executableToolCalls(from: iteration.toolCalls)
+            let filteredTools = StreamPolicy.agent.executableToolCalls(from: iteration.toolCalls)
             let pruneCalls = filteredTools.filter { $0.name == "prune_context" }
             let regularCalls = filteredTools.filter { $0.name != "prune_context" }
-            let shouldTerminate = policy.shouldTerminateAfterIteration(toolCalls: iteration.toolCalls)
             let budgetUsage = try requireBudgetUsage(iteration.usage, budgetPhase: budgetPhase)
 
             if let budgetUsage {
-                applyBudgetPhase(
-                    &budgetPhase,
-                    usage: budgetUsage,
-                    messages: &messages,
-                    continuation: continuation
-                )
+                applyBudgetPhase(&budgetPhase, usage: budgetUsage, messages: &messages, continuation: continuation)
             }
 
-            if shouldTerminate {
-                let finishEvent = try parseFinishEvent(
-                    from: iteration.toolCalls, tokenUsage: totalUsage, history: messages
-                )
-                continuation.yield(finishEvent)
-                continuation.finish()
+            if try finishIfTerminated(iteration, usage: totalUsage, history: messages, continuation: continuation) {
                 return
             }
 
             executePruneCalls(pruneCalls, messages: &messages, continuation: continuation)
             try await executeStreamingAndAppendResults(
-                regularCalls, context: context, messages: &messages,
+                regularCalls,
+                context: context,
+                messages: &messages,
                 continuation: continuation,
-                approvalHandler: options.approvalHandler, allowlist: &sessionAllowlist
+                approvalHandler: options.approvalHandler,
+                allowlist: &sessionAllowlist
             )
 
-            if let tokenBudget = options.tokenBudget, totalUsage.total > tokenBudget {
-                continuation.finish(
-                    throwing: AgentError.tokenBudgetExceeded(budget: tokenBudget, used: totalUsage.total)
-                )
+            if finishIfOverBudget(
+                options.tokenBudget, totalUsage: totalUsage, history: messages, continuation: continuation
+            ) {
                 return
             }
+            lastTotalTokens = iteration.usage?.total
         }
 
-        continuation.finish(throwing: AgentError.maxIterationsReached(iterations: configuration.maxIterations))
+        finishStreaming(
+            continuation: continuation,
+            event: makeFinishedEvent(
+                tokenUsage: totalUsage,
+                content: nil,
+                reason: .maxIterationsReached(limit: configuration.maxIterations),
+                history: messages
+            )
+        )
     }
 
     func buildInitialMessages(
@@ -354,7 +355,12 @@ private extension Agent {
         from toolCalls: [ToolCall], tokenUsage: TokenUsage, history: [ChatMessage]
     ) throws -> StreamEvent {
         guard let finishCall = toolCalls.first(where: { $0.name == "finish" }) else {
-            return .make(.finished(tokenUsage: tokenUsage, content: nil, reason: nil, history: history))
+            return makeFinishedEvent(
+                tokenUsage: tokenUsage,
+                content: nil,
+                reason: nil,
+                history: history
+            )
         }
         let decoded: FinishArguments
         do {
@@ -362,12 +368,12 @@ private extension Agent {
         } catch {
             throw AgentError.finishDecodingFailed(message: String(describing: error))
         }
-        return .make(.finished(
+        return makeFinishedEvent(
             tokenUsage: tokenUsage,
             content: decoded.content,
             reason: FinishReason(decoded.reason ?? "completed"),
             history: history
-        ))
+        )
     }
 
     func parseFinishResult(
@@ -390,5 +396,90 @@ private extension Agent {
             iterations: iterations,
             history: history
         )
+    }
+
+    private func makeFinishedEvent(
+        tokenUsage: TokenUsage,
+        content: String?,
+        reason: FinishReason?,
+        history: [ChatMessage]
+    ) -> StreamEvent {
+        .make(.finished(
+            tokenUsage: tokenUsage,
+            content: content,
+            reason: reason,
+            history: history
+        ))
+    }
+
+    private func makeTerminalResult(
+        reason: FinishReason,
+        tokenUsage: TokenUsage,
+        iterations: Int,
+        history: [ChatMessage]
+    ) -> AgentResult {
+        AgentResult(
+            finishReason: reason,
+            content: nil,
+            totalTokenUsage: tokenUsage,
+            iterations: iterations,
+            history: history
+        )
+    }
+
+    private func emitCompactionEventIfNeeded(
+        _ compacted: Bool,
+        lastTotalTokens: Int?,
+        continuation: AsyncThrowingStream<StreamEvent, Error>.Continuation
+    ) {
+        guard compacted, let totalTokens = lastTotalTokens, let windowSize = client.contextWindowSize else {
+            return
+        }
+        continuation.yield(.make(.compacted(totalTokens: totalTokens, windowSize: windowSize)))
+    }
+
+    private func finishIfTerminated(
+        _ iteration: StreamIteration,
+        usage: TokenUsage,
+        history: [ChatMessage],
+        continuation: AsyncThrowingStream<StreamEvent, Error>.Continuation
+    ) throws -> Bool {
+        guard StreamPolicy.agent.shouldTerminateAfterIteration(toolCalls: iteration.toolCalls) else {
+            return false
+        }
+        try finishStreaming(
+            continuation: continuation,
+            event: parseFinishEvent(from: iteration.toolCalls, tokenUsage: usage, history: history)
+        )
+        return true
+    }
+
+    private func finishIfOverBudget(
+        _ tokenBudget: Int?,
+        totalUsage: TokenUsage,
+        history: [ChatMessage],
+        continuation: AsyncThrowingStream<StreamEvent, Error>.Continuation
+    ) -> Bool {
+        guard let tokenBudget, totalUsage.total > tokenBudget else {
+            return false
+        }
+        finishStreaming(
+            continuation: continuation,
+            event: makeFinishedEvent(
+                tokenUsage: totalUsage,
+                content: nil,
+                reason: .tokenBudgetExceeded(budget: tokenBudget, used: totalUsage.total),
+                history: history
+            )
+        )
+        return true
+    }
+
+    private func finishStreaming(
+        continuation: AsyncThrowingStream<StreamEvent, Error>.Continuation,
+        event: StreamEvent
+    ) {
+        continuation.yield(event)
+        continuation.finish()
     }
 }

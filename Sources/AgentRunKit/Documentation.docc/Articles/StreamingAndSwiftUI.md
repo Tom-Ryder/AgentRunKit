@@ -26,15 +26,18 @@ for try await event in stream {
         print("\n[approval needed for \(request.toolName)]")
     case .toolCallCompleted(_, let name, let result):
         print("[\(name) returned \(result.content)]")
-    case .finished(let usage, _, _, _):
+    case .finished(let usage, _, let reason, _):
         print("\nTokens: \(usage.total)")
+        if let reason {
+            print("Reason: \(reason)")
+        }
     default:
         break
     }
 }
 ```
 
-The stream yields events until the model calls `finish` or an error occurs. Cancelling the consuming task cancels the underlying LLM request.
+Expected terminal states such as max-iterations and token-budget exhaustion arrive as `.finished` events with structural ``FinishReason`` payloads. Only genuine runtime failures throw. Cancelling the consuming task cancels the underlying LLM request and does not guarantee a terminal `.finished` event.
 
 ## StreamEvent Envelope
 
@@ -127,7 +130,7 @@ This canonical codec uses the framework's fixed JSON settings for event transcri
 | `isStreaming` | `Bool` | True while a stream is active |
 | `error` | `(any Error & Sendable)?` | Set if the stream throws |
 | `tokenUsage` | ``TokenUsage``? | Final cumulative usage from `.finished` |
-| `finishReason` | `FinishReason?` | Reason from `.finished` |
+| `finishReason` | `FinishReason?` | Reason from `.finished`, including structural max-iterations or token-budget limits |
 | `history` | `[ChatMessage]` | Full conversation history from `.finished` |
 | `toolCalls` | [``ToolCallInfo``] | Top-level and nested tool calls with live state (`.running`, `.awaitingApproval`, `.completed`, `.failed`) |
 | `iterationUsages` | [``TokenUsage``] | Per-iteration usage, one entry per `.iterationCompleted` |
@@ -136,7 +139,7 @@ This canonical codec uses the framework's fixed JSON settings for event transcri
 **Methods:**
 
 - `send(_:history:context:tokenBudget:requestContext:approvalHandler:)` cancels any active stream, resets state, and starts a new one.
-- `cancel()` cancels the active stream without resetting state.
+- `cancel()` cancels the active stream without resetting state. It is a local cancellation API and does not guarantee a terminal `.finished` event.
 
 When sub-agents emit nested tool events, `toolCalls` flattens them into the same collection and prefixes names using `parent > child`.
 

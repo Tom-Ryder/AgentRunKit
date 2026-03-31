@@ -88,7 +88,7 @@ struct AgentIntegrationTests {
             context: EmptyContext()
         )
 
-        #expect(result.content.lowercased().contains("hello"))
+        #expect(try requireContent(result).lowercased().contains("hello"))
         #expect(result.iterations >= 1)
     }
 
@@ -121,7 +121,7 @@ struct AgentIntegrationTests {
             context: EmptyContext()
         )
 
-        #expect(result.content.contains("42"))
+        #expect(try requireContent(result).contains("42"))
         #expect(result.iterations >= 1)
     }
 
@@ -155,7 +155,7 @@ struct AgentIntegrationTests {
         )
 
         #expect(result.iterations >= 2)
-        #expect(result.content.contains("18"))
+        #expect(try requireContent(result).contains("18"))
     }
 }
 
@@ -223,7 +223,8 @@ struct AutoSchemaIntegrationTests {
             context: EmptyContext()
         )
 
-        #expect(result.content.contains("hihihi") || result.content.contains("hi hi hi"))
+        let content = try requireContent(result)
+        #expect(content.contains("hihihi") || content.contains("hi hi hi"))
     }
 
     @Test

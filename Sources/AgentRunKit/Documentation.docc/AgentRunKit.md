@@ -33,8 +33,12 @@ let result = try await agent.run(
     userMessage: "What's the weather in SF?",
     context: EmptyContext()
 )
-print(result.content)
+if let content = result.content {
+    print(content)
+}
 ```
+
+If a run ends because `maxIterations` or `tokenBudget` is reached before the model calls `finish`, ``Agent/run(userMessage:history:context:tokenBudget:requestContext:approvalHandler:)`` still returns an ``AgentResult`` with a structural ``FinishReason`` and `content == nil`.
 
 For a complete walkthrough, see <doc:GettingStarted>.
 

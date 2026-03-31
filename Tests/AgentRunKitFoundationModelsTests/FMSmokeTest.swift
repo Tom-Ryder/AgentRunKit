@@ -51,10 +51,11 @@
             )
 
             print("=== Agent.run() result ===")
-            print("Content: \(result.content)")
+            print("Content: \(result.content ?? "(nil)")")
             print("Iterations: \(result.iterations)")
             print("Finish reason: \(result.finishReason)")
-            #expect(result.content.contains("714"))
+            let content = try #require(result.content)
+            #expect(content.contains("714"))
         }
 
         @Test func agentStreamWithCalculator() async throws {

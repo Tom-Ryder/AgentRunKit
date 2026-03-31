@@ -562,7 +562,7 @@ struct TestLLMClientTests {
         let agent = Agent<EmptyContext>(client: client, tools: [echoTool])
         let result = try await agent.run(userMessage: "Hello", context: EmptyContext())
 
-        #expect(result.content == "Test completed")
+        #expect(try requireContent(result) == "Test completed")
         #expect(result.iterations == 2)
     }
 

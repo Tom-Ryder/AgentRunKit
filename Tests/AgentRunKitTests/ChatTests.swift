@@ -339,6 +339,37 @@ struct ChatTests {
         #expect(second == "Second message")
         #expect(newHistory.count == 4)
     }
+
+    @Test
+    func streamMaxToolRoundsProducesStructuralFinishedEvent() async throws {
+        let echoTool = try Tool<EchoParams, EchoOutput, EmptyContext>(
+            name: "echo",
+            description: "Echoes input",
+            executor: { params, _ in EchoOutput(echoed: "Echo: \(params.message)") }
+        )
+
+        let loopDeltas: [StreamDelta] = [
+            .toolCallStart(index: 0, id: "call_1", name: "echo"),
+            .toolCallDelta(index: 0, arguments: #"{"message":"loop"}"#),
+            .finished(usage: TokenUsage(input: 10, output: 5))
+        ]
+        let client = StreamingMockLLMClient(streamSequences: [loopDeltas, loopDeltas])
+        let chat = Chat<EmptyContext>(client: client, tools: [echoTool], maxToolRounds: 2)
+
+        var events: [StreamEvent] = []
+        for try await event in chat.stream("Go", context: EmptyContext()) {
+            events.append(event)
+        }
+
+        guard case let .finished(tokenUsage, content, reason, history) = events.last?.kind else {
+            Issue.record("Expected finished event")
+            return
+        }
+        #expect(tokenUsage == TokenUsage(input: 20, output: 10))
+        #expect(content == nil)
+        #expect(reason == .maxIterationsReached(limit: 2))
+        #expect(history.count == 5)
+    }
 }
 
 private actor ChatCapturingMockLLMClient: LLMClient {

@@ -102,4 +102,32 @@ struct StreamEventWireFormatTests {
         let reencodedString = try #require(String(data: reencoded, encoding: .utf8))
         #expect(reencodedString == string)
     }
+
+    @Test func structuralFinishedEventFixtureIsStable() throws {
+        let event = try StreamEvent(
+            id: EventID(rawValue: uuid("00000000-0000-0000-0000-000000000301")),
+            timestamp: fixedDate(millisecondsSince1970: 1_774_880_528_123),
+            kind: .finished(
+                tokenUsage: TokenUsage(input: 80, output: 20),
+                content: nil,
+                reason: .maxIterationsReached(limit: 3),
+                history: []
+            )
+        )
+
+        let data = try StreamEventJSONCodec.encode(event)
+        let string = try #require(String(data: data, encoding: .utf8))
+        let expected = [
+            #"{"id":"00000000-0000-0000-0000-000000000301","#,
+            #""kind":{"history":[],"#,
+            #""reason":{"limit":3,"type":"maxIterationsReached"},"#,
+            #""tokenUsage":{"input":80,"output":20,"reasoning":0},"#,
+            #""type":"finished"},"#,
+            #""timestamp":"2026-03-30T14:22:08.123Z"}"#,
+        ].joined()
+        #expect(string == expected)
+
+        let decoded = try StreamEventJSONCodec.decode(data)
+        #expect(decoded.kind == event.kind)
+    }
 }

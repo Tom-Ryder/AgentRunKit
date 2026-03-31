@@ -90,7 +90,7 @@ struct SubAgentToolTests {
 
         let ctx = SubAgentContext(inner: EmptyContext(), maxDepth: 3)
         let result = try await parentAgent.run(userMessage: "Go", context: ctx)
-        #expect(result.content == "Parent done")
+        #expect(try requireContent(result) == "Parent done")
         #expect(result.iterations == 2)
     }
 
@@ -187,7 +187,7 @@ struct SubAgentToolTests {
 
         let ctx = SubAgentContext(inner: EmptyContext(), maxDepth: 3)
         let result = try await rootAgent.run(userMessage: "Go", context: ctx)
-        #expect(result.content == "root done")
+        #expect(try requireContent(result) == "root done")
     }
 
     @Test
@@ -228,15 +228,52 @@ struct SubAgentToolTests {
 
         let ctx = SubAgentContext(inner: EmptyContext(), maxDepth: 3)
         let result = try await parentAgent.run(userMessage: "Go", context: ctx)
-        #expect(result.content == "recovered")
+        #expect(try requireContent(result) == "recovered")
 
         let captured = await parentClient.capturedMessages
         let toolMessages = captured.compactMap { msg -> String? in
             guard case let .tool(_, _, content) = msg else { return nil }
             return content
         }
-        let errorMessage = toolMessages.first { $0.contains("budget") }
-        #expect(errorMessage != nil)
+        #expect(toolMessages == ["Error: Token budget exceeded (budget: 50, used: 200)."])
+    }
+
+    @Test
+    func subAgentMaxIterationsReachedFlowsThroughParent() async throws {
+        let childClient = MockLLMClient(responses: [
+            AssistantMessage(content: "still working")
+        ])
+        let childAgent = Agent<SubAgentContext<EmptyContext>>(
+            client: childClient,
+            tools: [],
+            configuration: AgentConfiguration(maxIterations: 1)
+        )
+
+        let tool = try SubAgentTool<QueryParams, EmptyContext>(
+            name: "stubborn",
+            description: "Stubborn sub-agent",
+            agent: childAgent,
+            messageBuilder: { $0.query }
+        )
+
+        let subCall = ToolCall(id: "c1", name: "stubborn", arguments: #"{"query": "go"}"#)
+        let parentFinish = ToolCall(id: "c2", name: "finish", arguments: #"{"content": "recovered"}"#)
+        let parentClient = CapturingMockLLMClient(responses: [
+            AssistantMessage(content: "", toolCalls: [subCall]),
+            AssistantMessage(content: "", toolCalls: [parentFinish])
+        ])
+        let parentAgent = Agent<SubAgentContext<EmptyContext>>(client: parentClient, tools: [tool])
+
+        let ctx = SubAgentContext(inner: EmptyContext(), maxDepth: 3)
+        let result = try await parentAgent.run(userMessage: "Go", context: ctx)
+        #expect(try requireContent(result) == "recovered")
+
+        let captured = await parentClient.capturedMessages
+        let toolMessages = captured.compactMap { msg -> String? in
+            guard case let .tool(_, _, content) = msg else { return nil }
+            return content
+        }
+        #expect(toolMessages == ["Error: Agent reached maximum iterations (1)."])
     }
 
     @Test
@@ -395,7 +432,7 @@ struct SubAgentToolTests {
 
         let ctx = SubAgentContext(inner: EmptyContext(), maxDepth: 3)
         let result = try await parentAgent.run(userMessage: "Go", context: ctx)
-        #expect(result.content == "parent done")
+        #expect(try requireContent(result) == "parent done")
     }
 
     @Test
@@ -447,7 +484,7 @@ struct SubAgentToolTests {
             approvalHandler: counter.handler
         )
 
-        #expect(result.content == "parent done")
+        #expect(try requireContent(result) == "parent done")
 
         let requests = await counter.requests
         #expect(requests.map(\.toolName) == ["child_noop"])
