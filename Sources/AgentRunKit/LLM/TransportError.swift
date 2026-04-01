@@ -131,6 +131,3 @@ extension TransportError {
         normalized.contains("invalid_request_error") || normalized.contains("invalid_argument")
     }
 }
-
-@available(*, deprecated, renamed: "TransportError")
-public typealias OpenAIClientError = TransportError
