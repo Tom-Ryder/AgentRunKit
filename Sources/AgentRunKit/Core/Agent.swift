@@ -317,17 +317,22 @@ extension Agent {
         for iterationNumber in 1 ... configuration.maxIterations {
             try Task.checkCancellation()
 
-            await compactStreamingMessagesIfNeeded(
+            try await compactStreamingMessagesIfNeeded(
                 &state.messages,
                 totalUsage: &totalUsage,
                 lastTotalTokens: lastTotalTokens,
                 compactor: &compactor,
+                historyWasRewrittenLocally: &state.historyWasRewrittenLocally,
                 continuation: continuation
             )
-            let iteration = try await processor.process(
-                messages: state.messages,
+            let iteration = try await generateStreamingResponse(
+                processor: processor,
+                messages: &state.messages,
                 totalUsage: &totalUsage,
-                continuation: continuation, requestContext: options.requestContext
+                compactor: &compactor,
+                historyWasRewrittenLocally: &state.historyWasRewrittenLocally,
+                continuation: continuation,
+                requestContext: options.requestContext
             )
 
             if let usage = iteration.usage {

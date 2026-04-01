@@ -9,26 +9,19 @@ extension Agent {
         historyWasRewrittenLocally: inout Bool,
         requestContext: RequestContext?
     ) async throws -> AssistantMessage {
-        let summaryRequestMode = requestMode(for: historyWasRewrittenLocally)
-        let compactionOutcome = await compactor.compactOrTruncateIfNeeded(
+        let compactionOutcome = try await compactor.compactOrTruncateIfNeeded(
             &messages,
             lastTotalTokens: lastTotalTokens,
-            totalUsage: &totalUsage
-        ) { summaryRequest in
-            try await self.client.generateForRun(
-                messages: summaryRequest,
-                tools: self.toolDefinitions,
-                responseFormat: nil,
-                requestContext: nil,
-                requestMode: summaryRequestMode
-            )
-        }
+            totalUsage: &totalUsage,
+            summaryGenerator: makeSummaryGenerator(for: historyWasRewrittenLocally)
+        )
         if compactionOutcome.didRewriteHistory {
             historyWasRewrittenLocally = true
         }
 
         let response = try await generateRunResponse(
             messages: &messages,
+            totalUsage: &totalUsage,
             compactor: &compactor,
             historyWasRewrittenLocally: &historyWasRewrittenLocally,
             requestContext: requestContext
@@ -43,6 +36,7 @@ extension Agent {
 
     func generateRunResponse(
         messages: inout [ChatMessage],
+        totalUsage: inout TokenUsage,
         compactor: inout ContextCompactor,
         historyWasRewrittenLocally: inout Bool,
         requestContext: RequestContext?
@@ -65,7 +59,11 @@ extension Agent {
                     throw AgentError.llmError(transport)
                 }
                 attemptedReactiveRecovery = true
-                let reactiveOutcome = compactor.reactiveCompact(&messages)
+                let reactiveOutcome = try await compactor.reactiveCompact(
+                    &messages,
+                    totalUsage: &totalUsage,
+                    summaryGenerator: makeSummaryGenerator(for: historyWasRewrittenLocally)
+                )
                 guard reactiveOutcome.didRewriteHistory else {
                     throw AgentError.llmError(transport)
                 }
@@ -76,6 +74,21 @@ extension Agent {
 
     func requestMode(for historyWasRewrittenLocally: Bool) -> RunRequestMode {
         historyWasRewrittenLocally ? .forceFullRequest : .auto
+    }
+
+    func makeSummaryGenerator(
+        for historyWasRewrittenLocally: Bool
+    ) -> ContextCompactor.SummaryGenerator {
+        let mode = requestMode(for: historyWasRewrittenLocally)
+        return { summaryRequest in
+            try await self.client.generateForRun(
+                messages: summaryRequest,
+                tools: self.toolDefinitions,
+                responseFormat: nil,
+                requestContext: nil,
+                requestMode: mode
+            )
+        }
     }
 
     func parseFinishResult(

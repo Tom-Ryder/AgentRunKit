@@ -39,7 +39,7 @@ struct ContextCompactor {
         lastTotalTokens: Int?,
         totalUsage: inout TokenUsage,
         summaryGenerator: SummaryGenerator? = nil
-    ) async -> Outcome {
+    ) async throws -> Outcome {
         guard let totalTokens = lastTotalTokens,
               let windowSize = client.contextWindowSize,
               let threshold = configuration.compactionThreshold,
@@ -67,6 +67,8 @@ struct ContextCompactor {
             totalUsage += compactionUsage
             consecutiveSummarizationFailures = 0
             return .compacted
+        } catch is CancellationError {
+            throw CancellationError()
         } catch {
             consecutiveSummarizationFailures += 1
             return truncateIfNeeded(&messages) ? .rewritten : .unchanged
@@ -75,8 +77,10 @@ struct ContextCompactor {
 
     @discardableResult
     mutating func reactiveCompact(
-        _ messages: inout [ChatMessage]
-    ) -> Outcome {
+        _ messages: inout [ChatMessage],
+        totalUsage: inout TokenUsage,
+        summaryGenerator: SummaryGenerator? = nil
+    ) async throws -> Outcome {
         var didRewriteHistory = truncateIfNeeded(&messages)
         if configuration.compactionThreshold != nil {
             let pruning = pruneObservations(messages)
@@ -85,7 +89,30 @@ struct ContextCompactor {
                 didRewriteHistory = true
             }
         }
-        return didRewriteHistory ? .rewritten : .unchanged
+        if didRewriteHistory {
+            return .rewritten
+        }
+
+        guard configuration.compactionThreshold != nil,
+              consecutiveSummarizationFailures < Self.maxConsecutiveSummarizationFailures
+        else {
+            return .unchanged
+        }
+
+        do {
+            let response = try await summaryResponse(messages, summaryGenerator: summaryGenerator)
+            let compacted = compactedMessages(from: messages, summary: response.content)
+            let compactionUsage = response.tokenUsage ?? TokenUsage()
+            messages = compacted
+            totalUsage += compactionUsage
+            consecutiveSummarizationFailures = 0
+            return .compacted
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch {
+            consecutiveSummarizationFailures += 1
+            return .unchanged
+        }
     }
 
     func pruneObservations(_ messages: [ChatMessage]) -> (messages: [ChatMessage], reductionRatio: Double) {

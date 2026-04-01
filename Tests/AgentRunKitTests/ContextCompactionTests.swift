@@ -274,7 +274,7 @@ struct CompactionTriggerTests {
 
 struct CompactionFallbackTests {
     @Test
-    func circuitBreakerSkipsSummarizationAfterConsecutiveFailures() async {
+    func circuitBreakerSkipsSummarizationAfterConsecutiveFailures() async throws {
         let client = CompactionMockLLMClient(
             responses: [], contextWindowSize: 1000, failSummarization: true
         )
@@ -294,14 +294,14 @@ struct CompactionFallbackTests {
         var usage = TokenUsage()
 
         for _ in 0 ..< 3 {
-            await compactor.compactOrTruncateIfNeeded(
+            try await compactor.compactOrTruncateIfNeeded(
                 &messages, lastTotalTokens: 900, totalUsage: &usage
             )
         }
         let callsAfterTripping = await client.generateCallCount
         #expect(callsAfterTripping == 3)
 
-        await compactor.compactOrTruncateIfNeeded(
+        try await compactor.compactOrTruncateIfNeeded(
             &messages, lastTotalTokens: 900, totalUsage: &usage
         )
         let callsAfterSkip = await client.generateCallCount
@@ -309,7 +309,7 @@ struct CompactionFallbackTests {
     }
 
     @Test
-    func circuitBreakerResetsOnSuccess() async {
+    func circuitBreakerResetsOnSuccess() async throws {
         var compactor = ContextCompactor(
             client: CompactionMockLLMClient(
                 responses: [
@@ -326,7 +326,7 @@ struct CompactionFallbackTests {
         ]
         var usage = TokenUsage()
 
-        let result = await compactor.compactOrTruncateIfNeeded(
+        let result = try await compactor.compactOrTruncateIfNeeded(
             &messages, lastTotalTokens: 900, totalUsage: &usage
         )
         #expect(result == .compacted)
@@ -334,7 +334,7 @@ struct CompactionFallbackTests {
     }
 
     @Test
-    func circuitBreakerResetsAfterPruningSuccess() async {
+    func circuitBreakerResetsAfterPruningSuccess() async throws {
         let client = CompactionMockLLMClient(
             responses: [], contextWindowSize: 1000, failSummarization: true
         )
@@ -362,26 +362,26 @@ struct CompactionFallbackTests {
         var usage = TokenUsage()
 
         for _ in 0 ..< 2 {
-            await compactor.compactOrTruncateIfNeeded(
+            try await compactor.compactOrTruncateIfNeeded(
                 &summarizationMessages, lastTotalTokens: 900, totalUsage: &usage
             )
         }
         #expect(await client.generateCallCount == 2)
 
-        let pruned = await compactor.compactOrTruncateIfNeeded(
+        let pruned = try await compactor.compactOrTruncateIfNeeded(
             &pruningMessages, lastTotalTokens: 900, totalUsage: &usage
         )
         #expect(pruned == .compacted)
         #expect(await client.generateCallCount == 2)
 
         for _ in 0 ..< 3 {
-            await compactor.compactOrTruncateIfNeeded(
+            try await compactor.compactOrTruncateIfNeeded(
                 &summarizationMessages, lastTotalTokens: 900, totalUsage: &usage
             )
         }
         #expect(await client.generateCallCount == 5)
 
-        await compactor.compactOrTruncateIfNeeded(
+        try await compactor.compactOrTruncateIfNeeded(
             &summarizationMessages, lastTotalTokens: 900, totalUsage: &usage
         )
         #expect(await client.generateCallCount == 5)
@@ -417,7 +417,7 @@ struct CompactionFallbackTests {
 
 struct ReactiveCompactionTests {
     @Test
-    func reactiveTruncationOnlySucceedsWhenHistoryShrinks() {
+    func reactiveTruncationOnlySucceedsWhenHistoryShrinks() async throws {
         let client = CompactionMockLLMClient(responses: [], contextWindowSize: 1000)
         var compactor = ContextCompactor(
             client: client,
@@ -429,17 +429,18 @@ struct ReactiveCompactionTests {
             .assistant(AssistantMessage(content: "two")),
             .user("three"),
         ]
-        let shrunk = compactor.reactiveCompact(&messages)
+        var totalUsage = TokenUsage()
+        let shrunk = try await compactor.reactiveCompact(&messages, totalUsage: &totalUsage)
 
         #expect(shrunk == .rewritten)
         #expect(messages.count == 2)
 
-        let unchanged = compactor.reactiveCompact(&messages)
+        let unchanged = try await compactor.reactiveCompact(&messages, totalUsage: &totalUsage)
         #expect(unchanged == .unchanged)
     }
 
     @Test
-    func reactiveCompactionNeverCallsSummarization() async {
+    func reactiveCompactionSkipsSummarizationWhenPruningSuffices() async throws {
         let client = CompactionMockLLMClient(
             responses: [],
             contextWindowSize: 1000,
@@ -459,7 +460,8 @@ struct ReactiveCompactionTests {
             .assistant(AssistantMessage(content: "Working state")),
             .user("Continue"),
         ]
-        let outcome = compactor.reactiveCompact(&messages)
+        var totalUsage = TokenUsage()
+        let outcome = try await compactor.reactiveCompact(&messages, totalUsage: &totalUsage)
 
         #expect(outcome == .rewritten)
         #expect(await client.generateCallCount == 0)
@@ -471,7 +473,7 @@ struct ReactiveCompactionTests {
     }
 
     @Test
-    func reactivePruningRequiresCompactionThreshold() async {
+    func reactivePruningRequiresCompactionThreshold() async throws {
         let client = CompactionMockLLMClient(responses: [], contextWindowSize: 1000)
         var compactor = ContextCompactor(
             client: client,
@@ -488,7 +490,8 @@ struct ReactiveCompactionTests {
             .user("Continue"),
         ]
         let original = messages
-        let outcome = compactor.reactiveCompact(&messages)
+        var totalUsage = TokenUsage()
+        let outcome = try await compactor.reactiveCompact(&messages, totalUsage: &totalUsage)
 
         #expect(outcome == .unchanged)
         #expect(messages == original)
@@ -496,7 +499,7 @@ struct ReactiveCompactionTests {
     }
 
     @Test
-    func reactivePruningRequiresRealLocalReduction() {
+    func reactivePruningRequiresRealLocalReduction() async throws {
         let client = CompactionMockLLMClient(responses: [], contextWindowSize: 1000)
         var compactor = ContextCompactor(
             client: client,
@@ -513,7 +516,8 @@ struct ReactiveCompactionTests {
             .user("Continue"),
         ]
         let original = messages
-        let outcome = compactor.reactiveCompact(&messages)
+        var totalUsage = TokenUsage()
+        let outcome = try await compactor.reactiveCompact(&messages, totalUsage: &totalUsage)
 
         #expect(outcome == .unchanged)
         #expect(messages == original)

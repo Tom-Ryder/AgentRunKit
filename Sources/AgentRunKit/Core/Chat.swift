@@ -57,58 +57,90 @@ public struct Chat<C: ToolContext>: Sendable {
         requestContext: RequestContext? = nil
     ) async throws -> (response: AssistantMessage, history: [ChatMessage]) {
         var messages = buildMessages(userMessage: message, history: history)
-        let truncatedMessages = truncateIfNeeded(messages)
+        var truncatedMessages = truncateIfNeeded(messages)
         try truncatedMessages.validateForLLMRequest()
-        let response = try await client.generate(
-            messages: truncatedMessages,
-            tools: toolDefinitions,
-            responseFormat: nil,
-            requestContext: requestContext
-        )
-        messages.append(.assistant(response))
-        return (response, messages)
+        do {
+            let response = try await client.generate(
+                messages: truncatedMessages,
+                tools: toolDefinitions,
+                responseFormat: nil,
+                requestContext: requestContext
+            )
+            messages.append(.assistant(response))
+            return (response, messages)
+        } catch let AgentError.llmError(transport) where transport.isPromptTooLong {
+            guard reactivelyTruncate(&truncatedMessages) else {
+                throw AgentError.llmError(transport)
+            }
+            let response = try await client.generate(
+                messages: truncatedMessages,
+                tools: toolDefinitions,
+                responseFormat: nil,
+                requestContext: requestContext
+            )
+            messages = truncatedMessages
+            messages.append(.assistant(response))
+            return (response, messages)
+        }
     }
 
     public func send<T: Decodable & SchemaProviding>(
         _ message: String,
         history: [ChatMessage] = [],
-        returning _: T.Type,
+        returning type: T.Type,
         requestContext: RequestContext? = nil
     ) async throws -> (result: T, history: [ChatMessage]) {
-        try T.validateSchema()
-        var messages = buildMessages(userMessage: .user(message), history: history)
-        let truncatedMessages = truncateIfNeeded(messages)
-        try truncatedMessages.validateForLLMRequest()
-        let response = try await client.generate(
-            messages: truncatedMessages,
-            tools: [],
-            responseFormat: .jsonSchema(T.self),
-            requestContext: requestContext
+        try await sendStructured(
+            .user(message), history: history, returning: type, requestContext: requestContext
         )
-        messages.append(.assistant(response))
-        let result: T = try decodeStructuredOutput(response.content)
-        return (result, messages)
     }
 
     public func send<T: Decodable & SchemaProviding>(
         _ parts: [ContentPart],
         history: [ChatMessage] = [],
-        returning _: T.Type,
+        returning type: T.Type,
         requestContext: RequestContext? = nil
     ) async throws -> (result: T, history: [ChatMessage]) {
-        try T.validateSchema()
-        var messages = buildMessages(userMessage: .user(parts), history: history)
-        let truncatedMessages = truncateIfNeeded(messages)
-        try truncatedMessages.validateForLLMRequest()
-        let response = try await client.generate(
-            messages: truncatedMessages,
-            tools: [],
-            responseFormat: .jsonSchema(T.self),
-            requestContext: requestContext
+        try await sendStructured(
+            .user(parts), history: history, returning: type, requestContext: requestContext
         )
-        messages.append(.assistant(response))
-        let result: T = try decodeStructuredOutput(response.content)
-        return (result, messages)
+    }
+
+    private func sendStructured<T: Decodable & SchemaProviding>(
+        _ message: ChatMessage,
+        history: [ChatMessage],
+        returning _: T.Type,
+        requestContext: RequestContext?
+    ) async throws -> (result: T, history: [ChatMessage]) {
+        try T.validateSchema()
+        var messages = buildMessages(userMessage: message, history: history)
+        var truncatedMessages = truncateIfNeeded(messages)
+        try truncatedMessages.validateForLLMRequest()
+        do {
+            let response = try await client.generate(
+                messages: truncatedMessages,
+                tools: [],
+                responseFormat: .jsonSchema(T.self),
+                requestContext: requestContext
+            )
+            messages.append(.assistant(response))
+            let result: T = try decodeStructuredOutput(response.content)
+            return (result, messages)
+        } catch let AgentError.llmError(transport) where transport.isPromptTooLong {
+            guard reactivelyTruncate(&truncatedMessages) else {
+                throw AgentError.llmError(transport)
+            }
+            let response = try await client.generate(
+                messages: truncatedMessages,
+                tools: [],
+                responseFormat: .jsonSchema(T.self),
+                requestContext: requestContext
+            )
+            messages = truncatedMessages
+            messages.append(.assistant(response))
+            let result: T = try decodeStructuredOutput(response.content)
+            return (result, messages)
+        }
     }
 
     private func decodeStructuredOutput<T: Decodable>(_ content: String) throws -> T {
@@ -176,8 +208,10 @@ public struct Chat<C: ToolContext>: Sendable {
             }
         }
     }
+}
 
-    private func performStream(
+private extension Chat {
+    func performStream(
         userMessage: ChatMessage,
         history: [ChatMessage],
         context: C,
@@ -194,14 +228,30 @@ public struct Chat<C: ToolContext>: Sendable {
         for _ in 0 ..< maxToolRounds {
             try Task.checkCancellation()
 
-            let truncatedMessages = truncateIfNeeded(messages)
+            var truncatedMessages = truncateIfNeeded(messages)
             try truncatedMessages.validateForLLMRequest()
-            let iteration = try await processor.process(
-                messages: truncatedMessages,
-                totalUsage: &totalUsage,
-                continuation: continuation,
-                requestContext: requestContext
-            )
+            var emittedOutput = false
+            let iteration: StreamIteration
+            do {
+                iteration = try await processor.process(
+                    messages: truncatedMessages,
+                    totalUsage: &totalUsage,
+                    emittedOutput: &emittedOutput,
+                    continuation: continuation,
+                    requestContext: requestContext
+                )
+            } catch let AgentError.llmError(transport) where transport.isPromptTooLong {
+                guard !emittedOutput, reactivelyTruncate(&truncatedMessages) else {
+                    throw AgentError.llmError(transport)
+                }
+                iteration = try await processor.process(
+                    messages: truncatedMessages,
+                    totalUsage: &totalUsage,
+                    continuation: continuation,
+                    requestContext: requestContext
+                )
+                messages = truncatedMessages
+            }
 
             messages.append(.assistant(iteration.toAssistantMessage()))
 
@@ -232,7 +282,7 @@ public struct Chat<C: ToolContext>: Sendable {
         continuation.finish()
     }
 
-    private func buildMessages(userMessage: ChatMessage, history: [ChatMessage]) -> [ChatMessage] {
+    func buildMessages(userMessage: ChatMessage, history: [ChatMessage]) -> [ChatMessage] {
         var messages: [ChatMessage] = []
         if let systemPrompt {
             messages.append(.system(systemPrompt))
@@ -242,13 +292,20 @@ public struct Chat<C: ToolContext>: Sendable {
         return messages
     }
 
-    private func truncateIfNeeded(_ messages: [ChatMessage]) -> [ChatMessage] {
+    func truncateIfNeeded(_ messages: [ChatMessage]) -> [ChatMessage] {
         guard let maxMessages else { return messages }
         return messages.truncated(to: maxMessages, preservingSystemPrompt: true)
     }
-}
 
-private extension Chat {
+    func reactivelyTruncate(_ messages: inout [ChatMessage]) -> Bool {
+        let target = messages.count / 2
+        guard target >= 1 else { return false }
+        let truncated = messages.truncated(to: target, preservingSystemPrompt: true)
+        guard truncated.count < messages.count else { return false }
+        messages = truncated
+        return true
+    }
+
     func resolveAndExecuteTool(
         _ call: ToolCall,
         context: C,

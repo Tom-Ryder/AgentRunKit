@@ -49,6 +49,16 @@ If pruning reduces tool-result volume by more than 20%, the agent uses the prune
 
 **Fallback.** If summarization fails (network error, provider outage), the agent falls back to message-count truncation via ``AgentConfiguration/maxMessages``.
 
+## Reactive Prompt-Too-Long Recovery
+
+When a provider rejects a request because the prompt exceeds the context window, the framework attempts one-shot recovery before propagating the error.
+
+**Agent** uses the full compaction cascade reactively: message-count truncation, observation pruning, and LLM-based summarization (if `compactionThreshold` is configured). Both `run()` and `stream()` share this behavior. Streaming recovery is gated on a pre-output invariant: retry is attempted only if no events were yielded to the consumer before the error. If partial content has already been emitted, the error propagates to avoid delivering duplicate or inconsistent output.
+
+**Chat** uses truncation-only recovery. When a `send()` or `stream()` call hits a prompt-too-long error, the framework halves the message count (preserving the system prompt and tool-call/result pairing) and retries once. Chat has no compactor, no pruning, and no summarization. If the halved list is still too large, the error propagates.
+
+Recovery is always one-shot: if the retry also fails, the error propagates. This prevents infinite retry loops on conversations that are fundamentally too large.
+
 ## Tool Result Truncation
 
 ``AgentConfiguration/maxToolResultCharacters`` applies middle-out truncation to large tool results at recording time. The prefix and suffix of the result are preserved, with the middle replaced by a `...[truncated]...` marker. This keeps individual results bounded before they enter the conversation history.
