@@ -544,6 +544,58 @@ struct SubAgentInheritParentMessagesTests {
     }
 
     @Test
+    func childInheritsAssistantContinuityFromParentHistory() async throws {
+        let continuity = AssistantContinuity(
+            substrate: .responses,
+            payload: .object([
+                "response_id": .string("resp_parent"),
+            ])
+        )
+        let childFinish = ToolCall(id: "cf", name: "finish", arguments: #"{"content": "child done"}"#)
+        let childClient = CapturingMockLLMClient(responses: [
+            AssistantMessage(content: "", toolCalls: [childFinish]),
+        ])
+        let childAgent = Agent<SubAgentContext<EmptyContext>>(
+            client: childClient, tools: [],
+            configuration: AgentConfiguration(systemPrompt: "child system")
+        )
+        let tool = try SubAgentTool<QueryParams, EmptyContext>(
+            name: "research",
+            description: "Research",
+            agent: childAgent,
+            inheritParentMessages: true,
+            messageBuilder: { $0.query }
+        )
+
+        let subCall = ToolCall(id: "cs", name: "research", arguments: #"{"query": "task"}"#)
+        let parentFinish = ToolCall(id: "pf", name: "finish", arguments: #"{"content": "parent done"}"#)
+        let parentClient = MockLLMClient(responses: [
+            AssistantMessage(content: "", toolCalls: [subCall]),
+            AssistantMessage(content: "", toolCalls: [parentFinish]),
+        ])
+        let parentAgent = Agent<SubAgentContext<EmptyContext>>(
+            client: parentClient, tools: [tool],
+            configuration: AgentConfiguration(systemPrompt: "parent system")
+        )
+        let history: [ChatMessage] = [
+            .user("Earlier"),
+            .assistant(AssistantMessage(content: "Earlier answer", continuity: continuity)),
+        ]
+
+        let ctx = SubAgentContext(inner: EmptyContext(), maxDepth: 3)
+        _ = try await parentAgent.run(userMessage: "Go", history: history, context: ctx)
+
+        let captured = await childClient.capturedMessages
+        #expect(captured.count == 5)
+        guard case let .assistant(message) = captured[2] else {
+            Issue.record("Expected inherited assistant message in child history")
+            return
+        }
+        #expect(message.content == "Earlier answer")
+        #expect(message.continuity == continuity)
+    }
+
+    @Test
     func parentSystemMessageStripped() async throws {
         let childFinish = ToolCall(id: "cf", name: "finish", arguments: #"{"content": "child done"}"#)
         let childClient = CapturingMockLLMClient(responses: [

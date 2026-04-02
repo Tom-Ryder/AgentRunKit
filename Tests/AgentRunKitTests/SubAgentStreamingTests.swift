@@ -923,4 +923,63 @@ struct SubAgentInheritHistoryStreamingTests {
         #expect(systemMessages1.count == 1)
         #expect(systemMessages2.count == 1)
     }
+
+    @Test
+    func childInheritsAssistantContinuityFromParentHistory() async throws {
+        let continuity = AssistantContinuity(
+            substrate: .responses,
+            payload: .object([
+                "response_id": .string("resp_parent"),
+            ])
+        )
+        let childDeltas: [StreamDelta] = [
+            .toolCallStart(index: 0, id: "cf", name: "finish"),
+            .toolCallDelta(index: 0, arguments: #"{"content": "child done"}"#),
+            .finished(usage: nil),
+        ]
+        let childClient = CapturingStreamingMockLLMClient(streamSequences: [childDeltas])
+        let childAgent = Agent<SubAgentContext<EmptyContext>>(
+            client: childClient, tools: [],
+            configuration: AgentConfiguration(systemPrompt: "child system")
+        )
+        let tool = try SubAgentTool<QueryParams, EmptyContext>(
+            name: "research",
+            description: "Research",
+            agent: childAgent,
+            inheritParentMessages: true,
+            messageBuilder: { $0.query }
+        )
+
+        let parentDeltas1: [StreamDelta] = [
+            .toolCallStart(index: 0, id: "cs", name: "research"),
+            .toolCallDelta(index: 0, arguments: #"{"query": "task"}"#),
+            .finished(usage: nil),
+        ]
+        let parentDeltas2: [StreamDelta] = [
+            .toolCallStart(index: 0, id: "pf", name: "finish"),
+            .toolCallDelta(index: 0, arguments: #"{"content": "parent done"}"#),
+            .finished(usage: nil),
+        ]
+        let parentClient = StreamingMockLLMClient(streamSequences: [parentDeltas1, parentDeltas2])
+        let parentAgent = Agent<SubAgentContext<EmptyContext>>(
+            client: parentClient, tools: [tool],
+            configuration: AgentConfiguration(systemPrompt: "parent system")
+        )
+        let history: [ChatMessage] = [
+            .user("Earlier"),
+            .assistant(AssistantMessage(content: "Earlier answer", continuity: continuity)),
+        ]
+
+        let ctx = SubAgentContext(inner: EmptyContext(), maxDepth: 3)
+        for try await _ in parentAgent.stream(userMessage: "Go", history: history, context: ctx) {}
+
+        let captured = await childClient.capturedMessages
+        #expect(captured.count == 5)
+        guard case let .assistant(message) = captured[2] else {
+            Issue.record("Expected inherited assistant message in child history")
+            return
+        }
+        #expect(message.content == "Earlier answer")
+        #expect(message.continuity == continuity)
+    }
 }

@@ -282,4 +282,33 @@ struct ChatMessageTerminalHistoryTests {
 
         #expect(history.resolvedPrefixForInheritance() == [.user("Hi")])
     }
+
+    @Test
+    func inheritancePreservesContinuityOnUntouchedAssistantTurns() {
+        let continuity = AssistantContinuity(
+            substrate: .responses,
+            payload: .object([
+                "response_id": .string("resp_123"),
+            ])
+        )
+        let history: [ChatMessage] = [
+            .user("Earlier"),
+            .assistant(AssistantMessage(content: "Done", continuity: continuity)),
+            .user("Continue"),
+            .assistant(AssistantMessage(
+                content: "",
+                toolCalls: [ToolCall(id: "call_1", name: "lookup", arguments: "{}")]
+            )),
+        ]
+
+        let inherited = history.resolvedPrefixForInheritance()
+
+        #expect(inherited.count == 3)
+        guard case let .assistant(message) = inherited[1] else {
+            Issue.record("Expected assistant message in inherited prefix")
+            return
+        }
+        #expect(message.content == "Done")
+        #expect(message.continuity == continuity)
+    }
 }

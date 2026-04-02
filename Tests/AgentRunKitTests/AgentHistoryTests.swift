@@ -210,6 +210,40 @@ struct AgentTruncationTests {
     }
 
     @Test
+    func truncationPreservesAssistantContinuityOnSurvivingTurns() async throws {
+        let continuity = AssistantContinuity(
+            substrate: .responses,
+            payload: .object([
+                "response_id": .string("resp_123"),
+            ])
+        )
+        let client = CapturingMockLLMClient(
+            responses: [AssistantMessage(content: "", toolCalls: [
+                ToolCall(id: "1", name: "finish", arguments: #"{"content": "done"}"#)
+            ])]
+        )
+        let config = AgentConfiguration(systemPrompt: "System", maxMessages: 2)
+        let agent = Agent<EmptyContext>(client: client, tools: [], configuration: config)
+        let history: [ChatMessage] = [
+            .user("Old message 1"),
+            .assistant(AssistantMessage(content: "Old response 1")),
+            .user("Old message 2"),
+            .assistant(AssistantMessage(content: "Old response 2", continuity: continuity)),
+        ]
+
+        _ = try await agent.run(userMessage: "New message", history: history, context: EmptyContext())
+
+        let capturedMessages = await client.capturedMessages
+        #expect(capturedMessages.count == 3)
+        guard case let .assistant(message) = capturedMessages[1] else {
+            Issue.record("Expected surviving assistant message")
+            return
+        }
+        #expect(message.content == "Old response 2")
+        #expect(message.continuity == continuity)
+    }
+
+    @Test
     func truncationAppliedBeforeEachLLMCall() async throws {
         let echoTool = try Tool<EchoParams, EchoOutput, EmptyContext>(
             name: "echo",

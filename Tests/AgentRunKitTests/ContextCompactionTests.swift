@@ -666,6 +666,110 @@ struct CompactionContextPreservationTests {
         }
         #expect(ack.content == "Understood. Resuming from the checkpoint.")
     }
+
+    @Test
+    func compactionAcknowledgmentDoesNotInheritContinuityAndRecentAssistantKeepsIt() async throws {
+        let recentContinuity = AssistantContinuity(
+            substrate: .responses,
+            payload: .object([
+                "response_id": .string("resp_recent"),
+            ])
+        )
+        let summaryContinuity = AssistantContinuity(
+            substrate: .anthropicMessages,
+            payload: .object([
+                "thinking": .string("summary reasoning"),
+                "signature": .string("sig_summary"),
+            ])
+        )
+        let client = CompactionMockLLMClient(
+            responses: [
+                AssistantMessage(
+                    content: "Summary of work.",
+                    tokenUsage: TokenUsage(input: 50, output: 100),
+                    continuity: summaryContinuity
+                ),
+            ]
+        )
+        let compactor = ContextCompactor(
+            client: client, toolDefinitions: [], configuration: AgentConfiguration()
+        )
+        let messages: [ChatMessage] = [
+            .user("Hello"),
+            .assistant(AssistantMessage(
+                content: "Working state",
+                toolCalls: [noopCall],
+                continuity: recentContinuity
+            )),
+            .tool(id: "call_1", name: "noop", content: "result"),
+        ]
+
+        let (compacted, _) = try await compactor.summarize(messages)
+        let assistants = compacted.compactMap { message -> AssistantMessage? in
+            guard case let .assistant(assistant) = message else { return nil }
+            return assistant
+        }
+
+        #expect(hasBridge(compacted))
+        #expect(assistants.count == 2)
+        #expect(assistants[0].content == "Understood. Resuming from the checkpoint.")
+        #expect(assistants[0].continuity == nil)
+        #expect(assistants[1].content == "Working state")
+        #expect(assistants[1].toolCalls == [noopCall])
+        #expect(assistants[1].continuity == recentContinuity)
+    }
+
+    @Test
+    func compactionDoesNotLeakRemovedAssistantContinuityIntoRewrittenHistory() async throws {
+        let olderContinuity = AssistantContinuity(
+            substrate: .responses,
+            payload: .object([
+                "response_id": .string("resp_old"),
+            ])
+        )
+        let recentContinuity = AssistantContinuity(
+            substrate: .anthropicMessages,
+            payload: .object([
+                "thinking": .string("recent reasoning"),
+                "signature": .string("sig_recent"),
+            ])
+        )
+        let client = CompactionMockLLMClient(
+            responses: [
+                AssistantMessage(
+                    content: "Summary of work.",
+                    tokenUsage: TokenUsage(input: 50, output: 100)
+                ),
+            ]
+        )
+        let compactor = ContextCompactor(
+            client: client, toolDefinitions: [], configuration: AgentConfiguration()
+        )
+        let messages: [ChatMessage] = [
+            .user("Hello"),
+            .assistant(AssistantMessage(content: "Older state", continuity: olderContinuity)),
+            .assistant(AssistantMessage(
+                content: "Working state",
+                toolCalls: [noopCall],
+                continuity: recentContinuity
+            )),
+            .tool(id: "call_1", name: "noop", content: "result"),
+        ]
+
+        let (compacted, _) = try await compactor.summarize(messages)
+        let assistants = compacted.compactMap { message -> AssistantMessage? in
+            guard case let .assistant(assistant) = message else { return nil }
+            return assistant
+        }
+
+        #expect(hasBridge(compacted))
+        #expect(assistants.count == 2)
+        #expect(assistants[0].content == "Understood. Resuming from the checkpoint.")
+        #expect(assistants[0].continuity == nil)
+        #expect(assistants[1].content == "Working state")
+        #expect(assistants[1].continuity == recentContinuity)
+        #expect(!assistants.contains(where: { $0.continuity == olderContinuity }))
+    }
 }
 
 // MARK: - Observation Pruning Tests
@@ -759,6 +863,47 @@ struct ObservationPruningTests {
             Issue.record("Expected tool message at index 2")
         }
         #expect(ratio == 0.0)
+    }
+
+    @Test
+    func observationPruningPreservesAssistantContinuity() {
+        let earlierContinuity = AssistantContinuity(
+            substrate: .responses,
+            payload: .object([
+                "response_id": .string("resp_earlier"),
+            ])
+        )
+        let latestContinuity = AssistantContinuity(
+            substrate: .anthropicMessages,
+            payload: .object([
+                "thinking": .string("latest"),
+                "signature": .string("sig_latest"),
+            ])
+        )
+        let messages: [ChatMessage] = [
+            .user("Hello"),
+            .assistant(AssistantMessage(
+                content: "",
+                toolCalls: [ToolCall(id: "call_1", name: "read_file", arguments: "{}")],
+                continuity: earlierContinuity
+            )),
+            .tool(id: "call_1", name: "read_file", content: String(repeating: "x", count: 1000)),
+            .assistant(AssistantMessage(content: "Latest", continuity: latestContinuity)),
+        ]
+
+        let (pruned, ratio) = compactor.pruneObservations(messages)
+
+        #expect(ratio > 0.0)
+        guard case let .assistant(firstAssistant) = pruned[1] else {
+            Issue.record("Expected assistant message at index 1")
+            return
+        }
+        guard case let .assistant(lastAssistant) = pruned[3] else {
+            Issue.record("Expected assistant message at index 3")
+            return
+        }
+        #expect(firstAssistant.continuity == earlierContinuity)
+        #expect(lastAssistant.continuity == latestContinuity)
     }
 }
 
