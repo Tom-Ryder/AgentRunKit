@@ -27,6 +27,15 @@ private func makeSearchTool() throws -> Tool<EchoParams, EchoOutput, EmptyContex
     )
 }
 
+private func extractToolContent(_ messages: [ChatMessage]) -> String? {
+    for message in messages {
+        if case let .tool(_, _, content) = message {
+            return content
+        }
+    }
+    return nil
+}
+
 // MARK: - Policy Unit Tests
 
 struct ToolApprovalPolicyTests {
@@ -487,6 +496,54 @@ struct ToolApprovalStreamingTests {
             }
         }
         #expect(completedToolNames.contains("echo"))
+    }
+
+    @Test
+    func deniedToolResultIsTruncatedBeforeStreamingHistoryReuse() async throws {
+        let echoTool = try makeEchoTool()
+        let denialReason = String(repeating: "B", count: 200)
+        let deltas: [StreamDelta] = [
+            .toolCallStart(index: 0, id: "call_1", name: "echo"),
+            .toolCallDelta(index: 0, arguments: #"{"message":"hello"}"#),
+            .finished(usage: TokenUsage(input: 10, output: 5)),
+        ]
+        let finishDeltas: [StreamDelta] = [
+            .toolCallStart(index: 0, id: "call_f", name: "finish"),
+            .toolCallDelta(index: 0, arguments: #"{"content":"denied"}"#),
+            .finished(usage: nil),
+        ]
+        let client = CapturingStreamingMockLLMClient(streamSequences: [deltas, finishDeltas])
+        let config = AgentConfiguration(maxToolResultCharacters: 50, approvalPolicy: .allTools)
+        let agent = Agent<EmptyContext>(client: client, tools: [echoTool], configuration: config)
+        let counter = CountingApprovalHandler(decisions: ["echo": .deny(reason: denialReason)])
+
+        var events: [StreamEvent] = []
+        for try await event in agent.stream(
+            userMessage: "Go", context: EmptyContext(), approvalHandler: counter.handler
+        ) {
+            events.append(event)
+        }
+
+        let expected = ContextCompactor.truncateToolResult(denialReason, maxCharacters: 50)
+        let toolCompleted = events.first { event in
+            if case let .toolCallCompleted(_, name, _) = event.kind { name == "echo" } else { false }
+        }
+        guard case let .toolCallCompleted(_, _, result) = toolCompleted?.kind else {
+            Issue.record("Expected toolCallCompleted event")
+            return
+        }
+        #expect(result.isError)
+        #expect(result.content == expected)
+
+        guard case let .finished(_, _, _, history) = events.last?.kind else {
+            Issue.record("Expected finished event")
+            return
+        }
+        #expect(extractToolContent(history) == expected)
+
+        let allCapturedMessages = await client.allCapturedMessages
+        #expect(allCapturedMessages.count == 2)
+        #expect(extractToolContent(allCapturedMessages[1]) == expected)
     }
 
     @Test

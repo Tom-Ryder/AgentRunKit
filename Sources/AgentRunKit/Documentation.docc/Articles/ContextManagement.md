@@ -61,7 +61,9 @@ Recovery is always one-shot: if the retry also fails, the error propagates. This
 
 ## Tool Result Truncation
 
-``AgentConfiguration/maxToolResultCharacters`` applies middle-out truncation to large tool results at recording time. The prefix and suffix of the result are preserved, with the middle replaced by a `...[truncated]...` marker. This keeps individual results bounded before they enter the conversation history.
+``AgentConfiguration/maxToolResultCharacters`` is the default limit for tool result truncation. When a tool result exceeds this length, middle-out truncation preserves the prefix and suffix while replacing the middle with a truncation marker sized to fit within the configured limit.
+
+Individual tools can override this default by setting ``AnyTool/maxResultCharacters``. When a tool declares its own limit, that value governs instead of the global default. This lets verbose tools (search, shell output) use tighter limits while tools that need full output (file edits, write confirmations) declare larger ones. Both ``Agent`` and ``Chat`` honor per-tool limits.
 
 ## Message-Count Truncation
 

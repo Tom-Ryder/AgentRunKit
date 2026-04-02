@@ -666,9 +666,13 @@ func assertSmokeToolResultTruncation(client: any LLMClient) async throws {
         context: EmptyContext()
     )
 
+    let fullOutput = SmokeLookupOutput(
+        value: "Result for alpha: data_alpha_\(String(repeating: "x", count: 600))"
+    )
+    let fullContent = try #require(String(data: JSONEncoder().encode(fullOutput), encoding: .utf8))
     let hasTruncated = result.history.contains { message in
         if case let .tool(_, _, content) = message {
-            return content.contains("...[truncated]...")
+            return content.count <= 100 && content != fullContent
         }
         return false
     }

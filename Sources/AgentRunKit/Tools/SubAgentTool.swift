@@ -10,6 +10,9 @@ public struct SubAgentTool<P: Codable & SchemaProviding & Sendable, InnerContext
     public let name: String
     public let description: String
     public let parametersSchema: JSONSchema
+    public let isConcurrencySafe: Bool
+    public let isReadOnly: Bool
+    public let maxResultCharacters: Int?
     let toolTimeout: Duration?
     private let agent: Agent<SubAgentContext<InnerContext>>
     private let tokenBudget: Int?
@@ -21,16 +24,25 @@ public struct SubAgentTool<P: Codable & SchemaProviding & Sendable, InnerContext
         name: String,
         description: String,
         agent: Agent<SubAgentContext<InnerContext>>,
+        isConcurrencySafe: Bool = false,
+        isReadOnly: Bool = false,
+        maxResultCharacters: Int? = nil,
         tokenBudget: Int? = nil,
         toolTimeout: Duration? = nil,
         inheritParentMessages: Bool = false,
         systemPromptBuilder: (@Sendable (P) -> String)? = nil,
         messageBuilder: @escaping @Sendable (P) -> String
     ) throws {
+        if let maxResultCharacters {
+            precondition(maxResultCharacters >= 1, "maxResultCharacters must be at least 1")
+        }
         try P.validateSchema()
         self.name = name
         self.description = description
         parametersSchema = P.jsonSchema
+        self.isConcurrencySafe = isConcurrencySafe
+        self.isReadOnly = isReadOnly
+        self.maxResultCharacters = maxResultCharacters
         self.agent = agent
         self.tokenBudget = tokenBudget
         self.toolTimeout = toolTimeout
@@ -145,6 +157,9 @@ public func subAgentTool<P: Codable & SchemaProviding & Sendable, InnerContext: 
     name: String,
     description: String,
     agent: Agent<SubAgentContext<InnerContext>>,
+    isConcurrencySafe: Bool = false,
+    isReadOnly: Bool = false,
+    maxResultCharacters: Int? = nil,
     tokenBudget: Int? = nil,
     toolTimeout: Duration? = nil,
     inheritParentMessages: Bool = false,
@@ -155,6 +170,9 @@ public func subAgentTool<P: Codable & SchemaProviding & Sendable, InnerContext: 
         name: name,
         description: description,
         agent: agent,
+        isConcurrencySafe: isConcurrencySafe,
+        isReadOnly: isReadOnly,
+        maxResultCharacters: maxResultCharacters,
         tokenBudget: tokenBudget,
         toolTimeout: toolTimeout,
         inheritParentMessages: inheritParentMessages,

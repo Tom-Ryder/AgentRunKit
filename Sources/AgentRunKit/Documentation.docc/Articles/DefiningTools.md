@@ -107,6 +107,29 @@ ToolResult.success("{\"temperature\": 72}")
 ToolResult.error("City not found")
 ```
 
+## Tool Classification
+
+``Tool`` exposes three optional metadata properties that describe a tool's behavior:
+
+```swift
+let searchTool = try Tool<SearchParams, String, EmptyContext>(
+    name: "search",
+    description: "Search the database",
+    isConcurrencySafe: true,
+    isReadOnly: true,
+    maxResultCharacters: 5_000,
+    executor: { params, _ in performSearch(params.query) }
+)
+```
+
+| Property | Default | Description |
+|---|---|---|
+| `isConcurrencySafe` | `false` | Whether the tool can safely run concurrently with other tools. Advisory; not currently enforced. |
+| `isReadOnly` | `false` | Whether the tool only reads state without side effects. Advisory; not currently enforced. |
+| `maxResultCharacters` | `nil` | Per-tool override for ``AgentConfiguration/maxToolResultCharacters``. When set, this limit governs instead of the global default. |
+
+Defaults are fail-closed: tools are assumed non-concurrent and non-read-only unless explicitly declared otherwise. Direct ``AnyTool`` conformers can override these properties in the same way.
+
 ## Topics
 
 ### Core Types

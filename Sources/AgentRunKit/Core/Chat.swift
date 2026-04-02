@@ -11,6 +11,7 @@ public struct Chat<C: ToolContext>: Sendable {
     private let maxToolRounds: Int
     private let toolTimeout: Duration
     private let maxMessages: Int?
+    private let maxToolResultCharacters: Int?
     private let approvalPolicy: ToolApprovalPolicy
 
     public init(
@@ -20,10 +21,14 @@ public struct Chat<C: ToolContext>: Sendable {
         maxToolRounds: Int = 10,
         toolTimeout: Duration = .seconds(30),
         maxMessages: Int? = nil,
+        maxToolResultCharacters: Int? = nil,
         approvalPolicy: ToolApprovalPolicy = .none
     ) {
         if let maxMessages {
             precondition(maxMessages >= 1, "maxMessages must be at least 1")
+        }
+        if let maxToolResultCharacters {
+            precondition(maxToolResultCharacters >= 1, "maxToolResultCharacters must be at least 1")
         }
         self.client = client
         self.tools = tools
@@ -32,6 +37,7 @@ public struct Chat<C: ToolContext>: Sendable {
         self.maxToolRounds = maxToolRounds
         self.toolTimeout = toolTimeout
         self.maxMessages = maxMessages
+        self.maxToolResultCharacters = maxToolResultCharacters
         self.approvalPolicy = approvalPolicy
     }
 
@@ -268,8 +274,9 @@ private extension Chat {
                     call, context: context, approvalHandler: approvalHandler,
                     allowlist: &sessionAllowlist, continuation: continuation
                 )
-                continuation.yield(.make(.toolCallCompleted(id: call.id, name: call.name, result: result)))
-                messages.append(.tool(id: call.id, name: call.name, content: result.content))
+                let truncatedResult = truncatedToolResult(result, toolName: call.name)
+                continuation.yield(.make(.toolCallCompleted(id: call.id, name: call.name, result: truncatedResult)))
+                messages.append(.tool(id: call.id, name: call.name, content: truncatedResult.content))
             }
         }
 
@@ -304,6 +311,14 @@ private extension Chat {
         guard truncated.count < messages.count else { return false }
         messages = truncated
         return true
+    }
+
+    func toolResultCharacterLimit(for toolName: String) -> Int? {
+        tool(named: toolName)?.maxResultCharacters ?? maxToolResultCharacters
+    }
+
+    func truncatedToolResult(_ result: ToolResult, toolName: String) -> ToolResult {
+        ContextCompactor.truncateToolResult(result, maxCharacters: toolResultCharacterLimit(for: toolName))
     }
 
     func resolveAndExecuteTool(

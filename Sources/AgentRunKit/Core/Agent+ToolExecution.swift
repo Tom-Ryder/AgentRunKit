@@ -118,8 +118,9 @@ extension Agent {
 
             var results = [(Int, ToolCall, ToolResult)]()
             for try await (index, call, result) in group {
-                continuation.yield(.make(.toolCallCompleted(id: call.id, name: call.name, result: result)))
-                results.append((index, call, result))
+                let truncatedResult = truncatedToolResult(result, toolName: call.name)
+                continuation.yield(.make(.toolCallCompleted(id: call.id, name: call.name, result: truncatedResult)))
+                results.append((index, call, truncatedResult))
             }
             return results.sorted { $0.0 < $1.0 }.map { ($0.1, $0.2) }
         }

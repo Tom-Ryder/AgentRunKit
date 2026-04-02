@@ -9,16 +9,28 @@ public struct Tool<P: Codable & SchemaProviding & Sendable, O: Codable & Sendabl
     public let name: String
     public let description: String
     public let parametersSchema: JSONSchema
+    public let isConcurrencySafe: Bool
+    public let isReadOnly: Bool
+    public let maxResultCharacters: Int?
     private let executor: @Sendable (P, C) async throws -> O
 
     public init(
         name: String,
         description: String,
+        isConcurrencySafe: Bool = false,
+        isReadOnly: Bool = false,
+        maxResultCharacters: Int? = nil,
         executor: @escaping @Sendable (P, C) async throws -> O
     ) throws {
+        if let maxResultCharacters {
+            precondition(maxResultCharacters >= 1, "maxResultCharacters must be at least 1")
+        }
         try P.validateSchema()
         self.name = name
         self.description = description
+        self.isConcurrencySafe = isConcurrencySafe
+        self.isReadOnly = isReadOnly
+        self.maxResultCharacters = maxResultCharacters
         parametersSchema = P.jsonSchema
         self.executor = executor
     }

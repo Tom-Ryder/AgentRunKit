@@ -207,6 +207,74 @@ struct UnsupportedFieldParams: Codable, SchemaProviding {
     }
 }
 
+struct ToolClassificationTests {
+    @Test
+    func classificationDefaults() throws {
+        let tool = try Tool<TestParams, TestOutput, EmptyContext>(
+            name: "test", description: "Test",
+            executor: { params, _ in TestOutput(result: params.value) }
+        )
+        #expect(tool.isConcurrencySafe == false)
+        #expect(tool.isReadOnly == false)
+        #expect(tool.maxResultCharacters == nil)
+    }
+
+    @Test
+    func classificationCustomValues() throws {
+        let tool = try Tool<TestParams, TestOutput, EmptyContext>(
+            name: "test", description: "Test",
+            isConcurrencySafe: true,
+            isReadOnly: true,
+            maxResultCharacters: 5000,
+            executor: { params, _ in TestOutput(result: params.value) }
+        )
+        #expect(tool.isConcurrencySafe == true)
+        #expect(tool.isReadOnly == true)
+        #expect(tool.maxResultCharacters == 5000)
+    }
+
+    @Test
+    func protocolDefaultsOnDirectConformer() {
+        let tool = MinimalClassificationTool()
+        #expect(tool.isConcurrencySafe == false)
+        #expect(tool.isReadOnly == false)
+        #expect(tool.maxResultCharacters == nil)
+    }
+
+    @Test
+    func existentialPreservesOverrides() {
+        let tool: any AnyTool<EmptyContext> = OverriddenClassificationTool()
+        #expect(tool.isConcurrencySafe == true)
+        #expect(tool.isReadOnly == true)
+        #expect(tool.maxResultCharacters == 500)
+    }
+}
+
+private struct MinimalClassificationTool: AnyTool {
+    typealias Context = EmptyContext
+    let name = "minimal"
+    let description = "Minimal"
+    let parametersSchema: JSONSchema = .object(properties: [:], required: [])
+
+    func execute(arguments _: Data, context _: EmptyContext) async throws -> ToolResult {
+        .success("ok")
+    }
+}
+
+private struct OverriddenClassificationTool: AnyTool {
+    typealias Context = EmptyContext
+    let name = "classified"
+    let description = "Classified"
+    let parametersSchema: JSONSchema = .object(properties: [:], required: [])
+    let isConcurrencySafe = true
+    let isReadOnly = true
+    let maxResultCharacters: Int? = 500
+
+    func execute(arguments _: Data, context _: EmptyContext) async throws -> ToolResult {
+        .success("ok")
+    }
+}
+
 struct ToolResultTests {
     @Test
     func successFactory() {

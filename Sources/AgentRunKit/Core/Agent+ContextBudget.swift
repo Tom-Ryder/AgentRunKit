@@ -134,10 +134,11 @@ extension Agent {
         try Task.checkCancellation()
 
         for entry in denied {
+            let truncatedEntry = truncatedIndexedToolResult(entry)
             continuation.yield(.make(.toolCallCompleted(
-                id: entry.call.id, name: entry.call.name, result: entry.result
+                id: truncatedEntry.call.id, name: truncatedEntry.call.name, result: truncatedEntry.result
             )))
-            allResults.append(truncatedIndexedToolResult(entry))
+            allResults.append(truncatedEntry)
         }
 
         try await allResults.append(contentsOf: executeIndexedStreamingCalls(
@@ -155,11 +156,12 @@ extension Agent {
         }
     }
 
-    private func truncatedToolResult(_ result: ToolResult) -> ToolResult {
-        ToolResult(
-            content: ContextCompactor.truncateToolResult(result.content, configuration: configuration),
-            isError: result.isError
-        )
+    func toolResultCharacterLimit(for toolName: String) -> Int? {
+        tool(named: toolName)?.maxResultCharacters ?? configuration.maxToolResultCharacters
+    }
+
+    func truncatedToolResult(_ result: ToolResult, toolName: String) -> ToolResult {
+        ContextCompactor.truncateToolResult(result, maxCharacters: toolResultCharacterLimit(for: toolName))
     }
 
     private func partitionCallsRequiringApproval(
@@ -189,7 +191,11 @@ extension Agent {
             approvalHandler: approvalHandler
         )
         return zip(calls, results).map { indexed, entry in
-            IndexedToolResult(index: indexed.index, call: entry.call, result: truncatedToolResult(entry.result))
+            IndexedToolResult(
+                index: indexed.index,
+                call: entry.call,
+                result: truncatedToolResult(entry.result, toolName: entry.call.name)
+            )
         }
     }
 
@@ -206,11 +212,19 @@ extension Agent {
             approvalHandler: approvalHandler
         )
         return zip(calls, results).map { indexed, entry in
-            IndexedToolResult(index: indexed.index, call: entry.call, result: truncatedToolResult(entry.result))
+            IndexedToolResult(
+                index: indexed.index,
+                call: entry.call,
+                result: entry.result
+            )
         }
     }
 
     private func truncatedIndexedToolResult(_ entry: IndexedToolResult) -> IndexedToolResult {
-        IndexedToolResult(index: entry.index, call: entry.call, result: truncatedToolResult(entry.result))
+        IndexedToolResult(
+            index: entry.index,
+            call: entry.call,
+            result: truncatedToolResult(entry.result, toolName: entry.call.name)
+        )
     }
 }

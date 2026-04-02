@@ -10,5 +10,28 @@ public protocol AnyTool<Context>: Sendable {
     var description: String { get }
     var parametersSchema: JSONSchema { get }
 
+    /// Whether this tool can safely execute concurrently with other tools (advisory; not currently enforced).
+    var isConcurrencySafe: Bool { get }
+
+    /// Whether this tool only reads state without producing side effects (advisory; not currently enforced).
+    var isReadOnly: Bool { get }
+
+    /// Per-tool override for the maximum tool result length before truncation, or `nil` to use the global default.
+    var maxResultCharacters: Int? { get }
+
     func execute(arguments: Data, context: Context) async throws -> ToolResult
+}
+
+public extension AnyTool {
+    var isConcurrencySafe: Bool {
+        false
+    }
+
+    var isReadOnly: Bool {
+        false
+    }
+
+    var maxResultCharacters: Int? {
+        nil
+    }
 }

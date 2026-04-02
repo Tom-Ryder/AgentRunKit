@@ -84,7 +84,7 @@ print(result.score) // 0.95
 | `maxMessages` | nil | Sliding window: keeps the N most recent messages (system prompt preserved) |
 | `compactionThreshold` | nil | Token usage ratio (0, 1) that triggers LLM-based summarization |
 | `compactionPrompt` | nil | Custom prompt for the summarization request |
-| `maxToolResultCharacters` | nil | Truncates tool results beyond this length |
+| `maxToolResultCharacters` | nil | Default limit for tool result truncation; individual tools can override via ``AnyTool/maxResultCharacters`` |
 
 **Context budget:**
 

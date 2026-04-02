@@ -122,6 +122,14 @@ private struct EchoParams: Codable, SchemaProviding {
 
 private struct EchoOutput: Codable { let echoed: String }
 
+private func encodedEchoOutput(_ message: String) throws -> String {
+    let data = try JSONEncoder().encode(EchoOutput(echoed: message))
+    guard let content = String(bytes: data, encoding: .utf8) else {
+        preconditionFailure("JSONEncoder produced non-UTF8 output")
+    }
+    return content
+}
+
 // MARK: - Compaction Trigger Tests
 
 struct CompactionTriggerTests {
@@ -838,8 +846,13 @@ struct ToolResultTruncationTests {
         let result = try await agent.run(userMessage: "Go", context: EmptyContext())
         #expect(try requireContent(result) == "done")
 
-        let toolContent = await extractToolContent(client.allCapturedMessages[1])
-        #expect(toolContent?.contains("truncated") == true)
+        let toolContent = try #require(await extractToolContent(client.allCapturedMessages[1]))
+        let expected = try ContextCompactor.truncateToolResult(
+            encodedEchoOutput(longContent),
+            maxCharacters: 40
+        )
+        #expect(toolContent == expected)
+        #expect(toolContent.count <= 40)
     }
 
     @Test
@@ -866,12 +879,18 @@ struct ToolResultTruncationTests {
     func middleOutPreservesPrefixAndSuffix() {
         let content = String(repeating: "A", count: 100) + String(repeating: "M", count: 200)
             + String(repeating: "Z", count: 100)
-        let config = AgentConfiguration(maxToolResultCharacters: 60)
-        let truncated = ContextCompactor.truncateToolResult(content, configuration: config)
+        let truncated = ContextCompactor.truncateToolResult(content, maxCharacters: 60)
         #expect(truncated.hasPrefix(String(repeating: "A", count: 22)))
         #expect(truncated.hasSuffix(String(repeating: "Z", count: 16)))
         #expect(truncated.count <= 60)
         #expect(truncated.contains("truncated"))
+    }
+
+    @Test
+    func truncateToolResultWithNilLimitReturnsUnchanged() {
+        let content = String(repeating: "X", count: 500)
+        let result = ContextCompactor.truncateToolResult(content, maxCharacters: nil)
+        #expect(result == content)
     }
 
     @Test

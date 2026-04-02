@@ -30,6 +30,12 @@ struct ContextCompactor {
     private static let minimumPruningReduction = 0.2
     private static let pruningPreviewLength = 80
     private static let maxConsecutiveSummarizationFailures = 3
+    private static let toolResultTruncationMarkers = [
+        "\n\n...[truncated]...\n\n",
+        "...[truncated]...",
+        "[truncated]",
+        "...",
+    ]
 
     private var consecutiveSummarizationFailures = 0
 
@@ -189,14 +195,23 @@ struct ContextCompactor {
         return compacted
     }
 
-    static func truncateToolResult(_ content: String, configuration: AgentConfiguration) -> String {
-        guard let max = configuration.maxToolResultCharacters,
-              content.count > max else { return content }
-        let marker = "\n\n...[truncated]...\n\n"
-        let contentBudget = Swift.max(max - marker.count, 0)
+    static func truncateToolResult(_ content: String, maxCharacters: Int?) -> String {
+        guard let max = maxCharacters else { return content }
+        guard max > 0 else { return "" }
+        guard content.count > max else { return content }
+        let marker = Self.toolResultTruncationMarkers.first { $0.count <= max } ?? String(repeating: ".", count: max)
+        guard marker.count < max else { return marker }
+        let contentBudget = max - marker.count
         let headBudget = contentBudget * 3 / 5
         let tailBudget = contentBudget - headBudget
         return "\(content.prefix(headBudget))\(marker)\(content.suffix(tailBudget))"
+    }
+
+    static func truncateToolResult(_ result: ToolResult, maxCharacters: Int?) -> ToolResult {
+        ToolResult(
+            content: truncateToolResult(result.content, maxCharacters: maxCharacters),
+            isError: result.isError
+        )
     }
 
     private func truncateIfNeeded(_ messages: inout [ChatMessage]) -> Bool {
