@@ -429,6 +429,36 @@ struct OrphanedStreamDeltaTests {
     }
 }
 
+struct ConflictingAssistantContinuityTests {
+    @Test
+    func conflictingFinalizedContinuityThrowsMalformedStream() async throws {
+        let first = AssistantContinuity(
+            substrate: .responses,
+            payload: .object(["response_id": .string("resp_123")])
+        )
+        let second = AssistantContinuity(
+            substrate: .responses,
+            payload: .object(["response_id": .string("resp_456")])
+        )
+        let client = ContinuityStreamingMockLLMClient(streamSequences: [[
+            .finalizedContinuity(first),
+            .finalizedContinuity(second),
+        ]])
+        let agent = Agent<EmptyContext>(client: client, tools: [])
+
+        do {
+            for try await _ in agent.stream(userMessage: "Hi", context: EmptyContext()) {}
+            Issue.record("Expected malformedStream error")
+        } catch let error as AgentError {
+            guard case let .malformedStream(reason) = error else {
+                Issue.record("Expected malformedStream, got \(error)")
+                return
+            }
+            #expect(reason == .conflictingAssistantContinuity)
+        }
+    }
+}
+
 struct SSEPayloadExtractionTests {
     @Test
     func extractsPayloadWithSpace() {

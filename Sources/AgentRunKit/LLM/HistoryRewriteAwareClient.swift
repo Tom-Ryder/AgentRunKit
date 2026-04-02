@@ -5,6 +5,11 @@ enum RunRequestMode: Equatable {
     case forceFullRequest
 }
 
+enum RunStreamElement {
+    case delta(StreamDelta)
+    case finalizedContinuity(AssistantContinuity)
+}
+
 protocol HistoryRewriteAwareClient: LLMClient {
     func generate(
         messages: [ChatMessage],
@@ -14,22 +19,37 @@ protocol HistoryRewriteAwareClient: LLMClient {
         requestMode: RunRequestMode
     ) async throws -> AssistantMessage
 
-    func stream(
+    func streamForRun(
         messages: [ChatMessage],
         tools: [ToolDefinition],
         requestContext: RequestContext?,
         requestMode: RunRequestMode
-    ) -> AsyncThrowingStream<StreamDelta, Error>
+    ) -> AsyncThrowingStream<RunStreamElement, Error>
 }
 
 extension HistoryRewriteAwareClient {
-    func stream(
+    func generate(
+        messages: [ChatMessage],
+        tools: [ToolDefinition],
+        responseFormat: ResponseFormat?,
+        requestContext: RequestContext?,
+        requestMode _: RunRequestMode
+    ) async throws -> AssistantMessage {
+        try await generate(
+            messages: messages,
+            tools: tools,
+            responseFormat: responseFormat,
+            requestContext: requestContext
+        )
+    }
+
+    func streamForRun(
         messages: [ChatMessage],
         tools: [ToolDefinition],
         requestContext: RequestContext?,
         requestMode _: RunRequestMode
-    ) -> AsyncThrowingStream<StreamDelta, Error> {
-        stream(messages: messages, tools: tools, requestContext: requestContext)
+    ) -> AsyncThrowingStream<RunStreamElement, Error> {
+        wrapRunStream(stream(messages: messages, tools: tools, requestContext: requestContext))
     }
 }
 
@@ -63,15 +83,35 @@ extension LLMClient {
         tools: [ToolDefinition],
         requestContext: RequestContext?,
         requestMode: RunRequestMode
-    ) -> AsyncThrowingStream<StreamDelta, Error> {
+    ) -> AsyncThrowingStream<RunStreamElement, Error> {
         if let capableClient = self as? any HistoryRewriteAwareClient {
-            return capableClient.stream(
+            return capableClient.streamForRun(
                 messages: messages,
                 tools: tools,
                 requestContext: requestContext,
                 requestMode: requestMode
             )
         }
-        return stream(messages: messages, tools: tools, requestContext: requestContext)
+        return wrapRunStream(stream(messages: messages, tools: tools, requestContext: requestContext))
+    }
+}
+
+private func wrapRunStream(
+    _ stream: AsyncThrowingStream<StreamDelta, Error>
+) -> AsyncThrowingStream<RunStreamElement, Error> {
+    AsyncThrowingStream { continuation in
+        let task = Task {
+            do {
+                for try await delta in stream {
+                    continuation.yield(.delta(delta))
+                }
+                continuation.finish()
+            } catch {
+                continuation.finish(throwing: error)
+            }
+        }
+        continuation.onTermination = { _ in
+            task.cancel()
+        }
     }
 }

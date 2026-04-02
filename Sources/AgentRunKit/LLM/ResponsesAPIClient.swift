@@ -96,15 +96,33 @@ extension ResponsesAPIClient {
         tools: [ToolDefinition],
         requestContext: RequestContext?
     ) -> AsyncThrowingStream<StreamDelta, Error> {
-        stream(messages: messages, tools: tools, requestContext: requestContext, requestMode: .auto)
+        AsyncThrowingStream { continuation in
+            let task = Task {
+                do {
+                    for try await element in self.streamForRun(
+                        messages: messages,
+                        tools: tools,
+                        requestContext: requestContext,
+                        requestMode: .auto
+                    ) {
+                        guard case let .delta(delta) = element else { continue }
+                        continuation.yield(delta)
+                    }
+                    continuation.finish()
+                } catch {
+                    continuation.finish(throwing: error)
+                }
+            }
+            continuation.onTermination = { _ in task.cancel() }
+        }
     }
 
-    nonisolated func stream(
+    nonisolated func streamForRun(
         messages: [ChatMessage],
         tools: [ToolDefinition],
         requestContext: RequestContext?,
         requestMode: RunRequestMode
-    ) -> AsyncThrowingStream<StreamDelta, Error> {
+    ) -> AsyncThrowingStream<RunStreamElement, Error> {
         AsyncThrowingStream { continuation in
             let task = Task {
                 do {

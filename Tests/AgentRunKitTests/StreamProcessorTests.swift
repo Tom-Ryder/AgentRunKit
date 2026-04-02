@@ -128,3 +128,103 @@ struct StreamProcessorEmittedOutputTests {
         }
     }
 }
+
+struct StreamProcessorContinuityTests {
+    @Test
+    func finalizedContinuityPersistsIntoAssistantMessage() async throws {
+        let continuity = AssistantContinuity(
+            substrate: .responses,
+            payload: .object(["response_id": .string("resp_123")])
+        )
+        let client = ContinuityStreamingMockLLMClient(streamSequences: [[
+            .delta(.content("hello")),
+            .finalizedContinuity(continuity),
+            .delta(.finished(usage: nil)),
+        ]])
+        let processor = StreamProcessor(client: client, toolDefinitions: [], policy: .chat)
+        let (_, eventContinuation) = AsyncThrowingStream<StreamEvent, Error>.makeStream()
+        var totalUsage = TokenUsage()
+
+        let iteration = try await processor.process(
+            messages: [.user("Hi")],
+            totalUsage: &totalUsage,
+            continuation: eventContinuation
+        )
+
+        #expect(iteration.toAssistantMessage().continuity == continuity)
+    }
+
+    @Test
+    func streamWithoutFinalizedContinuityStillProducesNilContinuity() async throws {
+        let client = ScriptedStreamClient(
+            deltas: [.content("hello"), .finished(usage: nil)],
+            error: nil
+        )
+        let processor = StreamProcessor(client: client, toolDefinitions: [], policy: .chat)
+        let (_, eventContinuation) = AsyncThrowingStream<StreamEvent, Error>.makeStream()
+        var totalUsage = TokenUsage()
+
+        let iteration = try await processor.process(
+            messages: [.user("Hi")],
+            totalUsage: &totalUsage,
+            continuation: eventContinuation
+        )
+
+        #expect(iteration.toAssistantMessage().continuity == nil)
+    }
+
+    @Test
+    func conflictingFinalizedContinuityThrowsMalformedStream() async {
+        let first = AssistantContinuity(
+            substrate: .responses,
+            payload: .object(["response_id": .string("resp_123")])
+        )
+        let second = AssistantContinuity(
+            substrate: .responses,
+            payload: .object(["response_id": .string("resp_456")])
+        )
+        let client = ContinuityStreamingMockLLMClient(streamSequences: [[
+            .finalizedContinuity(first),
+            .finalizedContinuity(second),
+        ]])
+        let processor = StreamProcessor(client: client, toolDefinitions: [], policy: .chat)
+        let (_, eventContinuation) = AsyncThrowingStream<StreamEvent, Error>.makeStream()
+        var totalUsage = TokenUsage()
+
+        await #expect(throws: AgentError.malformedStream(.conflictingAssistantContinuity)) {
+            _ = try await processor.process(
+                messages: [.user("Hi")],
+                totalUsage: &totalUsage,
+                continuation: eventContinuation
+            )
+        }
+    }
+
+    @Test
+    func failedStreamAfterFinalizedContinuityDoesNotCountAsEmittedOutput() async {
+        let continuity = AssistantContinuity(
+            substrate: .responses,
+            payload: .object(["response_id": .string("resp_123")])
+        )
+        let client = ContinuityStreamingMockLLMClient(
+            streamSequences: [[.finalizedContinuity(continuity)]],
+            streamErrors: [promptTooLongError]
+        )
+        let processor = StreamProcessor(client: client, toolDefinitions: [], policy: .chat)
+        let (_, eventContinuation) = AsyncThrowingStream<StreamEvent, Error>.makeStream()
+        var totalUsage = TokenUsage()
+        var emittedOutput = true
+
+        do {
+            _ = try await processor.process(
+                messages: [.user("Hi")],
+                totalUsage: &totalUsage,
+                emittedOutput: &emittedOutput,
+                continuation: eventContinuation
+            )
+            Issue.record("Expected error")
+        } catch {
+            #expect(!emittedOutput)
+        }
+    }
+}

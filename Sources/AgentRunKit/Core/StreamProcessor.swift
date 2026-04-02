@@ -52,6 +52,7 @@ struct StreamIteration {
     let reasoningDetails: [JSONValue]
     let audioTranscript: String
     let usage: TokenUsage?
+    let continuity: AssistantContinuity?
 
     var effectiveContent: String {
         content.isEmpty && !audioTranscript.isEmpty ? audioTranscript : content
@@ -62,7 +63,8 @@ struct StreamIteration {
             content: effectiveContent,
             toolCalls: toolCalls,
             reasoning: reasoning.isEmpty ? nil : ReasoningContent(content: reasoning),
-            reasoningDetails: reasoningDetails.isEmpty ? nil : reasoningDetails
+            reasoningDetails: reasoningDetails.isEmpty ? nil : reasoningDetails,
+            continuity: continuity
         )
     }
 }
@@ -87,9 +89,24 @@ private struct StreamAccumulation {
     var pendingArguments: [Int: String] = [:]
     var audio = AudioAccumulator()
     var usage: TokenUsage?
+    var continuity: AssistantContinuity?
     var yieldedEvent = false
 
     mutating func apply(
+        _ input: RunStreamElement,
+        policy: StreamPolicy,
+        totalUsage: inout TokenUsage,
+        continuation: AsyncThrowingStream<StreamEvent, Error>.Continuation
+    ) throws {
+        switch input {
+        case let .delta(delta):
+            apply(delta, policy: policy, totalUsage: &totalUsage, continuation: continuation)
+        case let .finalizedContinuity(continuity):
+            try setFinalizedContinuity(continuity)
+        }
+    }
+
+    private mutating func apply(
         _ delta: StreamDelta,
         policy: StreamPolicy,
         totalUsage: inout TokenUsage,
@@ -128,6 +145,13 @@ private struct StreamAccumulation {
         }
     }
 
+    private mutating func setFinalizedContinuity(_ newValue: AssistantContinuity) throws {
+        guard continuity == nil else {
+            throw AgentError.malformedStream(.conflictingAssistantContinuity)
+        }
+        continuity = newValue
+    }
+
     func finishAudio(
         continuation: AsyncThrowingStream<StreamEvent, Error>.Continuation
     ) {
@@ -146,7 +170,8 @@ private struct StreamAccumulation {
             reasoning: reasoning,
             reasoningDetails: reasoningDetails.consolidated(),
             audioTranscript: audio.transcript,
-            usage: usage
+            usage: usage,
+            continuity: continuity
         )
     }
 
@@ -211,14 +236,14 @@ struct StreamProcessor {
         var state = StreamAccumulation()
 
         do {
-            for try await delta in client.streamForRun(
+            for try await input in client.streamForRun(
                 messages: messages,
                 tools: toolDefinitions,
                 requestContext: requestContext,
                 requestMode: requestMode
             ) {
                 try Task.checkCancellation()
-                state.apply(delta, policy: policy, totalUsage: &totalUsage, continuation: continuation)
+                try state.apply(input, policy: policy, totalUsage: &totalUsage, continuation: continuation)
             }
         } catch {
             emittedOutput = state.yieldedEvent

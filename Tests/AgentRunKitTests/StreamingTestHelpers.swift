@@ -140,6 +140,80 @@ actor CapturingStreamingMockLLMClient: LLMClient {
     }
 }
 
+actor ContinuityStreamingMockLLMClient: LLMClient, HistoryRewriteAwareClient {
+    private let streamSequences: [[RunStreamElement]]
+    private let streamErrors: [(any Error)?]
+    private var streamIndex = 0
+
+    init(
+        streamSequences: [[RunStreamElement]],
+        streamErrors: [(any Error)?] = []
+    ) {
+        self.streamSequences = streamSequences
+        self.streamErrors = streamErrors
+    }
+
+    func generate(
+        messages _: [ChatMessage],
+        tools _: [ToolDefinition],
+        responseFormat _: ResponseFormat?,
+        requestContext _: RequestContext?
+    ) async throws -> AssistantMessage {
+        throw AgentError.llmError(.other("No more mock responses"))
+    }
+
+    func nextStreamSequence() -> (elements: [RunStreamElement], error: (any Error)?) {
+        let elements = streamIndex < streamSequences.count ? streamSequences[streamIndex] : []
+        let error = streamIndex < streamErrors.count ? streamErrors[streamIndex] : nil
+        streamIndex += 1
+        return (elements, error)
+    }
+
+    nonisolated func stream(
+        messages _: [ChatMessage],
+        tools _: [ToolDefinition],
+        requestContext _: RequestContext?
+    ) -> AsyncThrowingStream<StreamDelta, Error> {
+        AsyncThrowingStream { continuation in
+            Task {
+                do {
+                    let sequence = await self.nextStreamSequence()
+                    for element in sequence.elements {
+                        try Task.checkCancellation()
+                        guard case let .delta(delta) = element else { continue }
+                        continuation.yield(delta)
+                    }
+                    continuation.finish(throwing: sequence.error)
+                } catch {
+                    continuation.finish(throwing: error)
+                }
+            }
+        }
+    }
+
+    nonisolated func streamForRun(
+        messages _: [ChatMessage],
+        tools _: [ToolDefinition],
+        requestContext _: RequestContext?,
+        requestMode _: RunRequestMode
+    ) -> AsyncThrowingStream<RunStreamElement, Error> {
+        AsyncThrowingStream { continuation in
+            Task {
+                do {
+                    let sequence = await self.nextStreamSequence()
+                    for element in sequence.elements {
+                        try Task.checkCancellation()
+                        continuation.yield(element)
+                    }
+                    continuation.finish(throwing: sequence.error)
+                } catch {
+                    continuation.finish(throwing: error)
+                }
+            }
+        }
+    }
+}
+
 actor StreamingEventCollector {
     private(set) var events: [StreamEvent] = []
 

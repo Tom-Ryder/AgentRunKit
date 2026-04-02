@@ -88,13 +88,13 @@ struct LLMClientRequestModeTests {
         )
 
         var collected = ""
-        for try await delta in client.streamForRun(
+        for try await element in client.streamForRun(
             messages: [.user("Hi")],
             tools: [],
             requestContext: nil,
             requestMode: .forceFullRequest
         ) {
-            if case let .content(text) = delta {
+            if case let .delta(.content(text)) = element {
                 collected += text
             }
         }

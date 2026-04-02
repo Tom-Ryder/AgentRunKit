@@ -160,7 +160,7 @@ struct ResponsesStreamingTests {
         byteContinuation.finish()
 
         let controlled = ControlledByteStream(stream: byteStream)
-        let streamPair = AsyncThrowingStream<StreamDelta, Error>.makeStream()
+        let streamPair = AsyncThrowingStream<RunStreamElement, Error>.makeStream()
 
         try await client.processTestStream(
             byteStream: controlled,
@@ -169,7 +169,8 @@ struct ResponsesStreamingTests {
         )
 
         var collected: [StreamDelta] = []
-        for try await delta in streamPair.stream {
+        for try await element in streamPair.stream {
+            guard case let .delta(delta) = element else { continue }
             collected.append(delta)
         }
         return collected
@@ -180,7 +181,7 @@ extension ResponsesAPIClient {
     func processTestStream(
         byteStream: ControlledByteStream,
         messagesCount: Int,
-        continuation: AsyncThrowingStream<StreamDelta, Error>.Continuation
+        continuation: AsyncThrowingStream<RunStreamElement, Error>.Continuation
     ) async throws {
         try await processSSEStream(bytes: byteStream, stallTimeout: nil) { [self] line in
             try await handleSSELine(

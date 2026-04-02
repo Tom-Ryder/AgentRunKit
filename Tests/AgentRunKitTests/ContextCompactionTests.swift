@@ -4,7 +4,7 @@ import Testing
 
 // MARK: - Mock
 
-private actor CompactionMockLLMClient: LLMClient {
+actor CompactionMockLLMClient: LLMClient {
     let contextWindowSize: Int?
     private let responses: [AssistantMessage]
     private var callIndex: Int = 0
@@ -89,10 +89,10 @@ private func makeNoopTool() throws -> Tool<NoopParams, NoopOutput, EmptyContext>
     try Tool(name: "noop", description: "No-op", executor: { _, _ in NoopOutput() })
 }
 
-private let noopCall = ToolCall(id: "call_1", name: "noop", arguments: "{}")
+let compactionNoopCall = ToolCall(id: "call_1", name: "noop", arguments: "{}")
 private let finishCall = ToolCall(id: "call_2", name: "finish", arguments: #"{"content": "done"}"#)
 
-private func hasBridge(_ messages: [ChatMessage]) -> Bool {
+func hasCompactionBridge(_ messages: [ChatMessage]) -> Bool {
     messages.contains {
         if case let .user(text) = $0 { text.contains("Context Continuation") } else { false }
     }
@@ -138,7 +138,7 @@ struct CompactionTriggerTests {
         let client = CompactionMockLLMClient(
             responses: [
                 AssistantMessage(
-                    content: "Using tool", toolCalls: [noopCall],
+                    content: "Using tool", toolCalls: [compactionNoopCall],
                     tokenUsage: TokenUsage(input: 500, output: 250)
                 ),
                 AssistantMessage(content: "Summary.", tokenUsage: TokenUsage(input: 50, output: 100)),
@@ -156,7 +156,7 @@ struct CompactionTriggerTests {
         #expect(try requireContent(result) == "done")
         let allMessages = await client.allCapturedMessages
         #expect(allMessages.count == 3)
-        #expect(hasBridge(allMessages[2]))
+        #expect(hasCompactionBridge(allMessages[2]))
     }
 
     @Test
@@ -164,7 +164,7 @@ struct CompactionTriggerTests {
         let client = CompactionMockLLMClient(
             responses: [
                 AssistantMessage(
-                    content: "Using tool", toolCalls: [noopCall],
+                    content: "Using tool", toolCalls: [compactionNoopCall],
                     tokenUsage: TokenUsage(input: 500, output: 250)
                 ),
                 AssistantMessage(content: "Custom summary.", tokenUsage: TokenUsage(input: 50, output: 100)),
@@ -196,7 +196,7 @@ struct CompactionTriggerTests {
         let client = CompactionMockLLMClient(
             responses: [
                 AssistantMessage(
-                    content: "", toolCalls: [noopCall],
+                    content: "", toolCalls: [compactionNoopCall],
                     tokenUsage: TokenUsage(input: 100, output: 50)
                 ),
                 AssistantMessage(
@@ -212,7 +212,7 @@ struct CompactionTriggerTests {
 
         #expect(try requireContent(result) == "done")
         let allMessages = await client.allCapturedMessages
-        #expect(!hasBridge(allMessages[1]))
+        #expect(!hasCompactionBridge(allMessages[1]))
     }
 
     @Test
@@ -220,7 +220,7 @@ struct CompactionTriggerTests {
         let client = CompactionMockLLMClient(
             responses: [
                 AssistantMessage(
-                    content: "", toolCalls: [noopCall],
+                    content: "", toolCalls: [compactionNoopCall],
                     tokenUsage: TokenUsage(input: 900, output: 100)
                 ),
                 AssistantMessage(
@@ -240,7 +240,7 @@ struct CompactionTriggerTests {
         let client = CompactionMockLLMClient(
             responses: [
                 AssistantMessage(
-                    content: "", toolCalls: [noopCall],
+                    content: "", toolCalls: [compactionNoopCall],
                     tokenUsage: TokenUsage(input: 900, output: 100)
                 ),
                 AssistantMessage(
@@ -274,7 +274,7 @@ struct CompactionTriggerTests {
         #expect(try requireContent(result) == "done")
         let allMessages = await client.allCapturedMessages
         #expect(allMessages.count == 1)
-        #expect(!hasBridge(allMessages[0]))
+        #expect(!hasCompactionBridge(allMessages[0]))
     }
 }
 
@@ -338,7 +338,7 @@ struct CompactionFallbackTests {
             &messages, lastTotalTokens: 900, totalUsage: &usage
         )
         #expect(result == .compacted)
-        #expect(hasBridge(messages))
+        #expect(hasCompactionBridge(messages))
     }
 
     @Test
@@ -400,7 +400,7 @@ struct CompactionFallbackTests {
         let client = CompactionMockLLMClient(
             responses: [
                 AssistantMessage(
-                    content: "", toolCalls: [noopCall],
+                    content: "", toolCalls: [compactionNoopCall],
                     tokenUsage: TokenUsage(input: 500, output: 250)
                 ),
                 AssistantMessage(
@@ -419,7 +419,7 @@ struct CompactionFallbackTests {
         #expect(try requireContent(result) == "done")
         let allMessages = await client.allCapturedMessages
         #expect(allMessages.count == 2)
-        #expect(!hasBridge(allMessages[1]))
+        #expect(!hasCompactionBridge(allMessages[1]))
     }
 }
 
@@ -540,7 +540,7 @@ struct CompactionTokenUsageTests {
         let client = CompactionMockLLMClient(
             responses: [
                 AssistantMessage(
-                    content: "Using tool", toolCalls: [noopCall],
+                    content: "Using tool", toolCalls: [compactionNoopCall],
                     tokenUsage: TokenUsage(input: 500, output: 250)
                 ),
                 AssistantMessage(content: "Summary", tokenUsage: TokenUsage(input: 200, output: 300)),
@@ -567,7 +567,7 @@ struct CompactionContextPreservationTests {
         CompactionMockLLMClient(
             responses: [
                 AssistantMessage(
-                    content: "Using tool", toolCalls: [noopCall],
+                    content: "Using tool", toolCalls: [compactionNoopCall],
                     tokenUsage: TokenUsage(input: 500, output: 250)
                 ),
                 AssistantMessage(content: "Summary", tokenUsage: TokenUsage(input: 50, output: 100)),
@@ -654,121 +654,17 @@ struct CompactionContextPreservationTests {
         )
         let messages: [ChatMessage] = [
             .user("Hello"),
-            .assistant(AssistantMessage(content: "", toolCalls: [noopCall])),
+            .assistant(AssistantMessage(content: "", toolCalls: [compactionNoopCall])),
             .tool(id: "call_1", name: "noop", content: "result"),
             .assistant(AssistantMessage(content: "All done.")),
         ]
         let (compacted, _) = try await compactor.summarize(messages)
 
-        #expect(hasBridge(compacted))
+        #expect(hasCompactionBridge(compacted))
         guard case let .assistant(ack) = compacted.last else {
             Issue.record("Expected acknowledgment assistant as last message"); return
         }
         #expect(ack.content == "Understood. Resuming from the checkpoint.")
-    }
-
-    @Test
-    func compactionAcknowledgmentDoesNotInheritContinuityAndRecentAssistantKeepsIt() async throws {
-        let recentContinuity = AssistantContinuity(
-            substrate: .responses,
-            payload: .object([
-                "response_id": .string("resp_recent"),
-            ])
-        )
-        let summaryContinuity = AssistantContinuity(
-            substrate: .anthropicMessages,
-            payload: .object([
-                "thinking": .string("summary reasoning"),
-                "signature": .string("sig_summary"),
-            ])
-        )
-        let client = CompactionMockLLMClient(
-            responses: [
-                AssistantMessage(
-                    content: "Summary of work.",
-                    tokenUsage: TokenUsage(input: 50, output: 100),
-                    continuity: summaryContinuity
-                ),
-            ]
-        )
-        let compactor = ContextCompactor(
-            client: client, toolDefinitions: [], configuration: AgentConfiguration()
-        )
-        let messages: [ChatMessage] = [
-            .user("Hello"),
-            .assistant(AssistantMessage(
-                content: "Working state",
-                toolCalls: [noopCall],
-                continuity: recentContinuity
-            )),
-            .tool(id: "call_1", name: "noop", content: "result"),
-        ]
-
-        let (compacted, _) = try await compactor.summarize(messages)
-        let assistants = compacted.compactMap { message -> AssistantMessage? in
-            guard case let .assistant(assistant) = message else { return nil }
-            return assistant
-        }
-
-        #expect(hasBridge(compacted))
-        #expect(assistants.count == 2)
-        #expect(assistants[0].content == "Understood. Resuming from the checkpoint.")
-        #expect(assistants[0].continuity == nil)
-        #expect(assistants[1].content == "Working state")
-        #expect(assistants[1].toolCalls == [noopCall])
-        #expect(assistants[1].continuity == recentContinuity)
-    }
-
-    @Test
-    func compactionDoesNotLeakRemovedAssistantContinuityIntoRewrittenHistory() async throws {
-        let olderContinuity = AssistantContinuity(
-            substrate: .responses,
-            payload: .object([
-                "response_id": .string("resp_old"),
-            ])
-        )
-        let recentContinuity = AssistantContinuity(
-            substrate: .anthropicMessages,
-            payload: .object([
-                "thinking": .string("recent reasoning"),
-                "signature": .string("sig_recent"),
-            ])
-        )
-        let client = CompactionMockLLMClient(
-            responses: [
-                AssistantMessage(
-                    content: "Summary of work.",
-                    tokenUsage: TokenUsage(input: 50, output: 100)
-                ),
-            ]
-        )
-        let compactor = ContextCompactor(
-            client: client, toolDefinitions: [], configuration: AgentConfiguration()
-        )
-        let messages: [ChatMessage] = [
-            .user("Hello"),
-            .assistant(AssistantMessage(content: "Older state", continuity: olderContinuity)),
-            .assistant(AssistantMessage(
-                content: "Working state",
-                toolCalls: [noopCall],
-                continuity: recentContinuity
-            )),
-            .tool(id: "call_1", name: "noop", content: "result"),
-        ]
-
-        let (compacted, _) = try await compactor.summarize(messages)
-        let assistants = compacted.compactMap { message -> AssistantMessage? in
-            guard case let .assistant(assistant) = message else { return nil }
-            return assistant
-        }
-
-        #expect(hasBridge(compacted))
-        #expect(assistants.count == 2)
-        #expect(assistants[0].content == "Understood. Resuming from the checkpoint.")
-        #expect(assistants[0].continuity == nil)
-        #expect(assistants[1].content == "Working state")
-        #expect(assistants[1].continuity == recentContinuity)
-        #expect(!assistants.contains(where: { $0.continuity == olderContinuity }))
     }
 }
 

@@ -340,7 +340,7 @@ struct ResponsesStreamingCursorTests {
         await client.setLastResponseId("resp_001")
         await client.setLastMessageCount(5)
 
-        let stream = client.stream(
+        let stream = client.streamForRun(
             messages: [.user("Hi")],
             tools: [],
             requestContext: nil,

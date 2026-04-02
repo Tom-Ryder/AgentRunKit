@@ -9,7 +9,7 @@ extension ResponsesAPIClient {
         extraFields: [String: JSONValue],
         onResponse: (@Sendable (HTTPURLResponse) -> Void)?,
         requestMode: RunRequestMode = .auto,
-        continuation: AsyncThrowingStream<StreamDelta, Error>.Continuation
+        continuation: AsyncThrowingStream<RunStreamElement, Error>.Continuation
     ) async throws {
         try messages.validateForLLMRequest()
         if shouldResetConversationBeforeRequest(messages: messages, requestMode: requestMode) {
@@ -41,7 +41,7 @@ extension ResponsesAPIClient {
     func handleSSELine(
         _ line: String,
         messagesCount: Int,
-        continuation: AsyncThrowingStream<StreamDelta, Error>.Continuation
+        continuation: AsyncThrowingStream<RunStreamElement, Error>.Continuation
     ) throws -> Bool {
         try Task.checkCancellation()
         guard let payload = extractSSEPayload(from: line)
@@ -62,7 +62,7 @@ extension ResponsesAPIClient {
         _ type: String,
         data: Data,
         messagesCount: Int,
-        continuation: AsyncThrowingStream<StreamDelta, Error>.Continuation
+        continuation: AsyncThrowingStream<RunStreamElement, Error>.Continuation
     ) throws -> Bool {
         switch type {
         case "response.output_text.delta":
@@ -94,19 +94,19 @@ extension ResponsesAPIClient {
 
     private func handleTextDelta(
         data: Data,
-        continuation: AsyncThrowingStream<StreamDelta, Error>.Continuation
+        continuation: AsyncThrowingStream<RunStreamElement, Error>.Continuation
     ) throws {
         let event = try Self.sseDecoder.decode(
             TextDeltaEvent.self, from: data
         )
         if !event.delta.isEmpty {
-            continuation.yield(.content(event.delta))
+            continuation.yield(.delta(.content(event.delta)))
         }
     }
 
     private func handleOutputItemAdded(
         data: Data,
-        continuation: AsyncThrowingStream<StreamDelta, Error>.Continuation
+        continuation: AsyncThrowingStream<RunStreamElement, Error>.Continuation
     ) throws {
         let event = try Self.sseDecoder.decode(
             OutputItemAddedEvent.self, from: data
@@ -115,40 +115,40 @@ extension ResponsesAPIClient {
               let callId = event.item.callId,
               let name = event.item.name
         else { return }
-        continuation.yield(.toolCallStart(
+        continuation.yield(.delta(.toolCallStart(
             index: event.outputIndex, id: callId, name: name
-        ))
+        )))
     }
 
     private func handleFunctionCallArgsDelta(
         data: Data,
-        continuation: AsyncThrowingStream<StreamDelta, Error>.Continuation
+        continuation: AsyncThrowingStream<RunStreamElement, Error>.Continuation
     ) throws {
         let event = try Self.sseDecoder.decode(
             FunctionCallArgsDeltaEvent.self, from: data
         )
         if !event.delta.isEmpty {
-            continuation.yield(.toolCallDelta(
+            continuation.yield(.delta(.toolCallDelta(
                 index: event.outputIndex, arguments: event.delta
-            ))
+            )))
         }
     }
 
     private func handleReasoningSummaryDelta(
         data: Data,
-        continuation: AsyncThrowingStream<StreamDelta, Error>.Continuation
+        continuation: AsyncThrowingStream<RunStreamElement, Error>.Continuation
     ) throws {
         let event = try Self.sseDecoder.decode(
             ReasoningSummaryDeltaEvent.self, from: data
         )
         if !event.delta.isEmpty {
-            continuation.yield(.reasoning(event.delta))
+            continuation.yield(.delta(.reasoning(event.delta)))
         }
     }
 
     private func handleOutputItemDone(
         data: Data,
-        continuation: AsyncThrowingStream<StreamDelta, Error>.Continuation
+        continuation: AsyncThrowingStream<RunStreamElement, Error>.Continuation
     ) throws {
         let value = try Self.sseDecoder.decode(
             OutputItemDoneEvent.self, from: data
@@ -156,13 +156,13 @@ extension ResponsesAPIClient {
         guard value.item.type != "message",
               value.item.type != "function_call"
         else { return }
-        continuation.yield(.reasoningDetails([value.item.raw]))
+        continuation.yield(.delta(.reasoningDetails([value.item.raw])))
     }
 
     private func handleCompleted(
         data: Data,
         messagesCount: Int,
-        continuation: AsyncThrowingStream<StreamDelta, Error>.Continuation
+        continuation: AsyncThrowingStream<RunStreamElement, Error>.Continuation
     ) throws -> Bool {
         let event = try Self.sseDecoder.decode(
             CompletedEvent.self, from: data
@@ -179,7 +179,7 @@ extension ResponsesAPIClient {
                 reasoning: reasoningTokens
             )
         }
-        continuation.yield(.finished(usage: usage))
+        continuation.yield(.delta(.finished(usage: usage)))
         return true
     }
 
