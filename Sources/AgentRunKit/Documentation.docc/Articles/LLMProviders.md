@@ -31,13 +31,17 @@ Any type conforming to ``LLMClient`` works with ``Agent``, ``Chat``, and ``SubAg
 
 All providers deliver the same semantic fields on every assistant turn: content, tool calls, token usage, reasoning, and reasoning details. The agent loop operates on these fields and treats all providers identically.
 
-``ResponsesAPIClient`` additionally preserves same-substrate continuity state. When history containing Responses assistant turns is replayed through the same client, the provider-native turn structure is restored from the continuity payload rather than reconstructed from semantic fields. This is lossless for the Responses API wire format.
+Three clients preserve same-substrate continuity state, restoring provider-native turn structure from a continuity payload rather than reconstructing from semantic fields:
 
-Other clients use semantic-only replay. History is reconstructed from the semantic fields, which is sufficient for the agent loop but does not preserve provider-specific turn metadata.
+- ``ResponsesAPIClient``: preserves Responses API output items, including reasoning items and function call metadata.
+- ``AnthropicClient``: preserves exact ordered assistant blocks (thinking, text, tool_use) in their original interleaved order.
+- ``VertexAnthropicClient``: same Anthropic Messages substrate fidelity as ``AnthropicClient``.
+
+Other clients (``OpenAIClient``, ``GeminiClient``) use semantic-only replay. History is reconstructed from the semantic fields, which is sufficient for the agent loop but does not preserve provider-specific turn metadata.
 
 ## ResponsesAPIClient vs OpenAIClient
 
-Both connect to OpenAI. ``OpenAIClient`` uses the Chat Completions API, a stateless request/response protocol shared by many compatible providers (OpenRouter, Groq, Together, Ollama). ``ResponsesAPIClient`` uses the Responses API, which maintains server-side conversation state and supports delta requests that send only new messages since the last response. ``ResponsesAPIClient`` is the first client with same-substrate continuity fidelity.
+Both connect to OpenAI. ``OpenAIClient`` uses the Chat Completions API, a stateless request/response protocol shared by many compatible providers (OpenRouter, Groq, Together, Ollama). ``ResponsesAPIClient`` uses the Responses API, which maintains server-side conversation state and supports delta requests that send only new messages since the last response.
 
 ## OpenAI-Compatible Base URLs
 

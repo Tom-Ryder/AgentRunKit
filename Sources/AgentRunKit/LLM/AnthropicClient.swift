@@ -322,50 +322,13 @@ extension AnthropicClient {
             throw AgentError.llmError(.decodingFailed(decodingError))
         }
 
-        var content = ""
-        var toolCalls: [ToolCall] = []
-        var reasoningText: String?
-        var reasoningDetails: [JSONValue] = []
-
-        for block in response.content {
-            switch block {
-            case let .text(text):
-                content += text
-            case let .thinking(thinking, signature):
-                reasoningText = reasoningText.map { $0 + "\n" + thinking } ?? thinking
-                reasoningDetails.append(.object([
-                    "type": .string("thinking"),
-                    "thinking": .string(thinking),
-                    "signature": .string(signature)
-                ]))
-            case let .toolUse(id, name, input):
-                let encoded: Data
-                do {
-                    encoded = try JSONEncoder().encode(input)
-                } catch {
-                    throw AgentError.llmError(.encodingFailed(error))
-                }
-                guard let arguments = String(data: encoded, encoding: .utf8) else {
-                    preconditionFailure("JSONEncoder produced invalid UTF-8")
-                }
-                toolCalls.append(ToolCall(
-                    id: id, name: name, arguments: arguments
-                ))
-            }
-        }
-
-        return AssistantMessage(
-            content: content,
-            toolCalls: toolCalls,
-            tokenUsage: TokenUsage(
-                input: response.usage.inputTokens,
-                output: response.usage.outputTokens,
-                cacheRead: response.usage.cacheReadInputTokens,
-                cacheWrite: response.usage.cacheCreationInputTokens
-            ),
-            reasoning: reasoningText.map { ReasoningContent(content: $0) },
-            reasoningDetails: reasoningDetails.isEmpty ? nil : reasoningDetails
-        )
+        let projection = AnthropicTurnProjection(responseBlocks: response.content)
+        return try projection.project(usage: TokenUsage(
+            input: response.usage.inputTokens,
+            output: response.usage.outputTokens,
+            cacheRead: response.usage.cacheReadInputTokens,
+            cacheWrite: response.usage.cacheCreationInputTokens
+        ))
     }
 }
 

@@ -324,6 +324,11 @@ enum AnthropicMessageMapper {
     private static func mapAssistantMessage(
         _ msg: AssistantMessage
     ) throws -> AnthropicMessage {
+        if let continuity = msg.continuity, continuity.substrate == .anthropicMessages {
+            let blocks = try AnthropicTurnProjection.replayBlocks(from: continuity)
+            return AnthropicMessage(role: .assistant, content: .blocks(blocks))
+        }
+
         var blocks: [AnthropicContentBlock] = []
 
         if let details = msg.reasoningDetails {

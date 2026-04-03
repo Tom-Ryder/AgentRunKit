@@ -158,6 +158,33 @@ struct AnthropicResponseParsingTests {
         let msg = try makeClient().parseResponse(Data(json.utf8))
         #expect(msg.content == "")
         #expect(msg.toolCalls.isEmpty)
+        #expect(msg.continuity == nil)
+    }
+
+    @Test
+    func emptyContentReplaysSafely() throws {
+        let json = """
+        {
+            "id": "msg_empty_rt",
+            "type": "message",
+            "role": "assistant",
+            "content": [],
+            "stop_reason": "end_turn",
+            "usage": {"input_tokens": 10, "output_tokens": 0}
+        }
+        """
+        let msg = try makeClient().parseResponse(Data(json.utf8))
+        let (_, mapped) = try AnthropicMessageMapper.mapMessages([.assistant(msg)])
+        guard case let .blocks(blocks) = mapped[0].content else {
+            Issue.record("Expected blocks content")
+            return
+        }
+        #expect(blocks.count == 1)
+        if case let .text(text) = blocks[0] {
+            #expect(text == "")
+        } else {
+            Issue.record("Expected empty text block")
+        }
     }
 
     @Test
@@ -227,6 +254,316 @@ struct AnthropicResponseParsingTests {
         }
         #expect(inputDict["city"] == .string("NYC"))
         #expect(inputDict["units"] == .string("celsius"))
+    }
+}
+
+struct AnthropicContinuityTests {
+    private func makeClient() -> AnthropicClient {
+        AnthropicClient(apiKey: "test-key", model: "claude-sonnet-4-6")
+    }
+
+    @Test
+    func blockingParseProducesContinuity() throws {
+        let json = """
+        {
+            "id": "msg_001",
+            "type": "message",
+            "role": "assistant",
+            "content": [{"type": "text", "text": "Hello"}],
+            "stop_reason": "end_turn",
+            "usage": {"input_tokens": 100, "output_tokens": 50}
+        }
+        """
+        let msg = try makeClient().parseResponse(Data(json.utf8))
+        #expect(msg.continuity?.substrate == .anthropicMessages)
+        guard case let .object(payload) = msg.continuity?.payload,
+              case let .array(blocks) = payload["content"] else {
+            Issue.record("Expected continuity with content array")
+            return
+        }
+        #expect(blocks.count == 1)
+        if case let .object(dict) = blocks[0] {
+            #expect(dict["type"] == .string("text"))
+            #expect(dict["text"] == .string("Hello"))
+        } else {
+            Issue.record("Expected object block")
+        }
+    }
+
+    @Test
+    func continuityPreservesInterleavedBlockOrder() throws {
+        let json = """
+        {
+            "id": "msg_002",
+            "type": "message",
+            "role": "assistant",
+            "content": [
+                {"type": "thinking", "thinking": "Think first", "signature": "s1"},
+                {"type": "text", "text": "Checking."},
+                {"type": "tool_use", "id": "toolu_01", "name": "search",
+                 "input": {"q": "test"}},
+                {"type": "thinking", "thinking": "Think again", "signature": "s2"},
+                {"type": "text", "text": "More text."}
+            ],
+            "stop_reason": "tool_use",
+            "usage": {"input_tokens": 80, "output_tokens": 120}
+        }
+        """
+        let msg = try makeClient().parseResponse(Data(json.utf8))
+        guard case let .object(payload) = msg.continuity?.payload,
+              case let .array(blocks) = payload["content"] else {
+            Issue.record("Expected continuity with content array")
+            return
+        }
+        #expect(blocks.count == 5)
+
+        func blockType(_ block: JSONValue) -> String? {
+            guard case let .object(dict) = block,
+                  case let .string(type) = dict["type"] else { return nil }
+            return type
+        }
+
+        #expect(blockType(blocks[0]) == "thinking")
+        #expect(blockType(blocks[1]) == "text")
+        #expect(blockType(blocks[2]) == "tool_use")
+        #expect(blockType(blocks[3]) == "thinking")
+        #expect(blockType(blocks[4]) == "text")
+    }
+
+    @Test
+    func replayPrefersAnthropicContinuity() throws {
+        let continuity = AssistantContinuity(
+            substrate: .anthropicMessages,
+            payload: .object(["content": .array([
+                .object(["type": .string("text"), "text": .string("Original text")]),
+                .object([
+                    "type": .string("thinking"),
+                    "thinking": .string("Deep thought"),
+                    "signature": .string("sig_abc"),
+                ]),
+            ])])
+        )
+        let msg = AssistantMessage(
+            content: "Reconstructed text",
+            reasoning: ReasoningContent(content: "Reconstructed reasoning", signature: "sig_abc"),
+            continuity: continuity
+        )
+
+        let (_, mapped) = try AnthropicMessageMapper.mapMessages([.assistant(msg)])
+        guard case let .blocks(blocks) = mapped[0].content else {
+            Issue.record("Expected blocks content")
+            return
+        }
+
+        #expect(blocks.count == 2)
+        if case let .text(text) = blocks[0] {
+            #expect(text == "Original text")
+        } else {
+            Issue.record("Expected text block at index 0")
+        }
+        if case let .thinking(thinking, signature) = blocks[1] {
+            #expect(thinking == "Deep thought")
+            #expect(signature == "sig_abc")
+        } else {
+            Issue.record("Expected thinking block at index 1")
+        }
+    }
+
+    @Test
+    func semanticFallbackWhenNoContinuity() throws {
+        let msg = AssistantMessage(
+            content: "Answer",
+            reasoning: ReasoningContent(content: "reasoning", signature: "sig_xyz")
+        )
+        let (_, mapped) = try AnthropicMessageMapper.mapMessages([.assistant(msg)])
+        guard case let .blocks(blocks) = mapped[0].content else {
+            Issue.record("Expected blocks content")
+            return
+        }
+        #expect(blocks.count == 2)
+        if case .thinking = blocks[0] {} else {
+            Issue.record("Expected thinking block first in semantic fallback")
+        }
+        if case .text = blocks[1] {} else {
+            Issue.record("Expected text block second in semantic fallback")
+        }
+    }
+
+    @Test
+    func semanticFallbackForForeignSubstrate() throws {
+        let foreignContinuity = AssistantContinuity(
+            substrate: .responses,
+            payload: .object(["output": .array([])])
+        )
+        let msg = AssistantMessage(content: "Answer", continuity: foreignContinuity)
+        let (_, mapped) = try AnthropicMessageMapper.mapMessages([.assistant(msg)])
+        guard case let .blocks(blocks) = mapped[0].content else {
+            Issue.record("Expected blocks content")
+            return
+        }
+        #expect(blocks.count == 1)
+        if case let .text(text) = blocks[0] {
+            #expect(text == "Answer")
+        } else {
+            Issue.record("Expected text block")
+        }
+    }
+
+    @Test
+    func malformedContinuityThrows() throws {
+        let malformedContinuity = AssistantContinuity(
+            substrate: .anthropicMessages,
+            payload: .object(["wrong_key": .string("not a content array")])
+        )
+        let msg = AssistantMessage(content: "Fallback text", continuity: malformedContinuity)
+        #expect(throws: AgentError.self) {
+            _ = try AnthropicMessageMapper.mapMessages([.assistant(msg)])
+        }
+    }
+
+    @Test
+    func interleavedOrderSurvivesParseAndReplay() throws {
+        let json = """
+        {
+            "id": "msg_rt",
+            "type": "message",
+            "role": "assistant",
+            "content": [
+                {"type": "thinking", "thinking": "Plan A", "signature": "sig_a"},
+                {"type": "text", "text": "Step 1"},
+                {"type": "tool_use", "id": "toolu_01", "name": "search",
+                 "input": {"q": "test"}},
+                {"type": "thinking", "thinking": "Plan B", "signature": "sig_b"},
+                {"type": "text", "text": "Step 2"}
+            ],
+            "stop_reason": "tool_use",
+            "usage": {"input_tokens": 100, "output_tokens": 200}
+        }
+        """
+        let parsed = try makeClient().parseResponse(Data(json.utf8))
+
+        let (_, mapped) = try AnthropicMessageMapper.mapMessages([.assistant(parsed)])
+        guard case let .blocks(blocks) = mapped[0].content else {
+            Issue.record("Expected blocks content")
+            return
+        }
+
+        #expect(blocks.count == 5)
+        if case let .thinking(thinking, signature) = blocks[0] {
+            #expect(thinking == "Plan A")
+            #expect(signature == "sig_a")
+        } else {
+            Issue.record("Expected thinking at 0")
+        }
+        if case let .text(text) = blocks[1] {
+            #expect(text == "Step 1")
+        } else {
+            Issue.record("Expected text at 1")
+        }
+        if case let .toolUse(id, name, _) = blocks[2] {
+            #expect(id == "toolu_01")
+            #expect(name == "search")
+        } else {
+            Issue.record("Expected tool_use at 2")
+        }
+        if case let .thinking(thinking, signature) = blocks[3] {
+            #expect(thinking == "Plan B")
+            #expect(signature == "sig_b")
+        } else {
+            Issue.record("Expected thinking at 3")
+        }
+        if case let .text(text) = blocks[4] {
+            #expect(text == "Step 2")
+        } else {
+            Issue.record("Expected text at 4")
+        }
+    }
+
+    @Test
+    func continuityIsNotInventedByHistoryMutation() throws {
+        let msg = AssistantMessage(content: "No continuity")
+        #expect(msg.continuity == nil)
+        let (_, mapped) = try AnthropicMessageMapper.mapMessages([
+            .user("Hello"),
+            .assistant(msg),
+        ])
+        #expect(mapped.count == 2)
+    }
+
+    @Test
+    func toolUseOnlyResponseRoundTrips() throws {
+        let json = """
+        {
+            "id": "msg_tools",
+            "type": "message",
+            "role": "assistant",
+            "content": [
+                {"type": "tool_use", "id": "toolu_a", "name": "search",
+                 "input": {"q": "first"}},
+                {"type": "tool_use", "id": "toolu_b", "name": "lookup",
+                 "input": {"id": 42}}
+            ],
+            "stop_reason": "tool_use",
+            "usage": {"input_tokens": 50, "output_tokens": 30}
+        }
+        """
+        let client = makeClient()
+        let parsed = try client.parseResponse(Data(json.utf8))
+        #expect(parsed.continuity?.substrate == .anthropicMessages)
+        #expect(parsed.content == "")
+        #expect(parsed.toolCalls.count == 2)
+
+        let (_, mapped) = try AnthropicMessageMapper.mapMessages([.assistant(parsed)])
+        guard case let .blocks(blocks) = mapped[0].content else {
+            Issue.record("Expected blocks content")
+            return
+        }
+        #expect(blocks.count == 2)
+        if case let .toolUse(id, name, _) = blocks[0] {
+            #expect(id == "toolu_a")
+            #expect(name == "search")
+        } else {
+            Issue.record("Expected tool_use at 0")
+        }
+        if case let .toolUse(id, name, _) = blocks[1] {
+            #expect(id == "toolu_b")
+            #expect(name == "lookup")
+        } else {
+            Issue.record("Expected tool_use at 1")
+        }
+    }
+
+    @Test
+    func emptyToolInputRoundTrips() throws {
+        let json = """
+        {
+            "id": "msg_empty_input",
+            "type": "message",
+            "role": "assistant",
+            "content": [
+                {"type": "tool_use", "id": "toolu_e", "name": "get_time",
+                 "input": {}}
+            ],
+            "stop_reason": "tool_use",
+            "usage": {"input_tokens": 30, "output_tokens": 10}
+        }
+        """
+        let client = makeClient()
+        let parsed = try client.parseResponse(Data(json.utf8))
+
+        let (_, mapped) = try AnthropicMessageMapper.mapMessages([.assistant(parsed)])
+        guard case let .blocks(blocks) = mapped[0].content else {
+            Issue.record("Expected blocks content")
+            return
+        }
+        #expect(blocks.count == 1)
+        if case let .toolUse(id, name, input) = blocks[0] {
+            #expect(id == "toolu_e")
+            #expect(name == "get_time")
+            #expect(input == .object([:]))
+        } else {
+            Issue.record("Expected tool_use block")
+        }
     }
 }
 

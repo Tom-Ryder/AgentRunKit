@@ -32,10 +32,59 @@ extension AnthropicClient {
         continuation.finish()
     }
 
+    func performRunStreamRequest(
+        messages: [ChatMessage],
+        tools: [ToolDefinition],
+        extraFields: [String: JSONValue],
+        onResponse: (@Sendable (HTTPURLResponse) -> Void)?,
+        continuation: AsyncThrowingStream<RunStreamElement, Error>.Continuation
+    ) async throws {
+        try messages.validateForLLMRequest()
+        let request = try buildRequest(
+            messages: messages, tools: tools,
+            stream: true, extraFields: extraFields
+        )
+        let urlRequest = try buildURLRequest(request)
+        let (bytes, httpResponse) = try await HTTPRetry.performStream(
+            urlRequest: urlRequest, session: session, retryPolicy: retryPolicy
+        )
+        onResponse?(httpResponse)
+
+        let state = AnthropicStreamState()
+
+        try await processSSEStream(
+            bytes: bytes,
+            stallTimeout: retryPolicy.streamStallTimeout
+        ) { line in
+            try await self.handleSSELine(line, state: state) { delta in
+                _ = continuation.yield(.delta(delta))
+            }
+        }
+
+        if await state.isCompleted {
+            let blocks = try await state.finalizedBlocks()
+            if !blocks.isEmpty {
+                let projection = AnthropicTurnProjection(orderedBlocks: blocks)
+                continuation.yield(.finalizedContinuity(projection.continuity))
+            }
+        }
+        continuation.finish()
+    }
+
     func handleSSELine(
         _ line: String,
         state: AnthropicStreamState,
         continuation: AsyncThrowingStream<StreamDelta, Error>.Continuation
+    ) async throws -> Bool {
+        try await handleSSELine(line, state: state) { delta in
+            _ = continuation.yield(delta)
+        }
+    }
+
+    func handleSSELine(
+        _ line: String,
+        state: AnthropicStreamState,
+        yield: @Sendable (StreamDelta) -> Void
     ) async throws -> Bool {
         try Task.checkCancellation()
         guard let payload = extractSSEPayload(from: line) else { return false }
@@ -44,7 +93,7 @@ extension AnthropicClient {
 
         return try await dispatchEvent(
             eventType, data: Data(payload.utf8),
-            state: state, continuation: continuation
+            state: state, yield: yield
         )
     }
 
@@ -52,7 +101,7 @@ extension AnthropicClient {
         _ type: AnthropicSSEEvent,
         data: Data,
         state: AnthropicStreamState,
-        continuation: AsyncThrowingStream<StreamDelta, Error>.Continuation
+        yield: @Sendable (StreamDelta) -> Void
     ) async throws -> Bool {
         switch type {
         case .messageStart:
@@ -61,19 +110,20 @@ extension AnthropicClient {
             break
         case .contentBlockStart:
             try await handleBlockStart(
-                data: data, state: state, continuation: continuation
+                data: data, state: state, yield: yield
             )
         case .contentBlockDelta:
             try await handleBlockDelta(
-                data: data, state: state, continuation: continuation
+                data: data, state: state, yield: yield
             )
         case .contentBlockStop:
             try await handleBlockStop(
-                data: data, state: state, continuation: continuation
+                data: data, state: state, yield: yield
             )
         case .messageDelta:
-            try await handleMessageDelta(data: data, state: state, continuation: continuation)
+            try await handleMessageDelta(data: data, state: state, yield: yield)
         case .messageStop:
+            await state.markCompleted()
             return true
         case .error:
             try handleError(data: data)
@@ -84,7 +134,7 @@ extension AnthropicClient {
     private func handleBlockStart(
         data: Data,
         state: AnthropicStreamState,
-        continuation: AsyncThrowingStream<StreamDelta, Error>.Continuation
+        yield: @Sendable (StreamDelta) -> Void
     ) async throws {
         let event = try decodeEvent(AnthropicBlockStartEvent.self, from: data)
         let block = event.contentBlock
@@ -99,7 +149,8 @@ extension AnthropicClient {
             let toolIndex = await state.incrementToolCallCount()
             await state.setBlockType(event.index, .toolUse)
             if let id = block.id, let name = block.name {
-                continuation.yield(.toolCallStart(
+                await state.setToolInfo(event.index, id: id, name: name)
+                yield(.toolCallStart(
                     index: toolIndex, id: id, name: name
                 ))
             }
@@ -109,7 +160,7 @@ extension AnthropicClient {
     private func handleBlockDelta(
         data: Data,
         state: AnthropicStreamState,
-        continuation: AsyncThrowingStream<StreamDelta, Error>.Continuation
+        yield: @Sendable (StreamDelta) -> Void
     ) async throws {
         let event = try decodeEvent(AnthropicBlockDeltaEvent.self, from: data)
         let delta = event.delta
@@ -119,17 +170,19 @@ extension AnthropicClient {
         case .thinkingDelta:
             if let text = delta.thinking, !text.isEmpty {
                 await state.appendThinking(event.index, text)
-                continuation.yield(.reasoning(text))
+                yield(.reasoning(text))
             }
         case .textDelta:
             if let text = delta.text, !text.isEmpty {
-                continuation.yield(.content(text))
+                await state.appendTextContent(event.index, text)
+                yield(.content(text))
             }
         case .inputJsonDelta:
             if let json = delta.partialJson, !json.isEmpty {
                 let toolIndex = await state.toolCallCount - 1
                 precondition(toolIndex >= 0, "input_json_delta before any tool_use block_start")
-                continuation.yield(.toolCallDelta(
+                await state.appendToolInput(event.index, json)
+                yield(.toolCallDelta(
                     index: toolIndex, arguments: json
                 ))
             }
@@ -143,7 +196,7 @@ extension AnthropicClient {
     private func handleBlockStop(
         data: Data,
         state: AnthropicStreamState,
-        continuation: AsyncThrowingStream<StreamDelta, Error>.Continuation
+        yield: @Sendable (StreamDelta) -> Void
     ) async throws {
         let event = try decodeEvent(AnthropicBlockStopEvent.self, from: data)
         let blockType = await state.blockType(for: event.index)
@@ -152,7 +205,7 @@ extension AnthropicClient {
             let thinking = await state.thinking(for: event.index)
             let signature = await state.signature(for: event.index)
             if let thinking, let signature {
-                continuation.yield(.reasoningDetails([
+                yield(.reasoningDetails([
                     .object([
                         "type": .string("thinking"),
                         "thinking": .string(thinking),
@@ -174,7 +227,7 @@ extension AnthropicClient {
     private func handleMessageDelta(
         data: Data,
         state: AnthropicStreamState,
-        continuation: AsyncThrowingStream<StreamDelta, Error>.Continuation
+        yield: @Sendable (StreamDelta) -> Void
     ) async throws {
         let event = try decodeEvent(AnthropicMessageDeltaEvent.self, from: data)
         let outputTokens = event.usage?.outputTokens ?? 0
@@ -186,7 +239,7 @@ extension AnthropicClient {
             cacheRead: inputUsage?.cacheReadInputTokens,
             cacheWrite: inputUsage?.cacheCreationInputTokens
         )
-        continuation.yield(.finished(usage: usage))
+        yield(.finished(usage: usage))
     }
 
     private func handleError(data: Data) throws {
@@ -205,14 +258,50 @@ extension AnthropicClient {
     }
 }
 
+extension AnthropicClient: HistoryRewriteAwareClient {
+    func streamForRun(
+        messages: [ChatMessage],
+        tools: [ToolDefinition],
+        requestContext: RequestContext?,
+        requestMode _: RunRequestMode
+    ) -> AsyncThrowingStream<RunStreamElement, Error> {
+        AsyncThrowingStream { continuation in
+            let task = Task {
+                do {
+                    try await performRunStreamRequest(
+                        messages: messages,
+                        tools: tools,
+                        extraFields: requestContext?.extraFields ?? [:],
+                        onResponse: requestContext?.onResponse,
+                        continuation: continuation
+                    )
+                } catch {
+                    continuation.finish(throwing: error)
+                }
+            }
+            continuation.onTermination = { _ in task.cancel() }
+        }
+    }
+}
+
 actor AnthropicStreamState {
     enum BlockType { case thinking, text, toolUse }
 
     private var blockTypes: [Int: BlockType] = [:]
     private var thinkingText: [Int: String] = [:]
     private var signatures: [Int: String] = [:]
+    private var textContent: [Int: String] = [:]
+    private var toolIds: [Int: String] = [:]
+    private var toolNames: [Int: String] = [:]
+    private var toolInputs: [Int: String] = [:]
     private(set) var toolCallCount: Int = 0
     private(set) var inputUsage: AnthropicUsage?
+    private(set) var isCompleted: Bool = false
+    private var maxBlockIndex: Int = -1
+
+    func markCompleted() {
+        isCompleted = true
+    }
 
     func setInputUsage(_ usage: AnthropicUsage) {
         inputUsage = usage
@@ -220,6 +309,7 @@ actor AnthropicStreamState {
 
     func setBlockType(_ index: Int, _ type: BlockType) {
         blockTypes[index] = type
+        maxBlockIndex = max(maxBlockIndex, index)
     }
 
     func blockType(for index: Int) -> BlockType? {
@@ -245,6 +335,63 @@ actor AnthropicStreamState {
 
     func signature(for index: Int) -> String? {
         signatures[index]
+    }
+
+    func appendTextContent(_ index: Int, _ text: String) {
+        textContent[index, default: ""] += text
+    }
+
+    func setToolInfo(_ index: Int, id: String, name: String) {
+        toolIds[index] = id
+        toolNames[index] = name
+    }
+
+    func appendToolInput(_ index: Int, _ json: String) {
+        toolInputs[index, default: ""] += json
+    }
+
+    func finalizedBlocks() throws -> [JSONValue] {
+        guard maxBlockIndex >= 0 else { return [] }
+        return try (0 ... maxBlockIndex).compactMap { index in
+            guard let type = blockTypes[index] else { return nil }
+            switch type {
+            case .thinking:
+                guard let thinking = thinkingText[index],
+                      let signature = signatures[index] else { return nil }
+                return .object([
+                    "type": .string("thinking"),
+                    "thinking": .string(thinking),
+                    "signature": .string(signature),
+                ])
+            case .text:
+                return .object([
+                    "type": .string("text"),
+                    "text": .string(textContent[index] ?? ""),
+                ])
+            case .toolUse:
+                guard let id = toolIds[index],
+                      let name = toolNames[index] else { return nil }
+                let rawInput = toolInputs[index] ?? ""
+                let input: JSONValue
+                if rawInput.isEmpty {
+                    input = .object([:])
+                } else {
+                    do {
+                        input = try JSONDecoder().decode(JSONValue.self, from: Data(rawInput.utf8))
+                    } catch {
+                        throw AgentError.llmError(.decodingFailed(
+                            description: "Failed to decode accumulated tool input JSON: \(rawInput)"
+                        ))
+                    }
+                }
+                return .object([
+                    "type": .string("tool_use"),
+                    "id": .string(id),
+                    "name": .string(name),
+                    "input": input,
+                ])
+            }
+        }
     }
 }
 
@@ -335,30 +482,14 @@ private struct AnthropicDeltaContent: Decodable {
     }
 }
 
-private struct AnthropicBlockStopEvent: Decodable {
-    let index: Int
-}
-
-private struct AnthropicMessageDeltaEvent: Decodable {
-    let usage: AnthropicDeltaUsage?
-}
+private struct AnthropicBlockStopEvent: Decodable { let index: Int }
+private struct AnthropicMessageDeltaEvent: Decodable { let usage: AnthropicDeltaUsage? }
 
 private struct AnthropicDeltaUsage: Decodable {
     let outputTokens: Int
-
-    enum CodingKeys: String, CodingKey {
-        case outputTokens = "output_tokens"
-    }
+    enum CodingKeys: String, CodingKey { case outputTokens = "output_tokens" }
 }
 
-private struct AnthropicMessageStartEvent: Decodable {
-    let message: AnthropicMessageStartMessage
-}
-
-private struct AnthropicMessageStartMessage: Decodable {
-    let usage: AnthropicUsage
-}
-
-private struct AnthropicStreamErrorEvent: Decodable {
-    let error: AnthropicErrorDetail
-}
+private struct AnthropicMessageStartEvent: Decodable { let message: AnthropicMessageStartMessage }
+private struct AnthropicMessageStartMessage: Decodable { let usage: AnthropicUsage }
+private struct AnthropicStreamErrorEvent: Decodable { let error: AnthropicErrorDetail }

@@ -400,6 +400,178 @@ struct AnthropicStreamingInputUsageTests {
     }
 }
 
+struct AnthropicStreamingContinuityTests {
+    private func makeClient() -> AnthropicClient {
+        AnthropicClient(apiKey: "test-key", model: "claude-sonnet-4-6")
+    }
+
+    private func sseLine(_ json: String) -> String {
+        "data: \(json)"
+    }
+
+    private func processStreamWithState(
+        client: AnthropicClient,
+        lines: [String]
+    ) async throws -> AnthropicStreamState {
+        let allBytes = lines.joined(separator: "\n").appending("\n")
+        let (byteStream, byteContinuation) = AsyncStream<UInt8>.makeStream()
+        for byte in Array(allBytes.utf8) {
+            byteContinuation.yield(byte)
+        }
+        byteContinuation.finish()
+
+        let controlled = ControlledByteStream(stream: byteStream)
+        let streamPair = AsyncThrowingStream<StreamDelta, Error>.makeStream()
+
+        let state = try await client.processTestStreamWithState(
+            byteStream: controlled,
+            continuation: streamPair.continuation
+        )
+
+        for try await _ in streamPair.stream {}
+        return state
+    }
+
+    @Test
+    func streamingFinalizationProducesContinuity() async throws {
+        let client = makeClient()
+        let lines = [
+            sseLine(#"{"type":"content_block_start","index":0,"content_block":{"type":"text"}}"#),
+            sseLine(#"{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Hello world"}}"#),
+            sseLine(#"{"type":"content_block_stop","index":0}"#),
+            sseLine(#"{"type":"message_delta","usage":{"output_tokens":10}}"#),
+            sseLine(#"{"type":"message_stop"}"#),
+        ]
+        let state = try await processStreamWithState(client: client, lines: lines)
+        let blocks = try await state.finalizedBlocks()
+        #expect(blocks.count == 1)
+        let projection = AnthropicTurnProjection(orderedBlocks: blocks)
+        #expect(projection.continuity.substrate == .anthropicMessages)
+    }
+
+    @Test
+    func streamingPreservesInterleavedBlockOrder() async throws {
+        let client = makeClient()
+        let toolBlock = #"{"type":"content_block_start","index":2,"content_block":"#
+            + #"{"type":"tool_use","id":"toolu_01","name":"search"}}"#
+        let toolDelta = #"{"type":"content_block_delta","index":2,"delta":"#
+            + #"{"type":"input_json_delta","partial_json":"{\"q\":\"test\"}"}}"#
+        let lines = [
+            sseLine(#"{"type":"content_block_start","index":0,"content_block":{"type":"thinking"}}"#),
+            sseLine(#"{"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"Plan"}}"#),
+            sseLine(#"{"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"sig1"}}"#),
+            sseLine(#"{"type":"content_block_stop","index":0}"#),
+            sseLine(#"{"type":"content_block_start","index":1,"content_block":{"type":"text"}}"#),
+            sseLine(#"{"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"Searching"}}"#),
+            sseLine(#"{"type":"content_block_stop","index":1}"#),
+            sseLine(toolBlock),
+            sseLine(toolDelta),
+            sseLine(#"{"type":"content_block_stop","index":2}"#),
+            sseLine(#"{"type":"message_delta","usage":{"output_tokens":30}}"#),
+            sseLine(#"{"type":"message_stop"}"#),
+        ]
+        let state = try await processStreamWithState(client: client, lines: lines)
+        let blocks = try await state.finalizedBlocks()
+        #expect(blocks.count == 3)
+
+        func blockType(_ block: JSONValue) -> String? {
+            guard case let .object(dict) = block,
+                  case let .string(type) = dict["type"] else { return nil }
+            return type
+        }
+
+        #expect(blockType(blocks[0]) == "thinking")
+        #expect(blockType(blocks[1]) == "text")
+        #expect(blockType(blocks[2]) == "tool_use")
+    }
+
+    @Test
+    func blockingAndStreamingProduceSameContinuity() async throws {
+        let client = makeClient()
+
+        let blockingJSON = """
+        {
+            "id": "msg_parity",
+            "type": "message",
+            "role": "assistant",
+            "content": [
+                {"type": "thinking", "thinking": "Let me think", "signature": "sig_1"},
+                {"type": "text", "text": "Here is my answer"},
+                {"type": "tool_use", "id": "toolu_1", "name": "search",
+                 "input": {"q": "test"}}
+            ],
+            "stop_reason": "tool_use",
+            "usage": {"input_tokens": 100, "output_tokens": 50}
+        }
+        """
+        let blockingMsg = try client.parseResponse(Data(blockingJSON.utf8))
+
+        let toolStart = #"{"type":"content_block_start","index":2,"content_block":"#
+            + #"{"type":"tool_use","id":"toolu_1","name":"search"}}"#
+        let toolDelta = #"{"type":"content_block_delta","index":2,"delta":"#
+            + #"{"type":"input_json_delta","partial_json":"{\"q\":\"test\"}"}}"#
+        let thinkDelta = #"{"type":"content_block_delta","index":0,"delta":"#
+            + #"{"type":"thinking_delta","thinking":"Let me think"}}"#
+        let sigDelta = #"{"type":"content_block_delta","index":0,"delta":"#
+            + #"{"type":"signature_delta","signature":"sig_1"}}"#
+        let textDelta = #"{"type":"content_block_delta","index":1,"delta":"#
+            + #"{"type":"text_delta","text":"Here is my answer"}}"#
+        let lines = [
+            sseLine(#"{"type":"content_block_start","index":0,"content_block":{"type":"thinking"}}"#),
+            sseLine(thinkDelta),
+            sseLine(sigDelta),
+            sseLine(#"{"type":"content_block_stop","index":0}"#),
+            sseLine(#"{"type":"content_block_start","index":1,"content_block":{"type":"text"}}"#),
+            sseLine(textDelta),
+            sseLine(#"{"type":"content_block_stop","index":1}"#),
+            sseLine(toolStart),
+            sseLine(toolDelta),
+            sseLine(#"{"type":"content_block_stop","index":2}"#),
+            sseLine(#"{"type":"message_delta","usage":{"output_tokens":50}}"#),
+            sseLine(#"{"type":"message_stop"}"#),
+        ]
+        let state = try await processStreamWithState(client: client, lines: lines)
+        let streamBlocks = try await state.finalizedBlocks()
+        let streamContinuity = AnthropicTurnProjection(orderedBlocks: streamBlocks).continuity
+
+        #expect(blockingMsg.continuity == streamContinuity)
+    }
+
+    @Test
+    func emptyToolInputParityBetweenBlockingAndStreaming() async throws {
+        let client = makeClient()
+
+        let blockingJSON = """
+        {
+            "id": "msg_empty",
+            "type": "message",
+            "role": "assistant",
+            "content": [
+                {"type": "tool_use", "id": "toolu_e", "name": "get_time",
+                 "input": {}}
+            ],
+            "stop_reason": "tool_use",
+            "usage": {"input_tokens": 30, "output_tokens": 10}
+        }
+        """
+        let blockingMsg = try client.parseResponse(Data(blockingJSON.utf8))
+
+        let toolStart = #"{"type":"content_block_start","index":0,"content_block":"#
+            + #"{"type":"tool_use","id":"toolu_e","name":"get_time"}}"#
+        let lines = [
+            sseLine(toolStart),
+            sseLine(#"{"type":"content_block_stop","index":0}"#),
+            sseLine(#"{"type":"message_delta","usage":{"output_tokens":10}}"#),
+            sseLine(#"{"type":"message_stop"}"#),
+        ]
+        let state = try await processStreamWithState(client: client, lines: lines)
+        let streamBlocks = try await state.finalizedBlocks()
+        let streamContinuity = AnthropicTurnProjection(orderedBlocks: streamBlocks).continuity
+
+        #expect(blockingMsg.continuity == streamContinuity)
+    }
+}
+
 extension AnthropicClient {
     func processTestStream(
         byteStream: ControlledByteStream,
@@ -415,5 +587,22 @@ extension AnthropicClient {
             )
         }
         continuation.finish()
+    }
+
+    func processTestStreamWithState(
+        byteStream: ControlledByteStream,
+        continuation: AsyncThrowingStream<StreamDelta, Error>.Continuation
+    ) async throws -> AnthropicStreamState {
+        let state = AnthropicStreamState()
+        try await processSSEStream(
+            bytes: byteStream,
+            stallTimeout: nil
+        ) { line in
+            try await self.handleSSELine(
+                line, state: state, continuation: continuation
+            )
+        }
+        continuation.finish()
+        return state
     }
 }

@@ -280,6 +280,119 @@ struct VertexAnthropicResponseTests {
     }
 }
 
+struct VertexAnthropicContinuityTests {
+    @Test
+    func vertexBlockingParseMatchesDirectAnthropic() throws {
+        let directClient = AnthropicClient(apiKey: "test-key", model: "claude-sonnet-4-6")
+        let vertexClient = VertexAnthropicClient(
+            projectID: "p", location: "l", model: "claude-sonnet-4-6",
+            tokenProvider: { "tok" }
+        )
+        let json = """
+        {
+            "id": "msg_vertex",
+            "type": "message",
+            "role": "assistant",
+            "content": [
+                {"type": "thinking", "thinking": "Planning", "signature": "sig_v"},
+                {"type": "text", "text": "Result"},
+                {"type": "tool_use", "id": "toolu_v1", "name": "lookup",
+                 "input": {"id": 42}}
+            ],
+            "stop_reason": "tool_use",
+            "usage": {"input_tokens": 100, "output_tokens": 80}
+        }
+        """
+        let directMsg = try directClient.parseResponse(Data(json.utf8))
+        let vertexMsg = try vertexClient.anthropic.parseResponse(Data(json.utf8))
+
+        #expect(directMsg.continuity == vertexMsg.continuity)
+        #expect(directMsg.content == vertexMsg.content)
+        #expect(directMsg.toolCalls == vertexMsg.toolCalls)
+        #expect(directMsg.reasoning == vertexMsg.reasoning)
+    }
+
+    @Test
+    func vertexParseIncludesContinuity() throws {
+        let client = VertexAnthropicClient(
+            projectID: "p", location: "l", model: "m",
+            tokenProvider: { "tok" }
+        )
+        let json = """
+        {
+            "id": "msg_vc",
+            "type": "message",
+            "role": "assistant",
+            "content": [{"type": "text", "text": "Vertex response"}],
+            "stop_reason": "end_turn",
+            "usage": {"input_tokens": 50, "output_tokens": 25}
+        }
+        """
+        let msg = try client.anthropic.parseResponse(Data(json.utf8))
+        #expect(msg.continuity?.substrate == .anthropicMessages)
+    }
+}
+
+struct VertexAnthropicStreamingContinuityTests {
+    private func sseLine(_ json: String) -> String {
+        "data: \(json)"
+    }
+
+    @Test
+    func vertexStreamingEmitsContinuityViaYieldPath() async throws {
+        let vertexClient = VertexAnthropicClient(
+            projectID: "p", location: "l", model: "claude-sonnet-4-6",
+            tokenProvider: { "tok" }
+        )
+        let lines = [
+            sseLine(#"{"type":"content_block_start","index":0,"content_block":{"type":"text"}}"#),
+            sseLine(
+                #"{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Vertex streaming"}}"#
+            ),
+            sseLine(#"{"type":"content_block_stop","index":0}"#),
+            sseLine(#"{"type":"message_delta","usage":{"output_tokens":10}}"#),
+            sseLine(#"{"type":"message_stop"}"#),
+        ]
+        let allBytes = lines.joined(separator: "\n").appending("\n")
+        let (byteStream, byteContinuation) = AsyncStream<UInt8>.makeStream()
+        for byte in Array(allBytes.utf8) {
+            byteContinuation.yield(byte)
+        }
+        byteContinuation.finish()
+
+        let controlled = ControlledByteStream(stream: byteStream)
+        let state = AnthropicStreamState()
+        let runPair = AsyncThrowingStream<RunStreamElement, Error>.makeStream()
+
+        try await processSSEStream(
+            bytes: controlled,
+            stallTimeout: nil
+        ) { line in
+            try await vertexClient.anthropic.handleSSELine(line, state: state) { delta in
+                _ = runPair.continuation.yield(.delta(delta))
+            }
+        }
+
+        let blocks = try await state.finalizedBlocks()
+        #expect(!blocks.isEmpty)
+        let continuity = AnthropicTurnProjection(orderedBlocks: blocks).continuity
+        #expect(continuity.substrate == .anthropicMessages)
+
+        let blockingJSON = """
+        {
+            "id": "msg_vs",
+            "type": "message",
+            "role": "assistant",
+            "content": [{"type": "text", "text": "Vertex streaming"}],
+            "stop_reason": "end_turn",
+            "usage": {"input_tokens": 50, "output_tokens": 10}
+        }
+        """
+        let blockingMsg = try vertexClient.anthropic.parseResponse(Data(blockingJSON.utf8))
+        #expect(continuity == blockingMsg.continuity)
+    }
+}
+
 struct VertexAnthropicHistoryValidationTests {
     private let malformedHistory: [ChatMessage] = [
         .user("Hi"),

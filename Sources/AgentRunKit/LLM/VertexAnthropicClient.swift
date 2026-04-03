@@ -161,6 +161,48 @@ public struct VertexAnthropicClient: LLMClient, Sendable {
         continuation.finish()
     }
 
+    private func performRunStreamRequest(
+        messages: [ChatMessage],
+        tools: [ToolDefinition],
+        extraFields: [String: JSONValue],
+        onResponse: (@Sendable (HTTPURLResponse) -> Void)?,
+        continuation: AsyncThrowingStream<RunStreamElement, Error>.Continuation
+    ) async throws {
+        try messages.validateForLLMRequest()
+        let request = try anthropic.buildRequest(
+            messages: messages, tools: tools,
+            stream: true, transport: .vertex, extraFields: extraFields
+        )
+        let token = try await tokenProvider()
+        let urlRequest = try buildVertexURLRequest(
+            VertexAnthropicRequest(inner: request), stream: true, token: token
+        )
+        let (bytes, httpResponse) = try await HTTPRetry.performStream(
+            urlRequest: urlRequest, session: session, retryPolicy: retryPolicy
+        )
+        onResponse?(httpResponse)
+
+        let state = AnthropicStreamState()
+
+        try await processSSEStream(
+            bytes: bytes,
+            stallTimeout: retryPolicy.streamStallTimeout
+        ) { line in
+            try await anthropic.handleSSELine(line, state: state) { delta in
+                _ = continuation.yield(.delta(delta))
+            }
+        }
+
+        if await state.isCompleted {
+            let blocks = try await state.finalizedBlocks()
+            if !blocks.isEmpty {
+                let projection = AnthropicTurnProjection(orderedBlocks: blocks)
+                continuation.yield(.finalizedContinuity(projection.continuity))
+            }
+        }
+        continuation.finish()
+    }
+
     func buildVertexURLRequest(
         _ request: VertexAnthropicRequest,
         stream: Bool,
@@ -177,6 +219,32 @@ public struct VertexAnthropicClient: LLMClient, Sendable {
         var headers = ["Authorization": "Bearer \(token)"]
         anthropic.applyBetaHeaders(for: request.inner, into: &headers)
         return try buildJSONPostRequest(url: url, body: request, headers: headers)
+    }
+}
+
+extension VertexAnthropicClient: HistoryRewriteAwareClient {
+    func streamForRun(
+        messages: [ChatMessage],
+        tools: [ToolDefinition],
+        requestContext: RequestContext?,
+        requestMode _: RunRequestMode
+    ) -> AsyncThrowingStream<RunStreamElement, Error> {
+        AsyncThrowingStream { continuation in
+            let task = Task {
+                do {
+                    try await performRunStreamRequest(
+                        messages: messages,
+                        tools: tools,
+                        extraFields: requestContext?.extraFields ?? [:],
+                        onResponse: requestContext?.onResponse,
+                        continuation: continuation
+                    )
+                } catch {
+                    continuation.finish(throwing: error)
+                }
+            }
+            continuation.onTermination = { _ in task.cancel() }
+        }
     }
 }
 
