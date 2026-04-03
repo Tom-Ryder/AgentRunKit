@@ -25,6 +25,7 @@ extension ResponsesAPIClient {
             urlRequest: urlRequest, session: session, retryPolicy: retryPolicy
         )
         onResponse?(httpResponse)
+        pendingInputMessages = messages
         try await processRunStreamBytes(
             bytes: bytes,
             messagesCount: messages.count,
@@ -251,6 +252,10 @@ extension ResponsesAPIClient {
         }
         lastResponseId = resp.id
         lastMessageCount = messagesCount + 1
+        if let inputMessages = pendingInputMessages {
+            lastPrefixSignature = prefixSignature(inputMessages + [.assistant(projection.assistantMessage)])
+            pendingInputMessages = nil
+        }
         if let continuity = projection.continuity {
             continuation.yield(.finalizedContinuity(continuity))
         }
@@ -274,40 +279,27 @@ private struct TextDeltaEvent: Decodable { let delta: String }
 private struct OutputItemAddedEvent: Decodable {
     let outputIndex: Int
     let item: OutputItemStub
-
-    enum CodingKeys: String, CodingKey {
-        case outputIndex = "output_index"
-        case item
-    }
+    enum CodingKeys: String, CodingKey { case outputIndex = "output_index", item }
 }
 
 private struct OutputItemStub: Decodable {
     let type: String
     let callId: String?
     let name: String?
-
-    enum CodingKeys: String, CodingKey {
-        case type, callId = "call_id", name
-    }
+    enum CodingKeys: String, CodingKey { case type, callId = "call_id", name }
 }
 
 private struct FunctionCallArgsDeltaEvent: Decodable {
     let outputIndex: Int
     let delta: String
-
-    enum CodingKeys: String, CodingKey {
-        case outputIndex = "output_index", delta
-    }
+    enum CodingKeys: String, CodingKey { case outputIndex = "output_index", delta }
 }
 
 private struct ReasoningSummaryDeltaEvent: Decodable {
     let delta: String
     let outputIndex: Int?
     let summaryIndex: Int?
-
-    enum CodingKeys: String, CodingKey {
-        case delta, outputIndex = "output_index", summaryIndex = "summary_index"
-    }
+    enum CodingKeys: String, CodingKey { case delta, outputIndex = "output_index", summaryIndex = "summary_index" }
 }
 
 private struct OutputItemDoneEvent: Decodable { let item: OutputItemDoneItem }

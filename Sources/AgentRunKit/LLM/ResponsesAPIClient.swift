@@ -16,6 +16,8 @@ public actor ResponsesAPIClient: LLMClient, HistoryRewriteAwareClient {
 
     var lastResponseId: String?
     var lastMessageCount: Int = 0
+    var lastPrefixSignature: Data = .init()
+    var pendingInputMessages: [ChatMessage]?
 
     public init(
         apiKey: String? = nil,
@@ -97,6 +99,7 @@ extension ResponsesAPIClient {
         let message = projectResponse(response).assistantMessage
         lastResponseId = response.id
         lastMessageCount = messages.count + 1
+        lastPrefixSignature = prefixSignature(messages + [.assistant(message)])
         return message
     }
 
@@ -154,6 +157,8 @@ extension ResponsesAPIClient {
     public func resetConversation() {
         lastResponseId = nil
         lastMessageCount = 0
+        lastPrefixSignature = Data()
+        pendingInputMessages = nil
     }
 
     func buildRequest(
@@ -174,7 +179,9 @@ extension ResponsesAPIClient {
             )
         }
 
-        if store, let previousId = lastResponseId, messages.count >= lastMessageCount {
+        if store, let previousId = lastResponseId, messages.count >= lastMessageCount,
+           lastMessageCount > 0,
+           prefixSignature(messages.prefix(lastMessageCount)) == lastPrefixSignature {
             return try buildDeltaRequest(
                 messages: messages,
                 tools: tools,
@@ -347,7 +354,7 @@ extension ResponsesAPIClient {
     }
 }
 
-private extension ResponsesAPIClient.ResponsesTurnProjection {
+extension ResponsesAPIClient.ResponsesTurnProjection {
     var assistantMessage: AssistantMessage {
         AssistantMessage(
             content: content,

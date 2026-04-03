@@ -30,17 +30,18 @@ struct ResponsesServerSideStateTests {
         )
 
         let initial: [ChatMessage] = [.system("Be helpful"), .user("Hello")]
-        _ = try await client.buildRequest(messages: initial, tools: [])
-
-        await client.setLastResponseId("resp_001")
-        await client.setLastMessageCount(initial.count)
-
         let toolCall = ToolCall(id: "call_1", name: "search", arguments: "{}")
+        let priorResponse = AssistantMessage(content: "", toolCalls: [toolCall])
+
+        await client.setCursorState(
+            responseId: "resp_001",
+            messages: initial + [.assistant(priorResponse)]
+        )
+
         let updated = initial + [
-            .assistant(AssistantMessage(content: "", toolCalls: [toolCall])),
+            .assistant(priorResponse),
             .tool(id: "call_1", name: "search", content: "result"),
         ]
-
         let request = try await client.buildRequest(messages: updated, tools: [])
         let json = try encodeRequest(request)
 
@@ -62,6 +63,7 @@ struct ResponsesServerSideStateTests {
 
         await client.setLastResponseId("resp_001")
         await client.setLastMessageCount(5)
+        await client.setLastPrefixSignature(Data([42]))
 
         let request = try await client.buildRequest(messages: [.user("Short")], tools: [])
         let json = try encodeRequest(request)
@@ -82,10 +84,12 @@ struct ResponsesServerSideStateTests {
 
         await client.setLastResponseId("resp_001")
         await client.setLastMessageCount(5)
+        await client.setLastPrefixSignature(Data([42]))
         await client.resetConversation()
 
         #expect(await client.lastResponseId == nil)
         #expect(await client.lastMessageCount == 0)
+        #expect(await client.lastPrefixSignature.isEmpty)
     }
 
     @Test
@@ -129,6 +133,7 @@ struct ResponsesServerSideStateTests {
 
         await client.setLastResponseId("resp_001")
         await client.setLastMessageCount(5)
+        await client.setLastPrefixSignature(Data([42]))
 
         let response = try await client.generate(
             messages: [.user("Short")],
@@ -161,6 +166,7 @@ struct ResponsesServerSideStateTests {
 
         await client.setLastResponseId("resp_001")
         await client.setLastMessageCount(2)
+        await client.setLastPrefixSignature(Data([42]))
 
         let request = try await client.buildRequest(
             messages: messages,
@@ -223,6 +229,7 @@ struct ResponsesServerSideStateTests {
 
         await client.setLastResponseId("resp_001")
         await client.setLastMessageCount(2)
+        await client.setLastPrefixSignature(Data([42]))
 
         let response = try await client.generate(
             messages: messages,
@@ -287,6 +294,7 @@ struct ResponsesServerSideStateTests {
 
         await client.setLastResponseId("resp_001")
         await client.setLastMessageCount(2)
+        await client.setLastPrefixSignature(Data([42]))
 
         let request = try await client.buildRequest(
             messages: messages,
@@ -349,6 +357,7 @@ struct ResponsesServerSideStateTests {
 
         await client.setLastResponseId("resp_summary")
         await client.setLastMessageCount(messages.count)
+        await client.setLastPrefixSignature(Data([42]))
 
         do {
             _ = try await client.generate(
@@ -409,10 +418,14 @@ struct ResponsesServerSideStateTests {
             retryPolicy: .none,
             store: true
         )
-        let messages: [ChatMessage] = [.user("Hello")]
+        let priorInput: [ChatMessage] = [.user("Hello")]
+        let priorResponse = AssistantMessage(content: "Hi there")
+        await client.setCursorState(
+            responseId: "resp_prev",
+            messages: priorInput + [.assistant(priorResponse)]
+        )
 
-        await client.setLastResponseId("resp_prev")
-        await client.setLastMessageCount(messages.count)
+        let messages = priorInput + [.assistant(priorResponse), .user("Follow up")]
 
         await #expect(throws: AgentError.self) {
             _ = try await client.generate(
@@ -426,7 +439,7 @@ struct ResponsesServerSideStateTests {
         let requestBody = try ResponsesTestURLProtocol.recordedBody(for: requestURL)
         #expect(requestBody["previous_response_id"] as? String == "resp_prev")
         #expect(await client.lastResponseId == "resp_prev")
-        #expect(await client.lastMessageCount == messages.count)
+        #expect(await client.lastMessageCount == priorInput.count + 1)
     }
 }
 
@@ -468,6 +481,7 @@ struct ResponsesStreamingCursorTests {
 
         await client.setLastResponseId("resp_001")
         await client.setLastMessageCount(5)
+        await client.setLastPrefixSignature(Data([42]))
 
         let stream = client.streamForRun(
             messages: [.user("Hi")],
@@ -662,10 +676,13 @@ struct ResponsesMultiTurnRoundTripTests {
         #expect(turn1Json["previous_response_id"] == nil)
         #expect(turn1Json["instructions"] as? String == "You are a helpful assistant.")
 
-        await client.setLastResponseId("resp_turn1")
-        await client.setLastMessageCount(turn1Messages.count + 1)
-
         let toolCall = ToolCall(id: "call_weather", name: "get_weather", arguments: "{\"city\":\"NYC\"}")
+        let turn1Response = AssistantMessage(content: "", toolCalls: [toolCall])
+        await client.setCursorState(
+            responseId: "resp_turn1",
+            messages: turn1Messages + [.assistant(turn1Response)]
+        )
+
         let turn2Messages = turn1Messages + [
             .assistant(AssistantMessage(content: "", toolCalls: [toolCall])),
             .tool(id: "call_weather", name: "get_weather", content: "{\"temp\":72}"),

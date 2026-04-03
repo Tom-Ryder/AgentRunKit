@@ -225,4 +225,17 @@ extension ResponsesAPIClient {
     func setLastMessageCount(_ count: Int) {
         lastMessageCount = count
     }
+
+    func setLastPrefixSignature(_ signature: Data) {
+        lastPrefixSignature = signature
+    }
+
+    func setCursorState(
+        responseId: String,
+        messages: [ChatMessage]
+    ) {
+        lastResponseId = responseId
+        lastMessageCount = messages.count
+        lastPrefixSignature = prefixSignature(messages)
+    }
 }

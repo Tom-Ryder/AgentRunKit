@@ -438,3 +438,17 @@ private extension JSONValue {
         return .object(updated)
     }
 }
+
+extension ResponsesAPIClient {
+    nonisolated func prefixSignature<C: RandomAccessCollection>(
+        _ messages: C
+    ) -> Data where C.Element == ChatMessage {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        do {
+            return try encoder.encode(Array(messages))
+        } catch {
+            preconditionFailure("ChatMessage encoding failed during Responses cursor identity generation: \(error)")
+        }
+    }
+}
