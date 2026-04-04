@@ -47,7 +47,7 @@ Outbound replay is controlled by ``OpenAIChatAssistantReplayProfile``, which def
 
 One opt-in profile is available:
 
-- `.openRouterReasoningDetails`: emits `reasoning_details` on assistant turns, matching OpenRouter's documented contract for preserving encrypted reasoning blocks across turns. Does not emit `reasoning_content`.
+- `.openRouterReasoningDetails`: emits `reasoning_details` on assistant turns, matching OpenRouter's documented Chat Completions replay contract. Does not emit `reasoning_content`.
 
 ```swift
 let client = OpenAIClient(
@@ -59,11 +59,35 @@ let client = OpenAIClient(
 )
 ```
 
-Together's preserved-thinking replay depends on a provider-specific mode (`clear_thinking`) not yet modeled by the client, so it remains conservative in this release. For first-party OpenAI reasoning continuity, use ``ResponsesAPIClient``.
+Together's preserved-thinking replay depends on a provider-specific mode (`clear_thinking`) not yet modeled by the client, so it remains conservative in this release. For first-party OpenAI reasoning continuity, and for Responses-native OpenRouter models such as xAI Grok, use ``ResponsesAPIClient`` instead. See `Targeting OpenRouter with ResponsesAPIClient` below.
 
 ## ResponsesAPIClient vs OpenAIClient
 
-Both connect to OpenAI. ``OpenAIClient`` uses the Chat Completions API, a stateless request/response protocol shared by many compatible providers (OpenRouter, Groq, Together, Ollama). ``ResponsesAPIClient`` uses the Responses API, which maintains server-side conversation state and supports delta requests that send only new messages since the last response.
+``OpenAIClient`` uses the Chat Completions API, a stateless request/response protocol shared by many compatible providers (OpenRouter, Groq, Together, Ollama). ``ResponsesAPIClient`` uses the Responses API, a different wire format that carries richer turn state including reasoning items and provider-native output items. Against first-party OpenAI, it also maintains server-side conversation state and supports delta requests that send only new messages since the last response.
+
+### Targeting OpenRouter with ResponsesAPIClient
+
+``ResponsesAPIClient`` is not locked to OpenAI. It accepts any base URL and works with OpenRouter's `/v1/responses` endpoint for models that OpenRouter routes through the Responses protocol. Point it at `OpenAIClient.openRouterBaseURL`:
+
+```swift
+let client = ResponsesAPIClient(
+    apiKey: "sk-or-...",
+    model: "x-ai/grok-4",
+    maxOutputTokens: 4096,
+    baseURL: OpenAIClient.openRouterBaseURL,
+    reasoningConfig: .high,
+    store: false
+)
+```
+
+Prefer ``ResponsesAPIClient`` over ``OpenAIClient`` on OpenRouter when:
+
+- The target model is Responses-API-native rather than Chat-Completions-native.
+- Provider-native reasoning continuity depends on preserving full Responses output items across turns.
+
+xAI Grok models are the canonical case. Grok returns encrypted reasoning artifacts as Responses output items, and ``ResponsesAPIClient`` preserves those items in ``AssistantContinuity`` for lossless replay on the next turn. ``OpenAIClient`` with `.openRouterReasoningDetails` flattens reasoning back to Chat Completions `reasoning_details`, which is the right contract for Chat-Completions-native OpenRouter models but not for Responses-native Grok. Set `store: false` on ``ResponsesAPIClient`` when targeting OpenRouter: this makes the client request `reasoning.encrypted_content` and send full history on every call, which matches OpenRouter's stateless Responses routing.
+
+``OpenAIClient`` remains the correct Chat Completions transport for OpenRouter models that are not Responses-native. The two clients are independent paths, not substitutes: pick the one the target model speaks.
 
 ## OpenAI-Compatible Base URLs
 
