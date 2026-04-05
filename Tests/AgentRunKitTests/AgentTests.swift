@@ -238,6 +238,50 @@ struct AgentTests {
             return
         }
     }
+
+    @Test
+    func runTerminatesOnContentOnlyResponseForContentOnlyClient() async throws {
+        let client = ContentOnlyTerminatingMockLLMClient(generateResponses: [
+            AssistantMessage(content: "42", toolCalls: [])
+        ])
+        let agent = Agent<EmptyContext>(client: client, tools: [])
+        let result = try await agent.run(userMessage: "Q", context: EmptyContext())
+
+        #expect(result.finishReason == .completed)
+        #expect(result.content == "42")
+        #expect(result.iterations == 1)
+
+        let invocationCount = await client.invocationCount
+        #expect(invocationCount == 1)
+    }
+
+    @Test
+    func runEmptyContentFallsThroughToStructuralExhaustion() async throws {
+        let client = ContentOnlyTerminatingMockLLMClient(generateResponses: [
+            AssistantMessage(content: "", toolCalls: []),
+            AssistantMessage(content: "", toolCalls: []),
+            AssistantMessage(content: "", toolCalls: [])
+        ])
+        let config = AgentConfiguration(maxIterations: 3)
+        let agent = Agent<EmptyContext>(client: client, tools: [], configuration: config)
+        let result = try await agent.run(userMessage: "Q", context: EmptyContext())
+
+        #expect(result.finishReason == .maxIterationsReached(limit: 3))
+        #expect(result.content == nil)
+    }
+
+    @Test
+    func runWhitespaceOnlyContentTerminatesForContentOnlyClient() async throws {
+        let client = ContentOnlyTerminatingMockLLMClient(generateResponses: [
+            AssistantMessage(content: "   ", toolCalls: [])
+        ])
+        let agent = Agent<EmptyContext>(client: client, tools: [])
+        let result = try await agent.run(userMessage: "Q", context: EmptyContext())
+
+        #expect(result.finishReason == .completed)
+        #expect(result.content == "   ")
+        #expect(result.iterations == 1)
+    }
 }
 
 struct AgentTokenBudgetTests {

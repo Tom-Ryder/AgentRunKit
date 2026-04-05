@@ -59,6 +59,60 @@ actor StreamingMockLLMClient: LLMClient {
     }
 }
 
+actor ContentOnlyTerminatingMockLLMClient: LLMClient, ContentOnlyTerminatingClient {
+    private let inner: StreamingMockLLMClient
+    private(set) var invocationCount = 0
+
+    init(
+        generateResponses: [AssistantMessage] = [],
+        streamSequences: [[StreamDelta]] = []
+    ) {
+        inner = StreamingMockLLMClient(
+            generateResponses: generateResponses,
+            streamSequences: streamSequences
+        )
+    }
+
+    func generate(
+        messages: [ChatMessage],
+        tools: [ToolDefinition],
+        responseFormat: ResponseFormat?,
+        requestContext: RequestContext?
+    ) async throws -> AssistantMessage {
+        invocationCount += 1
+        return try await inner.generate(
+            messages: messages, tools: tools,
+            responseFormat: responseFormat, requestContext: requestContext
+        )
+    }
+
+    func recordStreamInvocation() {
+        invocationCount += 1
+    }
+
+    nonisolated func stream(
+        messages: [ChatMessage],
+        tools: [ToolDefinition],
+        requestContext: RequestContext?
+    ) -> AsyncThrowingStream<StreamDelta, Error> {
+        AsyncThrowingStream { continuation in
+            Task {
+                await self.recordStreamInvocation()
+                do {
+                    for try await delta in self.inner.stream(
+                        messages: messages, tools: tools, requestContext: requestContext
+                    ) {
+                        continuation.yield(delta)
+                    }
+                    continuation.finish()
+                } catch {
+                    continuation.finish(throwing: error)
+                }
+            }
+        }
+    }
+}
+
 actor GenerateOnlyMockLLMClient: LLMClient {
     private let responses: [AssistantMessage]
     private var callIndex = 0

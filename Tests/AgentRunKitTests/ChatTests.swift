@@ -173,6 +173,34 @@ struct ChatTests {
     }
 
     @Test
+    func unknownToolFeedbackSurvivesContentOnlyTermination() async throws {
+        let firstStreamDeltas: [StreamDelta] = [
+            .toolCallStart(index: 0, id: "call_1", name: "nonexistent"),
+            .toolCallDelta(index: 0, arguments: "{}"),
+            .finished(usage: TokenUsage(input: 10, output: 5))
+        ]
+        let secondStreamDeltas: [StreamDelta] = [
+            .content("Tool not found"),
+            .finished(usage: TokenUsage(input: 20, output: 10))
+        ]
+        let client = StreamingMockLLMClient(streamSequences: [firstStreamDeltas, secondStreamDeltas])
+        let chat = Chat<EmptyContext>(client: client, tools: [])
+
+        var events: [StreamEvent] = []
+        for try await event in chat.stream("Q", context: EmptyContext()) {
+            events.append(event)
+        }
+
+        let toolCompletedEvent = events.first { event in
+            if case let .toolCallCompleted(_, _, result) = event.kind {
+                return result.isError && result.content.contains("does not exist")
+            }
+            return false
+        }
+        #expect(toolCompletedEvent != nil)
+    }
+
+    @Test
     func respectsCancellation() async throws {
         let client = ControllableStreamingMockLLMClient()
         let chat = Chat<EmptyContext>(client: client)
@@ -470,6 +498,39 @@ private actor ChatCapturingMockLLMClient: LLMClient {
 }
 
 struct ChatStreamingEdgeTests {
+    @Test
+    func streamTerminatesOnContentOnlyIterationWithNilTerminalFields() async throws {
+        let deltas: [StreamDelta] = [
+            .content("Hello world"),
+            .finished(usage: TokenUsage(input: 5, output: 3))
+        ]
+        let client = StreamingMockLLMClient(streamSequences: [deltas])
+        let chat = Chat<EmptyContext>(client: client, tools: [])
+
+        var events: [StreamEvent] = []
+        for try await event in chat.stream("Q", context: EmptyContext()) {
+            events.append(event)
+        }
+
+        let deltaEvents = events.filter {
+            if case .delta = $0.kind { true } else { false }
+        }
+        #expect(deltaEvents.count == 1)
+        #expect(deltaEvents.first?.kind == .delta("Hello world"))
+
+        let toolCompletedEvents = events.filter {
+            if case .toolCallCompleted = $0.kind { true } else { false }
+        }
+        #expect(toolCompletedEvents.isEmpty)
+
+        guard case let .finished(_, content, reason, _) = events.last?.kind else {
+            Issue.record("Expected finished event")
+            return
+        }
+        #expect(content == nil)
+        #expect(reason == nil)
+    }
+
     @Test
     func outOfOrderDeltasBuffered() async throws {
         let echoTool = try Tool<EchoParams, EchoOutput, EmptyContext>(

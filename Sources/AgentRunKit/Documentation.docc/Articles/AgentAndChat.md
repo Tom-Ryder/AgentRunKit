@@ -25,6 +25,7 @@ if let content = result.content {
 
 Key behaviors:
 - Injects a `finish` tool automatically. The model must call it to end the loop.
+- Alternate termination for on-device clients: when the LLM client cannot surface tool calls in its response (e.g., `FoundationModelsClient`), the loop terminates on the first iteration that produces content without tool calls. The user-visible contract is unchanged.
 - Enforces ``AgentConfiguration/maxIterations`` to prevent runaway loops (default: 10).
 - Supports context compaction via ``AgentConfiguration/compactionThreshold`` and ``AgentConfiguration/compactionPrompt``.
 - Accepts a `tokenBudget` parameter on each `run()` or `stream()` call.
@@ -106,7 +107,7 @@ See <doc:ContextManagement> for details on compaction and context budgets.
 | `iterations` | `Int` | Number of generate/tool-call cycles executed |
 | `history` | `[ChatMessage]` | Full conversation including system prompt, user messages, assistant responses, and tool results |
 
-Completed finish-tool paths still produce non-`nil` content. Structural runtime termination does not synthesize an empty string.
+Completed paths, whether terminated by the `finish` tool or by a content-only iteration from an on-device client, produce non-`nil` content. Structural runtime termination does not synthesize an empty string.
 
 ## Multi-Turn History
 

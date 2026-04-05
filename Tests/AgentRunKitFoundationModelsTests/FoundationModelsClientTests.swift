@@ -25,40 +25,6 @@
             }
         }
 
-        @Test func synthesizeFinishStructure() {
-            guard #available(macOS 26, iOS 26, *) else { return }
-            let message = FoundationModelsClient<EmptyContext>.synthesizeFinish(content: "Hello")
-            #expect(message.toolCalls.count == 1)
-            #expect(message.toolCalls[0].id == "fm_finish")
-            #expect(message.toolCalls[0].name == "finish")
-            #expect(message.content.isEmpty)
-        }
-
-        @Test func synthesizeFinishRoundTrip() throws {
-            guard #available(macOS 26, iOS 26, *) else { return }
-            let message = FoundationModelsClient<EmptyContext>.synthesizeFinish(content: "Test content")
-            let data = Data(message.toolCalls[0].arguments.utf8)
-            let decoded = try JSONDecoder().decode(FinishArguments.self, from: data)
-            #expect(decoded.content == "Test content")
-        }
-
-        @Test func synthesizeFinishSpecialCharacters() throws {
-            guard #available(macOS 26, iOS 26, *) else { return }
-            let content = #"She said "hello" & <goodbye> \n tab:\t end"#
-            let message = FoundationModelsClient<EmptyContext>.synthesizeFinish(content: content)
-            let data = Data(message.toolCalls[0].arguments.utf8)
-            let decoded = try JSONDecoder().decode(FinishArguments.self, from: data)
-            #expect(decoded.content == content)
-        }
-
-        @Test func synthesizeFinishEmptyContent() throws {
-            guard #available(macOS 26, iOS 26, *) else { return }
-            let message = FoundationModelsClient<EmptyContext>.synthesizeFinish(content: "")
-            let data = Data(message.toolCalls[0].arguments.utf8)
-            let decoded = try JSONDecoder().decode(FinishArguments.self, from: data)
-            #expect(decoded.content.isEmpty)
-        }
-
         @Test func mergeInstructionsBothPresent() {
             guard #available(macOS 26, iOS 26, *) else { return }
             let client = FoundationModelsClient<EmptyContext>(

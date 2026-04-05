@@ -178,6 +178,18 @@ extension Agent {
                 )
             }
 
+            if client is any ContentOnlyTerminatingClient,
+               response.toolCalls.isEmpty,
+               !response.content.isEmpty {
+                return try AgentResult(
+                    finishReason: .completed,
+                    content: response.content,
+                    totalTokenUsage: totalUsage,
+                    iterations: iteration,
+                    history: state.messages.sanitizedTerminalHistory()
+                )
+            }
+
             if let terminalResult = try await finalizeRunIteration(
                 toolCalls: response.toolCalls,
                 context: context,
@@ -341,11 +353,12 @@ extension Agent {
             state.messages.append(.assistant(iteration.toAssistantMessage()))
             let budgetUsage = try requireBudgetUsage(iteration.usage, budgetPhase: state.budgetPhase)
 
-            if let finishCall = try exclusiveFinishCall(in: iteration.toolCalls) {
-                try finishStreaming(
-                    continuation: continuation,
-                    event: parseFinishEvent(from: finishCall, tokenUsage: totalUsage, history: state.messages)
-                )
+            if try tryFinishOnTerminalEvent(
+                iteration: iteration,
+                totalUsage: totalUsage,
+                history: state.messages,
+                continuation: continuation
+            ) {
                 return
             }
 
@@ -413,7 +426,7 @@ extension Agent {
         )
     }
 
-    private func makeFinishedEvent(
+    func makeFinishedEvent(
         tokenUsage: TokenUsage,
         content: String?,
         reason: FinishReason?,
@@ -475,7 +488,7 @@ extension Agent {
         return true
     }
 
-    private func finishStreaming(
+    func finishStreaming(
         continuation: AsyncThrowingStream<StreamEvent, Error>.Continuation,
         event: StreamEvent
     ) {

@@ -30,7 +30,6 @@
         }
     }
 
-    @Suite(.disabled("Requires Apple Intelligence on-device"))
     struct FMSmokeTest {
         @Test func agentRunWithCalculator() async throws {
             guard #available(macOS 26, iOS 26, *) else { return }
@@ -112,14 +111,64 @@
             )
 
             print("=== No-tool generate ===")
-            print("Response toolCalls: \(response.toolCalls)")
-            #expect(response.toolCalls.count == 1)
-            #expect(response.toolCalls[0].name == "finish")
+            print("Response content: \(response.content)")
+            #expect(response.toolCalls.isEmpty)
+            #expect(!response.content.isEmpty)
+        }
 
-            let finishData = Data(response.toolCalls[0].arguments.utf8)
-            let finish = try JSONDecoder().decode(FinishArguments.self, from: finishData)
-            print("Finish content: \(finish.content)")
-            #expect(!finish.content.isEmpty)
+        @Test func chatStreamWithCalculator() async throws {
+            guard #available(macOS 26, iOS 26, *) else { return }
+            guard SystemLanguageModel.default.isAvailable else {
+                print("SKIP: On-device model not available")
+                return
+            }
+
+            let client = FoundationModelsClient(
+                tools: [CalculatorTool()],
+                context: EmptyContext(),
+                instructions: "You are a calculator assistant. Use the calculate tool to answer math questions."
+            )
+            let chat = Chat<EmptyContext>(client: client, tools: [CalculatorTool()])
+
+            print("=== Chat.stream() ===")
+            var accumulatedDelta = ""
+            var terminalReason: FinishReason?
+            var sawTerminalEvent = false
+            for try await event in chat.stream("What is 2 + 2?", context: EmptyContext()) {
+                switch event.kind {
+                case let .delta(text) where !text.isEmpty:
+                    accumulatedDelta += text
+                    print("[DELTA] \(text)", terminator: "")
+                case let .finished(_, content, reason, _):
+                    sawTerminalEvent = true
+                    terminalReason = reason
+                    print("\n[FINISHED] content: \(content ?? "(nil)") reason: \(String(describing: reason))")
+                default:
+                    break
+                }
+            }
+            print()
+
+            #expect(sawTerminalEvent)
+            #expect(terminalReason == nil)
+            #expect(!accumulatedDelta.isEmpty)
+        }
+
+        @Test func chatSendReturnsPlainContent() async throws {
+            guard #available(macOS 26, iOS 26, *) else { return }
+            guard SystemLanguageModel.default.isAvailable else {
+                print("SKIP: On-device model not available")
+                return
+            }
+
+            let client = FoundationModelsClient<EmptyContext>(context: EmptyContext())
+            let chat = Chat<EmptyContext>(client: client)
+            let (response, _) = try await chat.send("Say hello in one word.")
+
+            print("=== Chat.send() ===")
+            print("Response content: \(response.content)")
+            #expect(!response.content.isEmpty)
+            #expect(response.toolCalls.isEmpty)
         }
     }
 

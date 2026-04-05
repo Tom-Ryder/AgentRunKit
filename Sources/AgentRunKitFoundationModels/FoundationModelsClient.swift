@@ -42,7 +42,7 @@
             }
             let session = makeSession(adapters: adapters, mapped: mapped)
             let response = try await session.respond(to: mapped.prompt)
-            return Self.synthesizeFinish(content: response.content)
+            return AssistantMessage(content: response.content)
         }
 
         public func stream(
@@ -62,7 +62,6 @@
 
                         let stream = session.streamResponse(to: mapped.prompt)
                         var previousUTF8Count = 0
-                        var accumulatedContent = ""
 
                         for try await snapshot in stream {
                             let current = snapshot.content
@@ -77,21 +76,9 @@
                                     continuation.yield(.content(delta))
                                 }
                             }
-                            accumulatedContent = current
                             previousUTF8Count = currentUTF8Count
                         }
 
-                        let finishMessage = Self.synthesizeFinish(
-                            content: accumulatedContent
-                        )
-                        if let finishCall = finishMessage.toolCalls.first {
-                            continuation.yield(.toolCallStart(
-                                index: 0, id: finishCall.id, name: finishCall.name
-                            ))
-                            continuation.yield(.toolCallDelta(
-                                index: 0, arguments: finishCall.arguments
-                            ))
-                        }
                         continuation.yield(.finished(usage: nil))
                         continuation.finish()
                     } catch {
@@ -126,19 +113,6 @@
             }
         }
 
-        static func synthesizeFinish(content: String) -> AssistantMessage {
-            let finishArgs = FinishArguments(content: content)
-            guard let data = try? JSONEncoder().encode(finishArgs),
-                  let arguments = String(data: data, encoding: .utf8)
-            else {
-                preconditionFailure("FinishArguments encoding failed")
-            }
-            let finishCall = ToolCall(
-                id: "fm_finish", name: "finish", arguments: arguments
-            )
-            return AssistantMessage(content: "", toolCalls: [finishCall])
-        }
-
         private func mapError(_ error: Error) -> Error {
             if let agentError = error as? AgentError {
                 return agentError
@@ -146,5 +120,8 @@
             return AgentError.llmError(.other(String(describing: error)))
         }
     }
+
+    @available(macOS 26, iOS 26, *)
+    extension FoundationModelsClient: ContentOnlyTerminatingClient {}
 
 #endif
