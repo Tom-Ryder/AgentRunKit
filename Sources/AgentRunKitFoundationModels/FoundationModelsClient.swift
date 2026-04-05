@@ -62,7 +62,6 @@
 
                         let stream = session.streamResponse(to: mapped.prompt)
                         var previousUTF8Count = 0
-                        var accumulatedContent = ""
 
                         for try await snapshot in stream {
                             let current = snapshot.content
@@ -77,21 +76,9 @@
                                     continuation.yield(.content(delta))
                                 }
                             }
-                            accumulatedContent = current
                             previousUTF8Count = currentUTF8Count
                         }
 
-                        let finishMessage = Self.synthesizeFinish(
-                            content: accumulatedContent
-                        )
-                        if let finishCall = finishMessage.toolCalls.first {
-                            continuation.yield(.toolCallStart(
-                                index: 0, id: finishCall.id, name: finishCall.name
-                            ))
-                            continuation.yield(.toolCallDelta(
-                                index: 0, arguments: finishCall.arguments
-                            ))
-                        }
                         continuation.yield(.finished(usage: nil))
                         continuation.finish()
                     } catch {
