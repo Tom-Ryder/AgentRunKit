@@ -230,8 +230,7 @@ struct AgentStreamingTests {
 
         await client.yieldDelta(.content("First"))
         await client.yieldDelta(.content("Second"))
-
-        try await Task.sleep(for: .milliseconds(10))
+        await collector.waitForFirstEvent()
 
         task.cancel()
 

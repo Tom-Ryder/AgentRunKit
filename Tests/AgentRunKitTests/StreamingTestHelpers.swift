@@ -216,9 +216,25 @@ actor ContinuityStreamingMockLLMClient: LLMClient, HistoryRewriteAwareClient {
 
 actor StreamingEventCollector {
     private(set) var events: [StreamEvent] = []
+    private var firstEventWaiters: [CheckedContinuation<Void, Never>] = []
 
     func append(_ event: StreamEvent) {
         events.append(event)
+        guard events.count == 1 else { return }
+        let waiters = firstEventWaiters
+        firstEventWaiters.removeAll(keepingCapacity: false)
+        for waiter in waiters {
+            waiter.resume()
+        }
+    }
+
+    func waitForFirstEvent() async {
+        if !events.isEmpty {
+            return
+        }
+        await withCheckedContinuation { continuation in
+            firstEventWaiters.append(continuation)
+        }
     }
 }
 
