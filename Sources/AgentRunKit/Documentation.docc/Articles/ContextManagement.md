@@ -11,10 +11,9 @@ LLM context windows are finite. A long agent session with many tool calls can ex
 Two values drive compaction. Set `contextWindowSize` on the client so the framework knows the model's limit, and set `compactionThreshold` on ``AgentConfiguration`` to define when compaction fires:
 
 ```swift
-let client = OpenAIClient(
+let client = OpenAIClient.openAI(
     apiKey: "sk-...",
     model: "gpt-5.4",
-    baseURL: OpenAIClient.openAIBaseURL,
     contextWindowSize: 1_050_000
 )
 

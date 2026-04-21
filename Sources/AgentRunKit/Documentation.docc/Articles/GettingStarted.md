@@ -27,11 +27,7 @@ struct WeatherParams: Codable, SchemaProviding, Sendable {
     let city: String
 }
 
-let client = OpenAIClient(
-    apiKey: "sk-...",
-    model: "gpt-5.4",
-    baseURL: OpenAIClient.openAIBaseURL
-)
+let client = OpenAIClient.openAI(apiKey: "sk-...", model: "gpt-5.4")
 
 let weatherTool = try Tool<WeatherParams, String, EmptyContext>(
     name: "get_weather",

@@ -19,7 +19,7 @@ AgentRunKit provides a complete agent loop (generate a response, execute tool ca
 ```swift
 import AgentRunKit
 
-let client = OpenAIClient(apiKey: "sk-...", model: "gpt-5.4", baseURL: OpenAIClient.openAIBaseURL)
+let client = OpenAIClient.openAI(apiKey: "sk-...", model: "gpt-5.4")
 
 let weatherTool = try Tool<WeatherParams, String, EmptyContext>(
     name: "get_weather",
@@ -76,6 +76,7 @@ For a complete walkthrough, see <doc:GettingStarted>.
 - <doc:LLMProviders>
 - ``LLMClient``
 - ``OpenAIClient``
+- ``OpenAIChatProfile``
 - ``OpenAIChatAssistantReplayProfile``
 - ``AnthropicClient``
 - ``AnthropicReasoningOptions``
@@ -85,6 +86,15 @@ For a complete walkthrough, see <doc:GettingStarted>.
 - ``ResponsesAPIClient``
 - ``RetryPolicy``
 - ``GoogleAuthService``
+
+### Provider Capabilities
+
+- ``OpenAIChatCapabilities``
+- ``AnthropicCapabilities``
+- ``AnthropicModelFamily``
+- ``GeminiCapabilities``
+- ``GeminiModelFamily``
+- ``OpaqueResponseItem``
 
 ### Structured Output
 
@@ -122,6 +132,7 @@ For a complete walkthrough, see <doc:GettingStarted>.
 - ``AssistantMessage``
 - ``ContentPart``
 - ``ToolCall``
+- ``ToolCallKind``
 - ``TokenUsage``
 - ``ReasoningContent``
 - ``ReasoningConfig``

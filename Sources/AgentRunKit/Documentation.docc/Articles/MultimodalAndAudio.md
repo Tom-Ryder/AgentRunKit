@@ -44,7 +44,22 @@ let msg = ChatMessage.user([
 ])
 ```
 
-``AudioInputFormat`` supports: `wav`, `mp3`, `m4a`, `flac`, `ogg`, `opus`, `webm`. Each case provides a `mimeType` property for wire format encoding. Provider support varies by model. See <doc:LLMProviders>.
+``AudioInputFormat`` supports: `wav`, `mp3`, `m4a`, `flac`, `ogg`, `opus`, `webm`. Each case provides a `mimeType` property for wire format encoding.
+
+## Per-Provider Encoding
+
+Each client encodes ``ContentPart`` onto its native wire format. Encoding and accepted media types vary:
+
+| Provider | Images | Audio | Video | PDF | Wire format |
+|---|---|---|---|---|---|
+| ``OpenAIClient`` | URL, base64 | Yes | No | No | `content: [{type: "image_url" \| ...}]` |
+| ``ResponsesAPIClient`` | URL, base64 | No | No | No | `content: [{type: "input_image" \| ...}]` |
+| ``AnthropicClient`` | base64 | No | No | base64 | `content: [{type: "image" \| "document", source: {type: "base64", media_type, data}}]` |
+| ``VertexAnthropicClient`` | base64 | No | No | base64 | same as ``AnthropicClient`` |
+| ``GeminiClient`` | base64 | base64 | base64 | base64 | `parts: [{inlineData: {mimeType, data}}]` |
+| ``VertexGoogleClient`` | base64 | base64 | base64 | base64 | same as ``GeminiClient`` |
+
+Anthropic and Gemini reject raw image URLs because neither provider fetches external URLs server-side. Passing an `.imageURL` part to either client throws ``TransportError/featureUnsupported(provider:feature:)`` at request build. Fetch the bytes yourself and pass them as `.imageBase64`.
 
 ## Audio Streaming Output
 

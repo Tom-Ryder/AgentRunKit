@@ -18,14 +18,16 @@ Any type conforming to ``LLMClient`` works with ``Agent``, ``Chat``, and ``SubAg
 
 ## Provider Feature Matrix
 
-| Provider | Auth | Structured Output | Reasoning | Prompt Caching | Transcription |
-|---|---|---|---|---|---|
-| ``OpenAIClient`` | Bearer token (optional) | Yes | Yes (GPT-5/o-series) | No | Yes |
-| ``AnthropicClient`` | x-api-key (required) | No | Yes (adaptive + manual) | Yes | No |
-| ``GeminiClient`` | URL query param (required) | Yes | Yes (levels) | No | No |
-| ``VertexAnthropicClient`` | OAuth closure (required) | No | Yes (adaptive + manual) | Yes | No |
-| ``VertexGoogleClient`` | OAuth closure (required) | Yes | Yes | No | No |
-| ``ResponsesAPIClient`` | Bearer token (optional) | Yes | Yes | No | No |
+| Provider | Auth | Structured Output | Reasoning | Multimodal | Prompt Caching | Transcription |
+|---|---|---|---|---|---|---|
+| ``OpenAIClient`` | Bearer token (optional) | Yes | Yes (GPT-5/o-series) | Images (URL, base64) | No | Yes |
+| ``AnthropicClient`` | x-api-key (required) | Yes (`output_config.format`) | Yes (adaptive + manual) | Images, PDF (base64) | Yes | No |
+| ``GeminiClient`` | URL query param (required) | Yes | Yes (budget or level) | Images, audio, video, PDF (`inlineData`) | No | No |
+| ``VertexAnthropicClient`` | OAuth closure (required) | Yes (`output_config.format`) | Yes (adaptive + manual) | Images, PDF (base64) | Yes | No |
+| ``VertexGoogleClient`` | OAuth closure (required) | Yes | Yes | Images, audio, video, PDF (`inlineData`) | No | No |
+| ``ResponsesAPIClient`` | Bearer token (optional) | Yes | Yes | Images (URL, base64) | No | No |
+
+Tool-calling capabilities vary by provider and profile. AgentRunKit resolves them per provider at request-build time and throws when the requested wire surface is unsupported instead of silently dropping fields.
 
 ## Replay Fidelity
 
@@ -34,7 +36,7 @@ All providers deliver the same semantic fields on every assistant turn: content,
 Three clients preserve same-substrate continuity state, restoring provider-native turn structure from a continuity payload rather than reconstructing from semantic fields:
 
 - ``ResponsesAPIClient``: preserves Responses API output items, including reasoning items and function call metadata, and when `store == true` persists safe `response_id` anchors for restart-time same-substrate continuation.
-- ``AnthropicClient``: preserves exact ordered assistant blocks (thinking, text, tool_use) in their original interleaved order.
+- ``AnthropicClient``: preserves exact ordered assistant blocks in their original interleaved order, including forward-compatible opaque blocks.
 - ``VertexAnthropicClient``: same Anthropic Messages substrate fidelity as ``AnthropicClient``.
 
 Other clients (``OpenAIClient``, ``GeminiClient``) use semantic-only replay. History is reconstructed from the semantic fields, which is sufficient for the agent loop but does not preserve provider-specific turn metadata.
@@ -50,14 +52,14 @@ One opt-in profile is available:
 - `.openRouterReasoningDetails`: emits `reasoning_details` on assistant turns, matching OpenRouter's documented Chat Completions replay contract. Does not emit `reasoning_content`.
 
 ```swift
-let client = OpenAIClient(
+let client = OpenAIClient.openRouter(
     apiKey: "sk-or-...",
-    model: "anthropic/claude-sonnet-4",
-    baseURL: OpenAIClient.openRouterBaseURL,
-    reasoningConfig: .high,
-    assistantReplayProfile: .openRouterReasoningDetails
+    model: "anthropic/claude-sonnet-4.6",
+    reasoningConfig: .high
 )
 ```
+
+`OpenAIClient.openRouter(...)` pins ``OpenAIChatProfile/openRouter`` and defaults ``OpenAIChatAssistantReplayProfile`` to `.openRouterReasoningDetails`.
 
 Together's preserved-thinking replay depends on a provider-specific mode (`clear_thinking`) not yet modeled by the client, so it remains conservative in this release. For first-party OpenAI reasoning continuity, and for Responses-native OpenRouter models such as xAI Grok, use ``ResponsesAPIClient`` instead. See `Targeting OpenRouter with ResponsesAPIClient` below.
 
@@ -89,9 +91,25 @@ xAI Grok models are the canonical case. Grok returns encrypted reasoning artifac
 
 ``OpenAIClient`` remains the correct Chat Completions transport for OpenRouter models that are not Responses-native. The two clients are independent paths, not substitutes: pick the one the target model speaks.
 
-## OpenAI-Compatible Base URLs
+## OpenAIChatProfile
 
-``OpenAIClient`` works with any OpenAI-compatible API by changing the base URL. Static constants are provided for common providers:
+``OpenAIClient`` talks to multiple Chat Completions backends. The wire surface differs (custom tools, strict function schemas, `max_completion_tokens` vs `max_tokens`), so the backend must be declared explicitly. ``OpenAIChatProfile`` has three cases:
+
+| Profile | Target | Custom Tools | Strict Schemas | Token Field |
+|---|---|---|---|---|
+| `.firstParty` | `api.openai.com` | Yes | Yes | `max_completion_tokens` |
+| `.openRouter` | `openrouter.ai` | No (rejected at request build) | No | `max_tokens` |
+| `.compatible` | Groq, Together, Ollama, any OpenAI-compatible proxy | No | No | `max_tokens` |
+
+Three factories pin the profile. Prefer them over the raw initializer:
+
+```swift
+let openai     = OpenAIClient.openAI(apiKey: "sk-...", model: "gpt-5.4")
+let openRouter = OpenAIClient.openRouter(apiKey: "sk-or-...", model: "x-ai/grok-4")
+let groq       = OpenAIClient.proxy(baseURL: OpenAIClient.groqBaseURL)
+```
+
+The designated initializer `OpenAIClient(...)` still accepts `profile:` directly and defaults to `.compatible`. Static base-URL constants remain available for proxy targets:
 
 | Constant | URL |
 |---|---|
@@ -101,29 +119,29 @@ xAI Grok models are the canonical case. Grok returns encrypted reasoning artifac
 | `OpenAIClient.togetherBaseURL` | `https://api.together.xyz/v1` |
 | `OpenAIClient.ollamaBaseURL` | `http://localhost:11434/v1` |
 
-For custom endpoints, use `OpenAIClient.proxy(baseURL:)`.
+When a feature requires a specific profile (custom tools, strict function schemas, allowed-tools), the client throws ``TransportError/featureUnsupported(provider:feature:)`` rather than silently dropping the field on the wire.
 
 ## Provider Examples
 
 ### OpenAIClient
 
 ```swift
-let client = OpenAIClient(
-    apiKey: "sk-...",
-    model: "gpt-5.4",
-    baseURL: OpenAIClient.openAIBaseURL
-)
+let client = OpenAIClient.openAI(apiKey: "sk-...", model: "gpt-5.4")
 ```
 
 ### AnthropicClient
 
+``AnthropicClient`` validates its reasoning configuration against the target model at construction time, so the initializer is throwing:
+
 ```swift
-let client = AnthropicClient(
+let client = try AnthropicClient(
     apiKey: "sk-ant-...",
     model: "claude-sonnet-4-6",
     maxTokens: 4096
 )
 ```
+
+If the model demands a reasoning mode the configured options cannot satisfy (for example Claude Opus 4.7 with manual thinking, which the provider rejects server-side), the initializer throws ``TransportError/capabilityMismatch(model:requirement:)``.
 
 ### GeminiClient
 
@@ -136,8 +154,10 @@ let client = GeminiClient(
 
 ### VertexAnthropicClient
 
+``VertexAnthropicClient`` inherits Anthropic's construction-time reasoning validation, so the initializer is throwing:
+
 ```swift
-let client = VertexAnthropicClient(
+let client = try VertexAnthropicClient(
     projectID: "my-project",
     location: "us-east5",
     model: "claude-sonnet-4-6",
@@ -166,6 +186,22 @@ let client = ResponsesAPIClient(
 )
 ```
 
+## Capability Resolvers and Forward Compatibility
+
+Each Cloud provider ships a capability resolver that inspects the target model string and returns a typed, per-model view of the wire surface:
+
+- ``OpenAIChatCapabilities/resolve(profile:)`` (indexed by ``OpenAIChatProfile``)
+- ``AnthropicCapabilities/resolve(model:transport:)`` (indexed by ``AnthropicModelFamily``)
+- ``GeminiCapabilities/resolve(model:)`` (indexed by ``GeminiModelFamily``)
+
+Clients consult the resolver when building requests and throw ``TransportError/capabilityMismatch(model:requirement:)`` or ``TransportError/featureUnsupported(provider:feature:)`` rather than silently coerce an invalid wire.
+
+Provider response items whose `type` the client does not recognize are preserved in provider-native continuity state as ``OpaqueResponseItem`` values and replayed verbatim on same-substrate continuation turns when replay is lossless. Anthropic continuity preserves ordered assistant blocks the same way and falls back to semantic replay when a streamed unknown block cannot be reconstructed safely. Malformed known payloads still throw.
+
+## GoogleAuthService on iOS
+
+``GoogleAuthService`` loads Application Default Credentials from `~/.config/gcloud` and is annotated `@available(iOS, unavailable)`. Vertex clients on iOS must be constructed with a caller-supplied `tokenProvider:` closure that returns a fresh OAuth access token; the `authService:` convenience initializer is macOS-only.
+
 ## RetryPolicy
 
 All clients accept a ``RetryPolicy`` controlling retry behavior on transient failures (HTTP 408, 429, 500, 502, 503, 504).
@@ -183,7 +219,8 @@ Two static presets: `.default` (3 attempts, 1s base, 30s max) and `.none` (singl
 let client = OpenAIClient(
     apiKey: "sk-...",
     baseURL: OpenAIClient.openAIBaseURL,
-    retryPolicy: RetryPolicy(maxAttempts: 5, streamStallTimeout: .seconds(15))
+    retryPolicy: RetryPolicy(maxAttempts: 5, streamStallTimeout: .seconds(15)),
+    profile: .firstParty
 )
 ```
 
@@ -193,6 +230,10 @@ let client = OpenAIClient(
 
 - `extraFields`: a `[String: JSONValue]` dictionary merged into the request body as top-level keys. Use this for provider-specific parameters not modeled in the client.
 - `onResponse`: a callback receiving the raw `HTTPURLResponse`, useful for reading rate-limit headers or cache status.
+- `openAIChat`: typed OpenAI Chat request options such as custom tools, richer `tool_choice`, and `parallel_tool_calls`.
+- `anthropic`: typed Anthropic request options such as ``AnthropicToolChoice``.
+- `gemini`: typed Gemini request options such as ``GeminiFunctionCallingMode`` and `allowedFunctionNames`.
+- `responses`: typed Responses request options such as hosted `file_search` and `web_search` tools.
 
 ```swift
 let ctx = RequestContext(
@@ -215,10 +256,12 @@ Six effort-level presets map to provider-specific reasoning controls:
 ``ReasoningConfig`` is the shared reasoning-intent type. Anthropic's adaptive versus manual lowering is provider-local and
 is selected with ``AnthropicReasoningOptions`` on ``AnthropicClient`` and ``VertexAnthropicClient``.
 
-For Claude Opus 4.6 and Claude Sonnet 4.6, Anthropic's current recommended path is adaptive thinking:
+Claude Opus 4.7 requires adaptive thinking; the manual `budget_tokens` path is rejected by the provider and the client throws ``TransportError/capabilityMismatch(model:requirement:)`` at construction time.
+
+Anthropic's current adaptive-thinking models are Claude Opus 4.7, Claude Opus 4.6, and Claude Sonnet 4.6:
 
 ```swift
-let client = AnthropicClient(
+let client = try AnthropicClient(
     apiKey: "sk-ant-...",
     model: "claude-sonnet-4-6",
     maxTokens: 16384,
@@ -227,13 +270,12 @@ let client = AnthropicClient(
 )
 ```
 
-The manual `budget_tokens` path is still supported and remains the right choice for older Anthropic models or for explicit
-thinking-token budgets:
+The manual `budget_tokens` path remains the right choice for Claude Haiku 4.5 and older Anthropic 4.x models, or when you need an explicit thinking-token budget:
 
 ```swift
-let client = AnthropicClient(
+let client = try AnthropicClient(
     apiKey: "sk-ant-...",
-    model: "claude-opus-4-5-20251101",
+    model: "claude-haiku-4-5",
     maxTokens: 16384,
     reasoningConfig: .budget(10000)
 )
@@ -245,13 +287,14 @@ the target model supports it.
 OpenAI reasoning-capable models such as GPT-5.4 and o-series models, plus Gemini, use effort levels:
 
 ```swift
-let client = OpenAIClient(
+let client = OpenAIClient.openAI(
     apiKey: "sk-...",
     model: "gpt-5.4",
-    baseURL: OpenAIClient.openAIBaseURL,
     reasoningConfig: .high
 )
 ```
+
+Gemini routes the effort level through `thinkingConfig`. The shape depends on the model family: Gemini 2.5 accepts an integer `thinkingBudget`, while Gemini 3 and later use a symbolic `thinkingLevel`. ``GeminiCapabilities/resolve(model:)`` picks the right shape automatically.
 
 ## See Also
 

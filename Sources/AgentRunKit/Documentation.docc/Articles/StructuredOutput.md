@@ -4,7 +4,7 @@ Get typed, schema-constrained responses from LLMs.
 
 ## Overview
 
-Structured output forces the model to return valid JSON conforming to a schema you define. The response is decoded into a Swift type at the call site. This relies on ``ResponseFormat``, which wraps a ``JSONSchema`` with strict mode enabled.
+Structured output forces the model to return valid JSON conforming to a schema you define. The response is decoded into a Swift type at the call site. This relies on ``ResponseFormat``, which wraps a ``JSONSchema`` and enables strict mode by default.
 
 ### Chat (Automatic Decoding)
 
@@ -40,6 +40,8 @@ let report = try JSONDecoder().decode(
     from: Data(response.content.utf8)
 )
 ```
+
+Pass `strict: false` to ``ResponseFormat/jsonSchema(_:strict:)`` only when the target provider accepts a looser schema contract.
 
 ## SchemaProviding Protocol
 
@@ -83,18 +85,18 @@ let schema = try SchemaDecoder.decode(WeatherReport.self)
 
 ## Provider Support
 
-Not all providers support structured output via `responseFormat`.
+All Cloud providers support structured output via `responseFormat`. The wire encoding differs:
 
-| Provider | Supported |
+| Provider | Wire field |
 |---|---|
-| ``OpenAIClient`` | Yes |
-| ``GeminiClient`` | Yes |
-| ``VertexGoogleClient`` | Yes |
-| ``ResponsesAPIClient`` | Yes |
-| ``AnthropicClient`` | No |
-| ``VertexAnthropicClient`` | No |
+| ``OpenAIClient`` | `response_format.json_schema` |
+| ``GeminiClient`` | `generationConfig.responseJsonSchema` (Gemini 3+) or `responseSchema` (Gemini 2.5) |
+| ``VertexGoogleClient`` | same as ``GeminiClient`` |
+| ``ResponsesAPIClient`` | `text.format.json_schema` |
+| ``AnthropicClient`` | `output_config.format` (``AnthropicJSONOutputFormat``) |
+| ``VertexAnthropicClient`` | same as ``AnthropicClient`` |
 
-Providers that do not support structured output will ignore the response format or throw.
+Anthropic structured output is independent of thinking mode, so adaptive and manual reasoning both work alongside a schema. Gemini routes the schema through the field that matches the model family; ``GeminiCapabilities/resolve(model:)`` picks the right one automatically.
 
 ## See Also
 
