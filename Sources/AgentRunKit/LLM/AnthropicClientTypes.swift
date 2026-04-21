@@ -106,6 +106,10 @@ enum AnthropicContentBlock: Encodable {
     }
 
     func encode(to encoder: any Encoder) throws {
+        if case let .opaque(raw) = self {
+            try raw.encode(to: encoder)
+            return
+        }
         var container = encoder.container(keyedBy: CodingKeys.self)
         switch self {
         case let .text(text, cacheControl):
@@ -144,8 +148,8 @@ enum AnthropicContentBlock: Encodable {
             try sourceContainer.encode(mediaType, forKey: .mediaType)
             try sourceContainer.encode(data, forKey: .data)
             try container.encodeIfPresent(cacheControl, forKey: .cacheControl)
-        case let .opaque(raw):
-            try raw.encode(to: encoder)
+        case .opaque:
+            break
         }
     }
 }
