@@ -184,6 +184,7 @@ private struct StreamAccumulation {
         policy: StreamPolicy,
         continuation: AsyncThrowingStream<StreamEvent, Error>.Continuation
     ) {
+        guard toolCalls[index] == nil else { return }
         var accumulator = ToolCallAccumulator(id: id, name: name, kind: kind)
         if let buffered = pendingArguments.removeValue(forKey: index) {
             accumulator.arguments = buffered

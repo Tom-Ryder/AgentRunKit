@@ -129,6 +129,39 @@ struct StreamProcessorEmittedOutputTests {
     }
 }
 
+struct StreamProcessorToolCallAccumulationTests {
+    @Test
+    func duplicateToolCallStartDoesNotResetAccumulatedArguments() async throws {
+        let client = ScriptedStreamClient(
+            deltas: [
+                .toolCallStart(index: 0, id: "call_1", name: "web_search", kind: .function),
+                .toolCallDelta(index: 0, arguments: #"{"searches":["#),
+                .toolCallStart(index: 0, id: "call_1", name: "web_search", kind: .function),
+                .toolCallDelta(index: 0, arguments: #""swift"]}"#),
+                .finished(usage: nil),
+            ],
+            error: nil
+        )
+        let processor = StreamProcessor(client: client, toolDefinitions: [], policy: .chat)
+        let (_, eventContinuation) = AsyncThrowingStream<StreamEvent, Error>.makeStream()
+        var totalUsage = TokenUsage()
+
+        let iteration = try await processor.process(
+            messages: [.user("Hi")],
+            totalUsage: &totalUsage,
+            continuation: eventContinuation
+        )
+
+        #expect(iteration.toolCalls == [
+            ToolCall(
+                id: "call_1",
+                name: "web_search",
+                arguments: #"{"searches":["swift"]}"#
+            )
+        ])
+    }
+}
+
 struct StreamProcessorContinuityTests {
     @Test
     func finalizedContinuityPersistsIntoAssistantMessage() async throws {
