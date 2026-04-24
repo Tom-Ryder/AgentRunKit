@@ -38,7 +38,7 @@ if let content = result.content {
 }
 ```
 
-If a run ends because `maxIterations` or `tokenBudget` is reached before the model calls `finish`, ``Agent/run(userMessage:history:context:tokenBudget:requestContext:approvalHandler:)`` still returns an ``AgentResult`` with a structural ``FinishReason`` and `content == nil`.
+If a run ends because `maxIterations` or `tokenBudget` is reached before the model calls `finish`, ``Agent/run(userMessage:history:context:tokenBudget:requestContext:approvalHandler:)-(String,_,_,_,_,_)`` still returns an ``AgentResult`` with a structural ``FinishReason`` and `content == nil`.
 
 For a complete walkthrough, see <doc:GettingStarted>.
 
@@ -54,8 +54,26 @@ For a complete walkthrough, see <doc:GettingStarted>.
 
 - <doc:StreamingAndSwiftUI>
 - ``StreamEvent``
+- ``EventOrigin``
 - ``AgentStream``
+- ``StreamEventBuffer``
+- ``BufferReplayError``
 - ``ToolCallInfo``
+
+### Checkpoint and Resume
+
+- <doc:CheckpointAndResume>
+- ``AgentCheckpoint``
+- ``AgentCheckpointer``
+- ``InMemoryCheckpointer``
+- ``FileCheckpointer``
+- ``MCPToolBinding``
+- ``ContextBudgetCheckpointState``
+- ``AgentCheckpointError``
+- ``CheckpointID``
+- ``SessionID``
+- ``RunID``
+- ``EventID``
 
 ### Tool Approval
 

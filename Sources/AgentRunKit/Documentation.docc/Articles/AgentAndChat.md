@@ -23,6 +23,8 @@ if let content = result.content {
 
 ``Agent`` also exposes `stream()`, which returns an `AsyncThrowingStream<StreamEvent, Error>` for real-time token delivery and tool progress. See <doc:StreamingAndSwiftUI>.
 
+For long-running sessions, `stream()` accepts `sessionID:` and `checkpointer:` parameters that persist iteration state to a backend implementing ``AgentCheckpointer``. ``Agent/resume(from:checkpointer:context:tokenBudget:requestContext:approvalHandler:)`` reconstructs a stopped run from any saved ``CheckpointID``. See <doc:CheckpointAndResume>.
+
 Key behaviors:
 - Injects a `finish` tool automatically. The model must call it to end the loop.
 - Alternate termination for on-device clients: when the LLM client cannot surface tool calls in its response (e.g., `FoundationModelsClient`), the loop terminates on the first iteration that produces content without tool calls. The user-visible contract is unchanged.
@@ -135,3 +137,4 @@ let (_, history2) = try await chat.send("Tell me more.", history: history)
 - <doc:DefiningTools>
 - <doc:StreamingAndSwiftUI>
 - <doc:ContextManagement>
+- <doc:CheckpointAndResume>

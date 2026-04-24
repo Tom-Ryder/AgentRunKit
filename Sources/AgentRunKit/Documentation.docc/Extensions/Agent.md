@@ -13,5 +13,10 @@
 
 ### Streaming
 
-- ``stream(userMessage:history:context:tokenBudget:requestContext:approvalHandler:)-(String,_,_,_,_,_)``
-- ``stream(userMessage:history:context:tokenBudget:requestContext:approvalHandler:)-(ChatMessage,_,_,_,_,_)``
+- ``stream(userMessage:history:context:tokenBudget:requestContext:approvalHandler:sessionID:checkpointer:)-(String,_,_,_,_,_,_,_)``
+- ``stream(userMessage:history:context:tokenBudget:requestContext:approvalHandler:sessionID:checkpointer:)-(ChatMessage,_,_,_,_,_,_,_)``
+
+### Resuming
+
+- ``resume(from:checkpointer:context:tokenBudget:requestContext:approvalHandler:)``
+- <doc:CheckpointAndResume>

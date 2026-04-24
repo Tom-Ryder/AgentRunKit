@@ -2,19 +2,24 @@
 
 Stable envelope for a streamed event.
 
-Each event carries identity and timing metadata around a semantic ``StreamEvent/Kind`` payload. Transcript order is the order of emission, not the timestamp sort order. Direct `Agent` and `Chat` streams leave `sessionID`, `runID`, and `parentEventID` unset until the session layer owns event construction.
+Each event carries identity, timing, and provenance metadata around a semantic ``StreamEvent/Kind`` payload. Transcript order is the order of emission, not the timestamp sort order. ``StreamEvent/origin`` distinguishes live emission from replayed checkpoint events; see <doc:CheckpointAndResume>.
 
 ## Topics
 
 ### Envelope
 
-- ``init(id:timestamp:sessionID:runID:parentEventID:kind:)``
+- ``init(id:timestamp:sessionID:runID:parentEventID:origin:kind:)``
 - ``id``
 - ``timestamp``
 - ``sessionID``
 - ``runID``
 - ``parentEventID``
+- ``origin``
 - ``kind``
+
+### Provenance
+
+- ``EventOrigin``
 
 ### Semantic Payload
 

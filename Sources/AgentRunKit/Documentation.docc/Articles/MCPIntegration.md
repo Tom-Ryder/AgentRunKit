@@ -54,6 +54,10 @@ Pass multiple ``MCPServerConfiguration`` values to a single session. All servers
 
 ``MCPTool`` adapts each discovered MCP tool to the ``AnyTool`` protocol. Once inside the `withTools` closure, MCP tools are indistinguishable from native ``Tool`` instances. The agent calls them through the same interface, and their results follow the same ``ToolResult`` type.
 
+## Checkpoint Binding Validation
+
+When a checkpointed run includes MCP tool calls, the agent loop records each participating tool as an ``MCPToolBinding`` in ``AgentCheckpoint/mcpToolBindings``. On resume, ``Agent/resume(from:checkpointer:context:tokenBudget:requestContext:approvalHandler:)`` validates that every recorded binding has a live counterpart with the same `serverName` and `toolName`. Missing bindings throw ``AgentCheckpointError/mcpBindingMismatch(_:)`` before any event is yielded, catching deployment skew where the resuming agent is configured against a different MCP server set. See <doc:CheckpointAndResume>.
+
 ## Error Handling
 
 ``MCPError`` covers all failure modes:
@@ -112,10 +116,12 @@ For session-based usage with custom transports, use the internal initializer tha
 
 - <doc:DefiningTools>
 - <doc:AgentAndChat>
+- <doc:CheckpointAndResume>
 - ``MCPClient``
 - ``MCPSession``
 - ``MCPTool``
 - ``MCPToolInfo``
+- ``MCPToolBinding``
 - ``MCPServerConfiguration``
 - ``StdioMCPTransport``
 - ``MCPTransport``

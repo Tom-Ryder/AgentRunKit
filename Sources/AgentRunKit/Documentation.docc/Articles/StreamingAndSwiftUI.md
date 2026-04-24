@@ -49,12 +49,13 @@ Every event includes:
 |---|---|
 | ``StreamEvent/id`` | Stable event identity for transcript rendering and correlation |
 | ``StreamEvent/timestamp`` | Emission time in UTC |
-| ``StreamEvent/sessionID`` | Optional session identity |
-| ``StreamEvent/runID`` | Optional run identity |
+| ``StreamEvent/sessionID`` | Session identity, populated when a stream is started with `sessionID:` |
+| ``StreamEvent/runID`` | Run identity, freshly assigned on each `stream()` or `resume(...)` |
 | ``StreamEvent/parentEventID`` | Optional parent correlation identity |
+| ``StreamEvent/origin`` | ``EventOrigin/live`` or ``EventOrigin/replayed(from:)`` (set on resume) |
 | ``StreamEvent/kind`` | The semantic payload |
 
-Today, direct `Agent` and `Chat` streams leave `sessionID`, `runID`, and `parentEventID` unset. A future session layer will populate those fields consistently.
+Pass `sessionID:` to ``Agent/stream(userMessage:history:context:tokenBudget:requestContext:approvalHandler:sessionID:checkpointer:)-(String,_,_,_,_,_,_,_)`` to thread an explicit session through events; otherwise a fresh ``SessionID`` is minted per stream. ``Chat`` continues to leave identity envelope fields unset.
 
 ## StreamEvent Kinds
 
@@ -135,11 +136,19 @@ This canonical codec uses the framework's fixed JSON settings for event transcri
 | `toolCalls` | [``ToolCallInfo``] | Top-level and nested tool calls with live state (`.running`, `.awaitingApproval`, `.completed`, `.failed`) |
 | `iterationUsages` | [``TokenUsage``] | Per-iteration usage, one entry per `.iterationCompleted` |
 | `contextBudget` | ``ContextBudget``? | Latest budget snapshot from `.budgetUpdated` |
+| `sessionID` | ``SessionID``? | Session identity threaded through emitted events |
+| `currentCheckpoint` | ``CheckpointID``? | Last replayed or live checkpoint observed; preloaded on resume |
+| `iterationsReplayed` | `Int` | Count of replayed `.iterationCompleted` events; only incremented on `.replayed` origin |
 
 **Methods:**
 
-- `send(_:history:context:tokenBudget:requestContext:approvalHandler:)` cancels any active stream, resets state, and starts a new one.
+- `send(_:history:context:tokenBudget:requestContext:approvalHandler:sessionID:checkpointer:)` cancels any active stream, resets state, and starts a new one. Pass `sessionID:` and `checkpointer:` to persist iteration state.
+- `resume(from:checkpointer:context:tokenBudget:requestContext:approvalHandler:)` synchronously preloads observable state from the loaded checkpoint, then starts the live continuation. See <doc:CheckpointAndResume>.
 - `cancel()` cancels the active stream without resetting state. It is a local cancellation API and does not guarantee a terminal `.finished` event.
+
+### Late-Binding Replay
+
+Construct ``AgentStream`` with a `bufferCapacity:` to capture every emitted event in a ``StreamEventBuffer``. Late observers reattach via ``AgentStream/replay(from:)``, which streams every buffered event from the given monotonic cursor and then errors with ``BufferReplayError`` if buffering is disabled. The buffer is per-send-isolated: a new `send` or `resume` clears the buffer to keep cursors comparable within one logical run.
 
 When sub-agents emit nested tool events, `toolCalls` flattens them into the same collection and prefixes names using `parent > child`.
 
@@ -196,7 +205,10 @@ for (index, usage) in stream.iterationUsages.enumerated() {
 
 - <doc:AgentAndChat>
 - <doc:SubAgents>
+- <doc:CheckpointAndResume>
 - ``StreamEvent``
+- ``EventOrigin``
 - ``AgentStream``
+- ``StreamEventBuffer``
 - ``ToolCallInfo``
 - ``TokenUsage``
