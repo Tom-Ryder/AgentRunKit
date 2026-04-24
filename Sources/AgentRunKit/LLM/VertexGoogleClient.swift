@@ -172,7 +172,13 @@ public struct VertexGoogleClient: LLMClient, Sendable {
         let action = stream ? "streamGenerateContent" : "generateContent"
         let basePath = "\(apiVersion)/projects/\(projectID)/locations/\(location)"
             + "/publishers/google/models/\(modelIdentifier):\(action)"
-        guard let baseURL = URL(string: "https://\(location)-aiplatform.googleapis.com") else {
+        let host =
+            if location == "global" {
+                "https://aiplatform.googleapis.com"
+            } else {
+                "https://\(location)-aiplatform.googleapis.com"
+            }
+        guard let baseURL = URL(string: host) else {
             throw AgentError.llmError(.other("Invalid Vertex AI location: \(location)"))
         }
         var url = baseURL.appendingPathComponent(basePath)
