@@ -1,12 +1,5 @@
 import Foundation
 
-struct InvocationOptions {
-    let tokenBudget: Int?
-    let requestContext: RequestContext?
-    let systemPromptOverride: String?
-    let approvalHandler: ToolApprovalHandler?
-}
-
 struct IndexedToolCall {
     let index: Int
     let call: ToolCall
@@ -26,8 +19,8 @@ extension Agent {
     func resolveApprovals(
         _ calls: [IndexedToolCall],
         handler: @escaping ToolApprovalHandler,
-        allowlist: inout Set<String>,
-        continuation: AsyncThrowingStream<StreamEvent, Error>.Continuation?
+        emit: StreamEmitter? = nil,
+        allowlist: inout Set<String>
     ) async throws -> (approved: [IndexedToolCall], denied: [IndexedToolResult]) {
         var approved: [IndexedToolCall] = []
         var denied: [IndexedToolResult] = []
@@ -49,9 +42,9 @@ extension Agent {
                 arguments: indexed.call.arguments,
                 toolDescription: tool.description
             )
-            continuation?.yield(.make(.toolApprovalRequested(request)))
+            emit?.yield(.toolApprovalRequested(request))
             let decision = try await awaitApprovalDecision(for: request, using: handler)
-            continuation?.yield(.make(.toolApprovalResolved(toolCallId: indexed.call.id, decision: decision)))
+            emit?.yield(.toolApprovalResolved(toolCallId: indexed.call.id, decision: decision))
 
             switch decision {
             case .approve:

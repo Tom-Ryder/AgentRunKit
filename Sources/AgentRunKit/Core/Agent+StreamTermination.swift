@@ -5,12 +5,16 @@ extension Agent {
         iteration: StreamIteration,
         totalUsage: TokenUsage,
         history: [ChatMessage],
+        eventFactory: StreamEventFactory,
         continuation: AsyncThrowingStream<StreamEvent, Error>.Continuation
     ) throws -> Bool {
         if let finishCall = try exclusiveFinishCall(in: iteration.toolCalls) {
             try finishStreaming(
                 continuation: continuation,
-                event: parseFinishEvent(from: finishCall, tokenUsage: totalUsage, history: history)
+                event: parseFinishEvent(
+                    from: finishCall, tokenUsage: totalUsage,
+                    history: history, eventFactory: eventFactory
+                )
             )
             return true
         }
@@ -23,7 +27,8 @@ extension Agent {
                     tokenUsage: totalUsage,
                     content: iteration.effectiveContent,
                     reason: .completed,
-                    history: history.sanitizedTerminalHistory()
+                    history: history.sanitizedTerminalHistory(),
+                    eventFactory: eventFactory
                 )
             )
             return true

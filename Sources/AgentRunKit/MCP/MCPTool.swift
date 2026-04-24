@@ -28,3 +28,9 @@ public struct MCPTool<C: ToolContext>: AnyTool, Sendable {
         }
     }
 }
+
+extension MCPTool {
+    var checkpointBinding: MCPToolBinding {
+        MCPToolBinding(serverName: client.serverName, toolName: name)
+    }
+}

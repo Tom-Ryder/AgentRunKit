@@ -73,11 +73,15 @@ public final class Agent<C: ToolContext>: Sendable {
         context: C,
         tokenBudget: Int? = nil,
         requestContext: RequestContext? = nil,
-        approvalHandler: ToolApprovalHandler? = nil
+        approvalHandler: ToolApprovalHandler? = nil,
+        sessionID: SessionID? = nil,
+        checkpointer: (any AgentCheckpointer)? = nil
     ) -> AsyncThrowingStream<StreamEvent, Error> {
         let options = InvocationOptions(
             tokenBudget: tokenBudget, requestContext: requestContext,
-            systemPromptOverride: nil, approvalHandler: approvalHandler
+            systemPromptOverride: nil, approvalHandler: approvalHandler,
+            sessionID: sessionID ?? SessionID(), runID: RunID(),
+            checkpointer: checkpointer
         )
         return stream(
             userMessage: .user(userMessage), history: history,
@@ -91,15 +95,29 @@ public final class Agent<C: ToolContext>: Sendable {
         context: C,
         tokenBudget: Int? = nil,
         requestContext: RequestContext? = nil,
-        approvalHandler: ToolApprovalHandler? = nil
+        approvalHandler: ToolApprovalHandler? = nil,
+        sessionID: SessionID? = nil,
+        checkpointer: (any AgentCheckpointer)? = nil
     ) -> AsyncThrowingStream<StreamEvent, Error> {
         let options = InvocationOptions(
             tokenBudget: tokenBudget, requestContext: requestContext,
-            systemPromptOverride: nil, approvalHandler: approvalHandler
+            systemPromptOverride: nil, approvalHandler: approvalHandler,
+            sessionID: sessionID ?? SessionID(), runID: RunID(),
+            checkpointer: checkpointer
         )
         return stream(
             userMessage: userMessage, history: history,
             context: context, options: options
+        )
+    }
+
+    func validateInvocation(_ options: InvocationOptions) {
+        if let tokenBudget = options.tokenBudget {
+            precondition(tokenBudget >= 1, "tokenBudget must be at least 1")
+        }
+        precondition(
+            configuration.approvalPolicy == .none || options.approvalHandler != nil,
+            "approvalHandler is required when approvalPolicy is not .none"
         )
     }
 }
@@ -136,13 +154,7 @@ extension Agent {
         context: C,
         options: InvocationOptions
     ) async throws -> AgentResult {
-        if let tokenBudget = options.tokenBudget {
-            precondition(tokenBudget >= 1, "tokenBudget must be at least 1")
-        }
-        precondition(
-            configuration.approvalPolicy == .none || options.approvalHandler != nil,
-            "approvalHandler is required when approvalPolicy is not .none"
-        )
+        validateInvocation(options)
         var state = RunLoopState(messages: buildInitialMessages(
             userMessage: userMessage, history: history,
             systemPromptOverride: options.systemPromptOverride
@@ -261,11 +273,13 @@ extension Agent {
         context: C,
         tokenBudget: Int? = nil,
         systemPromptOverride: String?,
-        approvalHandler: ToolApprovalHandler? = nil
+        approvalHandler: ToolApprovalHandler? = nil,
+        sessionID: SessionID? = nil
     ) -> AsyncThrowingStream<StreamEvent, Error> {
         let options = InvocationOptions(
             tokenBudget: tokenBudget, requestContext: nil,
-            systemPromptOverride: systemPromptOverride, approvalHandler: approvalHandler
+            systemPromptOverride: systemPromptOverride, approvalHandler: approvalHandler,
+            sessionID: sessionID ?? SessionID(), runID: RunID()
         )
         return stream(
             userMessage: .user(userMessage), history: history,
@@ -281,13 +295,7 @@ extension Agent {
         context: C,
         options: InvocationOptions
     ) -> AsyncThrowingStream<StreamEvent, Error> {
-        if let tokenBudget = options.tokenBudget {
-            precondition(tokenBudget >= 1, "tokenBudget must be at least 1")
-        }
-        precondition(
-            configuration.approvalPolicy == .none || options.approvalHandler != nil,
-            "approvalHandler is required when approvalPolicy is not .none"
-        )
+        validateInvocation(options)
         return AsyncThrowingStream { continuation in
             let task = Task {
                 do {
@@ -319,79 +327,133 @@ extension Agent {
             userMessage: userMessage, history: history, systemPromptOverride: options.systemPromptOverride
         ))
         try state.messages.validateForAgentHistory()
-        var totalUsage = TokenUsage()
-        var lastTotalTokens: Int?
-        let policy = StreamPolicy.agent
-        let processor = StreamProcessor(client: client, toolDefinitions: toolDefinitions, policy: policy)
-        var compactor = ContextCompactor(client: client, toolDefinitions: toolDefinitions, configuration: configuration)
         state.budgetPhase = try makeBudgetPhase()
+        try await performStreamLoop(
+            state: &state, startIteration: 1,
+            totalUsage: TokenUsage(), lastTotalTokens: nil,
+            context: context, options: options,
+            continuation: continuation
+        )
+    }
 
-        for iterationNumber in 1 ... configuration.maxIterations {
+    func performStreamLoop(
+        state: inout StreamingLoopState,
+        startIteration: Int,
+        totalUsage: TokenUsage,
+        lastTotalTokens: Int?,
+        context: C,
+        options: InvocationOptions,
+        continuation: AsyncThrowingStream<StreamEvent, Error>.Continuation
+    ) async throws {
+        var totalUsage = totalUsage
+        var lastTotalTokens = lastTotalTokens
+        let processor = StreamProcessor(
+            client: client, toolDefinitions: toolDefinitions, policy: .agent,
+            eventFactory: options.eventFactory
+        )
+        var compactor = ContextCompactor(client: client, toolDefinitions: toolDefinitions, configuration: configuration)
+
+        let iterationContext = StreamIterationContext(
+            processor: processor, context: context, options: options, continuation: continuation
+        )
+        guard startIteration <= configuration.maxIterations else {
+            finishStreaming(
+                continuation: continuation,
+                event: makeFinishedEvent(
+                    tokenUsage: totalUsage, content: nil,
+                    reason: .maxIterationsReached(limit: configuration.maxIterations),
+                    history: state.messages, eventFactory: options.eventFactory
+                )
+            )
+            return
+        }
+        for iterationNumber in startIteration ... configuration.maxIterations {
             try Task.checkCancellation()
-
-            try await compactStreamingMessagesIfNeeded(
-                &state.messages,
-                totalUsage: &totalUsage,
-                lastTotalTokens: lastTotalTokens,
+            let isFinished = try await runStreamIteration(
+                iterationNumber: iterationNumber,
+                state: &state, totalUsage: &totalUsage,
+                lastTotalTokens: &lastTotalTokens,
                 compactor: &compactor,
-                historyWasRewrittenLocally: &state.historyWasRewrittenLocally,
-                continuation: continuation
+                iterationContext: iterationContext
             )
-            let iteration = try await generateStreamingResponse(
-                processor: processor,
-                messages: &state.messages,
-                totalUsage: &totalUsage,
-                compactor: &compactor,
-                historyWasRewrittenLocally: &state.historyWasRewrittenLocally,
-                continuation: continuation,
-                requestContext: options.requestContext
-            )
-
-            state.messages.append(.assistant(iteration.toAssistantMessage()))
-            yieldIterationCompletedIfPossible(
-                iteration: iteration, iterationNumber: iterationNumber,
-                messages: state.messages, context: context, continuation: continuation
-            )
-            let budgetUsage = iteration.usage
-
-            if try tryFinishOnTerminalEvent(
-                iteration: iteration,
-                totalUsage: totalUsage,
-                history: state.messages,
-                continuation: continuation
-            ) {
-                return
-            }
-
-            try await finalizeStreamingIteration(
-                toolCalls: iteration.toolCalls,
-                context: context,
-                budgetUsage: budgetUsage,
-                options: options,
-                continuation: continuation,
-                state: &state
-            )
-
-            if finishIfOverBudget(
-                options.tokenBudget,
-                totalUsage: totalUsage,
-                history: state.messages,
-                continuation: continuation
-            ) {
-                return
-            }
-            lastTotalTokens = iteration.usage?.total
+            if isFinished { return }
         }
 
         finishStreaming(
             continuation: continuation,
             event: makeFinishedEvent(
-                tokenUsage: totalUsage,
-                content: nil,
+                tokenUsage: totalUsage, content: nil,
                 reason: .maxIterationsReached(limit: configuration.maxIterations),
-                history: state.messages
+                history: state.messages, eventFactory: options.eventFactory
             )
         )
+    }
+
+    struct StreamIterationContext {
+        let processor: StreamProcessor
+        let context: C
+        let options: InvocationOptions
+        let continuation: AsyncThrowingStream<StreamEvent, Error>.Continuation
+    }
+
+    private func runStreamIteration(
+        iterationNumber: Int,
+        state: inout StreamingLoopState,
+        totalUsage: inout TokenUsage,
+        lastTotalTokens: inout Int?,
+        compactor: inout ContextCompactor,
+        iterationContext: StreamIterationContext
+    ) async throws -> Bool {
+        let factory = iterationContext.options.eventFactory
+        let continuation = iterationContext.continuation
+        try await compactStreamingMessagesIfNeeded(
+            &state.messages,
+            totalUsage: &totalUsage,
+            lastTotalTokens: lastTotalTokens,
+            compactor: &compactor,
+            historyWasRewrittenLocally: &state.historyWasRewrittenLocally,
+            eventFactory: factory,
+            continuation: continuation
+        )
+        let iteration = try await generateStreamingResponse(
+            processor: iterationContext.processor,
+            messages: &state.messages,
+            totalUsage: &totalUsage,
+            compactor: &compactor,
+            historyWasRewrittenLocally: &state.historyWasRewrittenLocally,
+            continuation: continuation,
+            requestContext: iterationContext.options.requestContext
+        )
+        state.messages.append(.assistant(iteration.toAssistantMessage()))
+        yieldIterationCompletedIfPossible(
+            iteration: iteration, iterationNumber: iterationNumber,
+            messages: state.messages, context: iterationContext.context,
+            eventFactory: factory, continuation: continuation
+        )
+        if try tryFinishOnTerminalEvent(
+            iteration: iteration, totalUsage: totalUsage,
+            history: state.messages, eventFactory: factory, continuation: continuation
+        ) {
+            return true
+        }
+        try await finalizeStreamingIteration(
+            toolCalls: iteration.toolCalls, context: iterationContext.context,
+            budgetUsage: iteration.usage, options: iterationContext.options,
+            continuation: continuation, state: &state
+        )
+        try await checkpointIfConfigured(
+            iterationNumber: iterationNumber, state: state,
+            totalUsage: totalUsage, iterationUsage: iteration.usage,
+            eventFactory: factory, checkpointer: iterationContext.options.checkpointer
+        )
+        if finishIfOverBudget(
+            iterationContext.options.tokenBudget, totalUsage: totalUsage,
+            history: state.messages, eventFactory: factory, continuation: continuation
+        ) {
+            return true
+        }
+        lastTotalTokens = iteration.usage?.total
+        return false
     }
 
     func buildInitialMessages(
@@ -408,92 +470,10 @@ extension Agent {
         return messages
     }
 
-    func parseFinishEvent(
-        from finishCall: ToolCall,
-        tokenUsage: TokenUsage,
-        history: [ChatMessage]
-    ) throws -> StreamEvent {
-        let decoded: FinishArguments
-        do {
-            decoded = try JSONDecoder().decode(FinishArguments.self, from: finishCall.argumentsData)
-        } catch {
-            throw AgentError.finishDecodingFailed(message: String(describing: error))
-        }
-        return try makeFinishedEvent(
-            tokenUsage: tokenUsage,
-            content: decoded.content,
-            reason: FinishReason(decoded.reason ?? "completed"),
-            history: history.sanitizedTerminalHistory()
-        )
-    }
-
-    func makeFinishedEvent(
-        tokenUsage: TokenUsage,
-        content: String?,
-        reason: FinishReason?,
-        history: [ChatMessage]
-    ) -> StreamEvent {
-        .make(.finished(
-            tokenUsage: tokenUsage,
-            content: content,
-            reason: reason,
-            history: history
-        ))
-    }
-
-    func emitCompactionEventIfNeeded(
-        _ compacted: Bool,
-        lastTotalTokens: Int?,
-        continuation: AsyncThrowingStream<StreamEvent, Error>.Continuation
-    ) {
-        guard compacted, let totalTokens = lastTotalTokens, let windowSize = client.contextWindowSize else {
-            return
-        }
-        continuation.yield(.make(.compacted(totalTokens: totalTokens, windowSize: windowSize)))
-    }
-
-    func exclusiveFinishCall(in toolCalls: [ToolCall]) throws -> ToolCall? {
-        let finishCalls = toolCalls.filter { $0.name == "finish" }
-        guard !finishCalls.isEmpty else { return nil }
-        guard finishCalls.count == 1, toolCalls.count == 1 else {
-            throw AgentError.malformedHistory(.finishMustBeExclusive)
-        }
-        return finishCalls[0]
-    }
-
     func indexedExecutableToolCalls(from toolCalls: [ToolCall]) -> [IndexedToolCall] {
         toolCalls.enumerated().compactMap { offset, call in
             guard StreamPolicy.agent.shouldExecuteTool(name: call.name) else { return nil }
             return IndexedToolCall(index: offset, call: call)
         }
-    }
-
-    private func finishIfOverBudget(
-        _ tokenBudget: Int?,
-        totalUsage: TokenUsage,
-        history: [ChatMessage],
-        continuation: AsyncThrowingStream<StreamEvent, Error>.Continuation
-    ) -> Bool {
-        guard let tokenBudget, totalUsage.total > tokenBudget else {
-            return false
-        }
-        finishStreaming(
-            continuation: continuation,
-            event: makeFinishedEvent(
-                tokenUsage: totalUsage,
-                content: nil,
-                reason: .tokenBudgetExceeded(budget: tokenBudget, used: totalUsage.total),
-                history: history
-            )
-        )
-        return true
-    }
-
-    func finishStreaming(
-        continuation: AsyncThrowingStream<StreamEvent, Error>.Continuation,
-        event: StreamEvent
-    ) {
-        continuation.yield(event)
-        continuation.finish()
     }
 }

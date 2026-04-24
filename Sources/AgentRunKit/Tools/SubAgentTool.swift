@@ -91,6 +91,7 @@ public struct SubAgentTool<P: Codable & SchemaProviding & Sendable, InnerContext
         toolCallId _: String,
         arguments: Data,
         context: SubAgentContext<InnerContext>,
+        parentSessionID: SessionID?,
         eventHandler: @Sendable (StreamEvent) -> Void,
         approvalHandler: ToolApprovalHandler?
     ) async throws -> ToolResult {
@@ -105,7 +106,8 @@ public struct SubAgentTool<P: Codable & SchemaProviding & Sendable, InnerContext
             context: context.descending(),
             tokenBudget: tokenBudget,
             systemPromptOverride: systemPromptBuilder?(params),
-            approvalHandler: approvalHandler
+            approvalHandler: approvalHandler,
+            sessionID: parentSessionID
         )
 
         var finalContent: String?

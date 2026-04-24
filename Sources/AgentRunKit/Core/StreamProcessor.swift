@@ -76,13 +76,14 @@ private struct AudioAccumulator {
     var data = Data()
     var transcript = ""
 
-    var finishedEvent: StreamEvent? {
+    func finishedEvent(eventFactory: StreamEventFactory) -> StreamEvent? {
         guard let id else { return nil }
-        return .make(.audioFinished(id: id, expiresAt: expiresAt, data: data))
+        return eventFactory.make(.audioFinished(id: id, expiresAt: expiresAt, data: data))
     }
 }
 
 private struct StreamAccumulation {
+    let eventFactory: StreamEventFactory
     var content = ""
     var reasoning = ""
     var reasoningDetails = ReasoningDetailAccumulator()
@@ -117,11 +118,11 @@ private struct StreamAccumulation {
         case let .content(text):
             content += text
             yieldedEvent = true
-            continuation.yield(.make(.delta(text)))
+            continuation.yield(eventFactory.make(.delta(text)))
         case let .reasoning(text):
             reasoning += text
             yieldedEvent = true
-            continuation.yield(.make(.reasoningDelta(text)))
+            continuation.yield(eventFactory.make(.reasoningDelta(text)))
         case let .reasoningDetails(details):
             reasoningDetails.append(details)
         case let .toolCallStart(index, id, name, kind):
@@ -134,11 +135,11 @@ private struct StreamAccumulation {
         case let .audioData(data):
             audio.data.append(data)
             yieldedEvent = true
-            continuation.yield(.make(.audioData(data)))
+            continuation.yield(eventFactory.make(.audioData(data)))
         case let .audioTranscript(text):
             audio.transcript += text
             yieldedEvent = true
-            continuation.yield(.make(.audioTranscript(text)))
+            continuation.yield(eventFactory.make(.audioTranscript(text)))
         case let .finished(iterationUsage):
             guard let iterationUsage else { return }
             totalUsage += iterationUsage
@@ -156,7 +157,7 @@ private struct StreamAccumulation {
     func finishAudio(
         continuation: AsyncThrowingStream<StreamEvent, Error>.Continuation
     ) {
-        if let event = audio.finishedEvent {
+        if let event = audio.finishedEvent(eventFactory: eventFactory) {
             continuation.yield(event)
         }
     }
@@ -192,7 +193,7 @@ private struct StreamAccumulation {
         toolCalls[index] = accumulator
         if policy.shouldEmitToolStart(name: name) {
             yieldedEvent = true
-            continuation.yield(.make(.toolCallStarted(name: name, id: id)))
+            continuation.yield(eventFactory.make(.toolCallStarted(name: name, id: id)))
         }
     }
 
@@ -209,6 +210,7 @@ struct StreamProcessor {
     let client: any LLMClient
     let toolDefinitions: [ToolDefinition]
     let policy: StreamPolicy
+    let eventFactory: StreamEventFactory
 
     func process(
         messages: [ChatMessage],
@@ -236,7 +238,7 @@ struct StreamProcessor {
         requestContext: RequestContext? = nil,
         requestMode: RunRequestMode = .auto
     ) async throws -> StreamIteration {
-        var state = StreamAccumulation()
+        var state = StreamAccumulation(eventFactory: eventFactory)
 
         do {
             for try await input in client.streamForRun(

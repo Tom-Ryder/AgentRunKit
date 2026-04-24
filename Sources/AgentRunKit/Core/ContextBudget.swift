@@ -1,10 +1,40 @@
 import Foundation
 
 /// Format options for context budget annotations.
-public enum ContextBudgetVisibilityFormat: Sendable, Equatable {
+public enum ContextBudgetVisibilityFormat: Sendable, Equatable, Codable {
     case standard
     /// Replaces `{usage}` and `{window}` with grouped token counts.
     case custom(String)
+
+    private enum CodingKeys: String, CodingKey { case type, template }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let type = try container.decode(String.self, forKey: .type)
+        switch type {
+        case "standard":
+            self = .standard
+        case "custom":
+            let template = try container.decode(String.self, forKey: .template)
+            self = .custom(template)
+        default:
+            throw DecodingError.dataCorruptedError(
+                forKey: .type, in: container,
+                debugDescription: "Unknown ContextBudgetVisibilityFormat type: \(type)"
+            )
+        }
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        switch self {
+        case .standard:
+            try container.encode("standard", forKey: .type)
+        case let .custom(template):
+            try container.encode("custom", forKey: .type)
+            try container.encode(template, forKey: .template)
+        }
+    }
 }
 
 /// A snapshot of token utilization within the context window.
@@ -84,7 +114,7 @@ extension ContextBudget: Codable {
 }
 
 /// Configuration for context budget tracking and visibility.
-public struct ContextBudgetConfig: Sendable, Equatable {
+public struct ContextBudgetConfig: Sendable, Equatable, Codable {
     public let softThreshold: Double?
     public let enablePruneTool: Bool
     public let enableVisibility: Bool
@@ -106,6 +136,39 @@ public struct ContextBudgetConfig: Sendable, Equatable {
         self.enablePruneTool = enablePruneTool
         self.enableVisibility = enableVisibility
         self.visibilityFormat = visibilityFormat
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case softThreshold, enablePruneTool, enableVisibility, visibilityFormat
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let softThreshold = try container.decodeIfPresent(Double.self, forKey: .softThreshold)
+        if let softThreshold {
+            guard softThreshold > 0.0, softThreshold < 1.0 else {
+                throw DecodingError.dataCorruptedError(
+                    forKey: .softThreshold, in: container,
+                    debugDescription: "softThreshold must be in (0.0, 1.0), got \(softThreshold)"
+                )
+            }
+        }
+        try self.init(
+            softThreshold: softThreshold,
+            enablePruneTool: container.decode(Bool.self, forKey: .enablePruneTool),
+            enableVisibility: container.decode(Bool.self, forKey: .enableVisibility),
+            visibilityFormat: container.decode(
+                ContextBudgetVisibilityFormat.self, forKey: .visibilityFormat
+            )
+        )
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encodeIfPresent(softThreshold, forKey: .softThreshold)
+        try container.encode(enablePruneTool, forKey: .enablePruneTool)
+        try container.encode(enableVisibility, forKey: .enableVisibility)
+        try container.encode(visibilityFormat, forKey: .visibilityFormat)
     }
 }
 

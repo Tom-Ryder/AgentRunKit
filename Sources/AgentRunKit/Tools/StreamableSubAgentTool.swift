@@ -5,6 +5,7 @@ protocol StreamableSubAgentTool<Context>: AnyTool {
         toolCallId: String,
         arguments: Data,
         context: Context,
+        parentSessionID: SessionID?,
         eventHandler: @Sendable (StreamEvent) -> Void,
         approvalHandler: ToolApprovalHandler?
     ) async throws -> ToolResult
@@ -21,6 +22,7 @@ extension StreamableSubAgentTool {
             toolCallId: toolCallId,
             arguments: arguments,
             context: context,
+            parentSessionID: nil,
             eventHandler: eventHandler,
             approvalHandler: nil
         )

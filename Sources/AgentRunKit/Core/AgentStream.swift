@@ -30,6 +30,9 @@ public final class AgentStream<C: ToolContext> {
     public private(set) var toolCalls: [ToolCallInfo] = []
     public private(set) var iterationUsages: [TokenUsage] = []
     public private(set) var contextBudget: ContextBudget?
+    public private(set) var sessionID: SessionID?
+    public private(set) var iterationsReplayed: Int = 0
+    public private(set) var currentCheckpoint: CheckpointID?
 
     private let agent: Agent<C>
     let buffer: StreamEventBuffer?
@@ -47,12 +50,15 @@ public final class AgentStream<C: ToolContext> {
         context: C,
         tokenBudget: Int? = nil,
         requestContext: RequestContext? = nil,
-        approvalHandler: ToolApprovalHandler? = nil
+        approvalHandler: ToolApprovalHandler? = nil,
+        sessionID: SessionID? = nil,
+        checkpointer: (any AgentCheckpointer)? = nil
     ) {
         send(
             .user(message), history: history, context: context,
             tokenBudget: tokenBudget, requestContext: requestContext,
-            approvalHandler: approvalHandler
+            approvalHandler: approvalHandler, sessionID: sessionID,
+            checkpointer: checkpointer
         )
     }
 
@@ -62,44 +68,45 @@ public final class AgentStream<C: ToolContext> {
         context: C,
         tokenBudget: Int? = nil,
         requestContext: RequestContext? = nil,
-        approvalHandler: ToolApprovalHandler? = nil
+        approvalHandler: ToolApprovalHandler? = nil,
+        sessionID: SessionID? = nil,
+        checkpointer: (any AgentCheckpointer)? = nil
     ) {
         cancel()
         reset()
         sendGeneration &+= 1
         let generation = sendGeneration
         isStreaming = true
+        self.sessionID = sessionID
+        let stream = agent.stream(
+            userMessage: message, history: history, context: context,
+            tokenBudget: tokenBudget, requestContext: requestContext,
+            approvalHandler: approvalHandler, sessionID: sessionID,
+            checkpointer: checkpointer
+        )
+        activeTask = Task { await self.runStreamTask(generation: generation, stream: stream) }
+    }
 
-        activeTask = Task {
-            if let buffer = self.buffer { await buffer.clear() }
-            do {
-                let stream = self.agent.stream(
-                    userMessage: message,
-                    history: history,
-                    context: context,
-                    tokenBudget: tokenBudget,
-                    requestContext: requestContext,
-                    approvalHandler: approvalHandler
-                )
-                for try await event in stream {
-                    guard generation == self.sendGeneration else {
-                        continue
-                    }
-                    if let buffer = self.buffer { await buffer.record(event) }
-                    guard generation == self.sendGeneration else {
-                        continue
-                    }
-                    self.handle(event)
-                }
-            } catch is CancellationError {
-                return
-            } catch {
-                guard !Task.isCancelled, generation == self.sendGeneration else { return }
-                self.error = error
+    private func runStreamTask(
+        generation: UInt64,
+        stream: AsyncThrowingStream<StreamEvent, Error>
+    ) async {
+        if let buffer { await buffer.clear() }
+        do {
+            for try await event in stream {
+                guard generation == sendGeneration else { continue }
+                if let buffer { await buffer.record(event) }
+                guard generation == sendGeneration else { continue }
+                handle(event)
             }
-            guard generation == self.sendGeneration else { return }
-            self.isStreaming = false
+        } catch is CancellationError {
+            return
+        } catch {
+            guard !Task.isCancelled, generation == sendGeneration else { return }
+            self.error = error
         }
+        guard generation == sendGeneration else { return }
+        isStreaming = false
     }
 
     public func cancel() {
@@ -107,6 +114,33 @@ public final class AgentStream<C: ToolContext> {
         activeTask = nil
         sendGeneration &+= 1
         isStreaming = false
+    }
+
+    /// Synchronously preloads observable state from the checkpoint before the live continuation begins.
+    public func resume(
+        from checkpointID: CheckpointID,
+        checkpointer: any AgentCheckpointer,
+        context: C,
+        tokenBudget: Int? = nil,
+        requestContext: RequestContext? = nil,
+        approvalHandler: ToolApprovalHandler? = nil
+    ) async throws {
+        cancel()
+        reset()
+        let target = try await checkpointer.load(checkpointID)
+        let resumedStream = try await agent.resume(
+            target: target, checkpointer: checkpointer, context: context,
+            tokenBudget: tokenBudget, requestContext: requestContext,
+            approvalHandler: approvalHandler
+        )
+        sendGeneration &+= 1
+        let generation = sendGeneration
+        isStreaming = true
+        sessionID = target.sessionID
+        history = target.messages
+        tokenUsage = target.tokenUsage
+        currentCheckpoint = target.checkpointID
+        activeTask = Task { await self.runStreamTask(generation: generation, stream: resumedStream) }
     }
 
     public func replay(from cursor: UInt64) -> AsyncThrowingStream<StreamEvent, Error> {
@@ -130,27 +164,18 @@ public final class AgentStream<C: ToolContext> {
         }
     }
 
-    var bufferedCursor: UInt64? {
+    public var bufferedCursor: UInt64? {
         get async { await buffer?.cursor }
     }
+}
 
-    private func reset() {
-        content = ""
-        reasoning = ""
-        error = nil
-        tokenUsage = nil
-        finishReason = nil
-        history = []
-        toolCalls = []
-        iterationUsages = []
-        contextBudget = nil
-    }
-
-    private func handle(_ event: StreamEvent) {
+extension AgentStream {
+    func handle(_ event: StreamEvent) {
         handle(event, toolCallIdPath: [], toolNamePath: [])
     }
 
     func handle(_ event: StreamEvent, toolCallIdPath: [String], toolNamePath: [String]) {
+        observeEnvelope(event)
         switch event.kind {
         case let .delta(text):
             content += text
@@ -163,20 +188,11 @@ public final class AgentStream<C: ToolContext> {
                 state: .running
             ))
         case let .toolCallCompleted(id, _, result):
-            let compositeId = compositeToolCallId(localId: id, path: toolCallIdPath)
-            if let index = toolCalls.firstIndex(where: { $0.id == compositeId }) {
-                toolCalls[index].state = result.isError
-                    ? .failed(result.content)
-                    : .completed(result.content)
-            }
+            updateToolCallState(id: id, path: toolCallIdPath, result: result)
         case let .toolApprovalRequested(request):
             handleApprovalRequested(request, toolCallIdPath: toolCallIdPath, toolNamePath: toolNamePath)
         case let .toolApprovalResolved(toolCallId, decision):
-            handleApprovalResolved(
-                toolCallId: toolCallId,
-                decision: decision,
-                toolCallIdPath: toolCallIdPath
-            )
+            handleApprovalResolved(toolCallId: toolCallId, decision: decision, toolCallIdPath: toolCallIdPath)
         case .audioData, .audioTranscript, .audioFinished,
              .subAgentStarted, .subAgentCompleted,
              .compacted, .budgetAdvisory:
@@ -187,17 +203,49 @@ public final class AgentStream<C: ToolContext> {
                 toolCallIdPath: toolCallIdPath + [toolCallId],
                 toolNamePath: toolNamePath + [toolName]
             )
-        case let .finished(usage, finishContent, reason, hist):
-            tokenUsage = usage
-            finishReason = reason
-            history = hist
-            if let finishContent, content.isEmpty {
-                content = finishContent
-            }
-        case let .iterationCompleted(usage, _, _):
-            iterationUsages.append(usage)
+        case let .finished(usage, finishContent, reason, messages):
+            handleFinished(usage: usage, finishContent: finishContent, reason: reason, messages: messages)
+        case let .iterationCompleted(usage, _, replayedHistory):
+            handleIterationCompleted(usage: usage, messages: replayedHistory, origin: event.origin)
         case let .budgetUpdated(budget):
             contextBudget = budget
+        }
+    }
+
+    private func observeEnvelope(_ event: StreamEvent) {
+        if let observed = event.sessionID, sessionID == nil {
+            sessionID = observed
+        }
+        if case let .replayed(checkpointID) = event.origin {
+            currentCheckpoint = checkpointID
+        }
+    }
+
+    private func updateToolCallState(id: String, path: [String], result: ToolResult) {
+        let compositeId = compositeToolCallId(localId: id, path: path)
+        if let index = toolCalls.firstIndex(where: { $0.id == compositeId }) {
+            toolCalls[index].state = result.isError
+                ? .failed(result.content)
+                : .completed(result.content)
+        }
+    }
+
+    private func handleFinished(
+        usage: TokenUsage, finishContent: String?, reason: FinishReason?, messages: [ChatMessage]
+    ) {
+        tokenUsage = usage
+        finishReason = reason
+        history = messages
+        if let finishContent, content.isEmpty {
+            content = finishContent
+        }
+    }
+
+    private func handleIterationCompleted(usage: TokenUsage, messages: [ChatMessage], origin: EventOrigin) {
+        iterationUsages.append(usage)
+        if case .replayed = origin {
+            iterationsReplayed += 1
+            history = messages
         }
     }
 
@@ -240,5 +288,20 @@ public final class AgentStream<C: ToolContext> {
     private func compositeToolName(localName: String, path: [String]) -> String {
         guard !path.isEmpty else { return localName }
         return (path + [localName]).joined(separator: " > ")
+    }
+
+    private func reset() {
+        content = ""
+        reasoning = ""
+        error = nil
+        tokenUsage = nil
+        finishReason = nil
+        history = []
+        toolCalls = []
+        iterationUsages = []
+        contextBudget = nil
+        sessionID = nil
+        iterationsReplayed = 0
+        currentCheckpoint = nil
     }
 }

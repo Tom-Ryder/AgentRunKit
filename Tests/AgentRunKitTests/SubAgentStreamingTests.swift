@@ -702,6 +702,7 @@ private struct BlockingStreamableTool: AnyTool, StreamableSubAgentTool {
         toolCallId _: String,
         arguments _: Data,
         context _: Context,
+        parentSessionID _: SessionID?,
         eventHandler _: @Sendable (StreamEvent) -> Void,
         approvalHandler _: ToolApprovalHandler?
     ) async throws -> ToolResult {

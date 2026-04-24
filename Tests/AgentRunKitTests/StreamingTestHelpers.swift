@@ -268,6 +268,57 @@ actor ContinuityStreamingMockLLMClient: LLMClient, HistoryRewriteAwareClient {
     }
 }
 
+actor RequestModeCapturingMockLLMClient: LLMClient, HistoryRewriteAwareClient {
+    private let streamSequences: [[StreamDelta]]
+    private var streamIndex = 0
+    private(set) var capturedRequestModes: [RunRequestMode] = []
+
+    init(streamSequences: [[StreamDelta]]) {
+        self.streamSequences = streamSequences
+    }
+
+    func generate(
+        messages _: [ChatMessage],
+        tools _: [ToolDefinition],
+        responseFormat _: ResponseFormat?,
+        requestContext _: RequestContext?
+    ) async throws -> AssistantMessage {
+        throw AgentError.llmError(.other("not implemented"))
+    }
+
+    nonisolated func stream(
+        messages _: [ChatMessage],
+        tools _: [ToolDefinition],
+        requestContext _: RequestContext?
+    ) -> AsyncThrowingStream<StreamDelta, Error> {
+        AsyncThrowingStream { $0.finish() }
+    }
+
+    private func recordRequestMode(_ mode: RunRequestMode) -> [StreamDelta] {
+        capturedRequestModes.append(mode)
+        let sequence = streamIndex < streamSequences.count ? streamSequences[streamIndex] : []
+        streamIndex += 1
+        return sequence
+    }
+
+    nonisolated func streamForRun(
+        messages _: [ChatMessage],
+        tools _: [ToolDefinition],
+        requestContext _: RequestContext?,
+        requestMode: RunRequestMode
+    ) -> AsyncThrowingStream<RunStreamElement, Error> {
+        AsyncThrowingStream { continuation in
+            Task {
+                let sequence = await self.recordRequestMode(requestMode)
+                for delta in sequence {
+                    continuation.yield(.delta(delta))
+                }
+                continuation.finish()
+            }
+        }
+    }
+}
+
 actor StreamingEventCollector {
     private(set) var events: [StreamEvent] = []
     private var firstEventWaiters: [CheckedContinuation<Void, Never>] = []

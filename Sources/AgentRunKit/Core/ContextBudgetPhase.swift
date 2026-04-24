@@ -16,6 +16,22 @@ struct ContextBudgetPhase {
         self.windowSize = windowSize
     }
 
+    init(checkpointState: ContextBudgetCheckpointState) {
+        config = checkpointState.config
+        windowSize = checkpointState.windowSize
+        lastBudget = checkpointState.lastBudget
+        softAdvisoryArmed = checkpointState.softAdvisoryArmed
+    }
+
+    var checkpointState: ContextBudgetCheckpointState {
+        ContextBudgetCheckpointState(
+            config: config,
+            windowSize: windowSize,
+            lastBudget: lastBudget,
+            softAdvisoryArmed: softAdvisoryArmed
+        )
+    }
+
     @discardableResult
     mutating func afterResponse(usage: TokenUsage, messages: inout [ChatMessage]) -> AfterResponseResult {
         let budget = ContextBudget(

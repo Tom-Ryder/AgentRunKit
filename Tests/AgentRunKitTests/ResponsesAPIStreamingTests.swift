@@ -862,7 +862,10 @@ private func streamedAssistantMessage(
 ) async throws -> AssistantMessage {
     let elements = try await collectRunStreamElements(client: client, lines: lines)
     let streamClient = ContinuityStreamingMockLLMClient(streamSequences: [elements])
-    let processor = StreamProcessor(client: streamClient, toolDefinitions: [], policy: .chat)
+    let processor = StreamProcessor(
+        client: streamClient, toolDefinitions: [], policy: .chat,
+        eventFactory: StreamEventFactory(sessionID: nil, runID: nil, origin: .live)
+    )
     let (_, continuation) = AsyncThrowingStream<StreamEvent, Error>.makeStream()
     var totalUsage = TokenUsage()
 

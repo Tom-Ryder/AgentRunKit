@@ -5,6 +5,8 @@ private let promptTooLongError = AgentError.llmError(
     .httpError(statusCode: 400, body: "context_length_exceeded")
 )
 
+private let testFactory = StreamEventFactory(sessionID: nil, runID: nil, origin: .live)
+
 private struct ScriptedStreamClient: LLMClient {
     let deltas: [StreamDelta]
     let error: (any Error)?
@@ -38,7 +40,7 @@ struct StreamProcessorEmittedOutputTests {
     @Test
     func errorBeforeAnyDeltaSetsEmittedOutputFalse() async {
         let client = ScriptedStreamClient(deltas: [], error: promptTooLongError)
-        let processor = StreamProcessor(client: client, toolDefinitions: [], policy: .chat)
+        let processor = StreamProcessor(client: client, toolDefinitions: [], policy: .chat, eventFactory: testFactory)
         let (_, eventContinuation) = AsyncThrowingStream<StreamEvent, Error>.makeStream()
         var totalUsage = TokenUsage()
         var emittedOutput = true
@@ -62,7 +64,7 @@ struct StreamProcessorEmittedOutputTests {
             deltas: [.content("hello")],
             error: promptTooLongError
         )
-        let processor = StreamProcessor(client: client, toolDefinitions: [], policy: .chat)
+        let processor = StreamProcessor(client: client, toolDefinitions: [], policy: .chat, eventFactory: testFactory)
         let (_, eventContinuation) = AsyncThrowingStream<StreamEvent, Error>.makeStream()
         var totalUsage = TokenUsage()
         var emittedOutput = false
@@ -86,7 +88,7 @@ struct StreamProcessorEmittedOutputTests {
             deltas: [.toolCallStart(index: 0, id: "call_1", name: "search", kind: .function)],
             error: promptTooLongError
         )
-        let processor = StreamProcessor(client: client, toolDefinitions: [], policy: .chat)
+        let processor = StreamProcessor(client: client, toolDefinitions: [], policy: .chat, eventFactory: testFactory)
         let (_, eventContinuation) = AsyncThrowingStream<StreamEvent, Error>.makeStream()
         var totalUsage = TokenUsage()
         var emittedOutput = false
@@ -110,7 +112,7 @@ struct StreamProcessorEmittedOutputTests {
             deltas: [.toolCallStart(index: 0, id: "finish_1", name: "finish", kind: .function)],
             error: promptTooLongError
         )
-        let processor = StreamProcessor(client: client, toolDefinitions: [], policy: .agent)
+        let processor = StreamProcessor(client: client, toolDefinitions: [], policy: .agent, eventFactory: testFactory)
         let (_, eventContinuation) = AsyncThrowingStream<StreamEvent, Error>.makeStream()
         var totalUsage = TokenUsage()
         var emittedOutput = true
@@ -142,7 +144,7 @@ struct StreamProcessorToolCallAccumulationTests {
             ],
             error: nil
         )
-        let processor = StreamProcessor(client: client, toolDefinitions: [], policy: .chat)
+        let processor = StreamProcessor(client: client, toolDefinitions: [], policy: .chat, eventFactory: testFactory)
         let (_, eventContinuation) = AsyncThrowingStream<StreamEvent, Error>.makeStream()
         var totalUsage = TokenUsage()
 
@@ -174,7 +176,7 @@ struct StreamProcessorContinuityTests {
             .finalizedContinuity(continuity),
             .delta(.finished(usage: nil)),
         ]])
-        let processor = StreamProcessor(client: client, toolDefinitions: [], policy: .chat)
+        let processor = StreamProcessor(client: client, toolDefinitions: [], policy: .chat, eventFactory: testFactory)
         let (_, eventContinuation) = AsyncThrowingStream<StreamEvent, Error>.makeStream()
         var totalUsage = TokenUsage()
 
@@ -193,7 +195,7 @@ struct StreamProcessorContinuityTests {
             deltas: [.content("hello"), .finished(usage: nil)],
             error: nil
         )
-        let processor = StreamProcessor(client: client, toolDefinitions: [], policy: .chat)
+        let processor = StreamProcessor(client: client, toolDefinitions: [], policy: .chat, eventFactory: testFactory)
         let (_, eventContinuation) = AsyncThrowingStream<StreamEvent, Error>.makeStream()
         var totalUsage = TokenUsage()
 
@@ -220,7 +222,7 @@ struct StreamProcessorContinuityTests {
             .finalizedContinuity(first),
             .finalizedContinuity(second),
         ]])
-        let processor = StreamProcessor(client: client, toolDefinitions: [], policy: .chat)
+        let processor = StreamProcessor(client: client, toolDefinitions: [], policy: .chat, eventFactory: testFactory)
         let (_, eventContinuation) = AsyncThrowingStream<StreamEvent, Error>.makeStream()
         var totalUsage = TokenUsage()
 
@@ -243,7 +245,7 @@ struct StreamProcessorContinuityTests {
             streamSequences: [[.finalizedContinuity(continuity)]],
             streamErrors: [promptTooLongError]
         )
-        let processor = StreamProcessor(client: client, toolDefinitions: [], policy: .chat)
+        let processor = StreamProcessor(client: client, toolDefinitions: [], policy: .chat, eventFactory: testFactory)
         let (_, eventContinuation) = AsyncThrowingStream<StreamEvent, Error>.makeStream()
         var totalUsage = TokenUsage()
         var emittedOutput = true

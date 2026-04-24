@@ -6,10 +6,11 @@ extension Agent {
         iterationNumber: Int,
         messages: [ChatMessage],
         context: C,
+        eventFactory: StreamEventFactory,
         continuation: AsyncThrowingStream<StreamEvent, Error>.Continuation
     ) {
         guard let usage = iteration.usage else { return }
-        continuation.yield(.make(.iterationCompleted(
+        continuation.yield(eventFactory.make(.iterationCompleted(
             usage: usage,
             iteration: iterationNumber,
             history: emittedIterationHistory(messages: messages, context: context)
@@ -34,14 +35,16 @@ extension Agent {
         case let .iterationCompleted(usage, iteration, history) where depth > limit && !history.isEmpty:
             return StreamEvent(
                 id: event.id, timestamp: event.timestamp,
-                sessionID: event.sessionID, runID: event.runID, parentEventID: event.parentEventID,
+                sessionID: event.sessionID, runID: event.runID,
+                parentEventID: event.parentEventID, origin: event.origin,
                 kind: .iterationCompleted(usage: usage, iteration: iteration, history: [])
             )
         case let .subAgentEvent(toolCallId, toolName, nested):
             let rewritten = rewritingHistoryEmission(in: nested, depth: depth + 1, limit: limit)
             return StreamEvent(
                 id: event.id, timestamp: event.timestamp,
-                sessionID: event.sessionID, runID: event.runID, parentEventID: event.parentEventID,
+                sessionID: event.sessionID, runID: event.runID,
+                parentEventID: event.parentEventID, origin: event.origin,
                 kind: .subAgentEvent(toolCallId: toolCallId, toolName: toolName, event: rewritten)
             )
         default:

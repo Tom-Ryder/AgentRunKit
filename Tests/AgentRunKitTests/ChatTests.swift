@@ -52,7 +52,8 @@ struct ChatTests {
         StreamEventInvariantAssertions.assertStage1RuntimeInvariants(
             events,
             startedAt: startedAt,
-            endedAt: endedAt
+            endedAt: endedAt,
+            scope: .chat
         )
     }
 

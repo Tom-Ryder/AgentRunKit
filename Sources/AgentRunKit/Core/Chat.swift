@@ -229,7 +229,10 @@ private extension Chat {
         var totalUsage = TokenUsage()
         var sessionAllowlist: Set<String> = []
         let policy = StreamPolicy.chat
-        let processor = StreamProcessor(client: client, toolDefinitions: toolDefinitions, policy: policy)
+        let processor = StreamProcessor(
+            client: client, toolDefinitions: toolDefinitions, policy: policy,
+            eventFactory: StreamEventFactory(sessionID: nil, runID: nil, origin: .live)
+        )
 
         for _ in 0 ..< maxToolRounds {
             try Task.checkCancellation()

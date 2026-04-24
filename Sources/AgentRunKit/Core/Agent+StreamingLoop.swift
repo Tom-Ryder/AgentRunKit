@@ -14,6 +14,7 @@ extension Agent {
         lastTotalTokens: Int?,
         compactor: inout ContextCompactor,
         historyWasRewrittenLocally: inout Bool,
+        eventFactory: StreamEventFactory,
         continuation: AsyncThrowingStream<StreamEvent, Error>.Continuation
     ) async throws {
         let compactionOutcome = try await compactor.compactOrTruncateIfNeeded(
@@ -28,6 +29,7 @@ extension Agent {
         emitCompactionEventIfNeeded(
             compactionOutcome.emitsCompactionEvent,
             lastTotalTokens: lastTotalTokens,
+            eventFactory: eventFactory,
             continuation: continuation
         )
     }
@@ -44,11 +46,8 @@ extension Agent {
         let pruneCalls = indexedCalls.filter { $0.call.name == "prune_context" }
         let regularCalls = indexedCalls.filter { $0.call.name != "prune_context" }
 
-        let pruneOutcome = executePruneCalls(
-            pruneCalls,
-            messages: &state.messages,
-            continuation: continuation
-        )
+        let emit = StreamEmitter(factory: options.eventFactory, continuation: continuation)
+        let pruneOutcome = executePruneCalls(pruneCalls, messages: &state.messages, emit: emit)
         if pruneOutcome.historyWasRewritten {
             state.historyWasRewrittenLocally = true
         }
@@ -56,8 +55,8 @@ extension Agent {
             regularCalls,
             context: context,
             messages: state.messages,
+            options: options,
             continuation: continuation,
-            approvalHandler: options.approvalHandler,
             allowlist: &state.sessionAllowlist
         )
         appendToolResults(
@@ -67,10 +66,8 @@ extension Agent {
 
         if let budgetUsage {
             applyBudgetPhase(
-                &state.budgetPhase,
-                usage: budgetUsage,
-                messages: &state.messages,
-                continuation: continuation
+                &state.budgetPhase, usage: budgetUsage,
+                messages: &state.messages, emit: emit
             )
         }
         try state.messages.validateForAgentHistory()

@@ -17,14 +17,14 @@ extension Agent {
         _ budgetPhase: inout ContextBudgetPhase?,
         usage: TokenUsage,
         messages: inout [ChatMessage],
-        continuation: AsyncThrowingStream<StreamEvent, Error>.Continuation? = nil
+        emit: StreamEmitter? = nil
     ) {
         guard var phase = budgetPhase else { return }
         let result = phase.afterResponse(usage: usage, messages: &messages)
         budgetPhase = phase
-        continuation?.yield(.make(.budgetUpdated(budget: result.budget)))
+        emit?.yield(.budgetUpdated(budget: result.budget))
         if result.advisoryEmitted {
-            continuation?.yield(.make(.budgetAdvisory(budget: result.budget)))
+            emit?.yield(.budgetAdvisory(budget: result.budget))
         }
     }
 
@@ -32,7 +32,7 @@ extension Agent {
     func executePruneCalls(
         _ calls: [IndexedToolCall],
         messages: inout [ChatMessage],
-        continuation: AsyncThrowingStream<StreamEvent, Error>.Continuation? = nil
+        emit: StreamEmitter? = nil
     ) -> (historyWasRewritten: Bool, results: [IndexedToolResult]) {
         let pruneEnabled = configuration.contextBudget?.enablePruneTool == true
         var historyWasRewritten = false
@@ -54,11 +54,9 @@ extension Agent {
                 }
             }
             results.append(IndexedToolResult(index: indexed.index, call: indexed.call, result: result))
-            continuation?.yield(.make(.toolCallCompleted(
-                id: indexed.call.id,
-                name: indexed.call.name,
-                result: result
-            )))
+            emit?.yield(.toolCallCompleted(
+                id: indexed.call.id, name: indexed.call.name, result: result
+            ))
         }
         return (historyWasRewritten: historyWasRewritten, results: results)
     }
@@ -82,7 +80,7 @@ extension Agent {
         var allResults = try await executeIndexedCalls(autoExecute, context: executionContext, approvalHandler: handler)
 
         let (approved, denied) = try await resolveApprovals(
-            needsApproval, handler: handler, allowlist: &allowlist, continuation: nil
+            needsApproval, handler: handler, allowlist: &allowlist
         )
         try Task.checkCancellation()
 
@@ -97,18 +95,21 @@ extension Agent {
 
     func executeStreamingResults(
         _ calls: [IndexedToolCall], context: C, messages: [ChatMessage],
+        options: InvocationOptions,
         continuation: AsyncThrowingStream<StreamEvent, Error>.Continuation,
-        approvalHandler: ToolApprovalHandler? = nil, allowlist: inout Set<String>
+        allowlist: inout Set<String>
     ) async throws -> [IndexedToolResult] {
         guard !calls.isEmpty else { return [] }
         let executionContext = context.withParentHistory(messages.resolvedPrefixForInheritance())
+        let approvalHandler = options.approvalHandler
+        let emit = StreamEmitter(factory: options.eventFactory, continuation: continuation)
 
         guard let handler = approvalHandler, configuration.approvalPolicy != .none else {
             return try await executeIndexedStreamingCalls(
                 calls,
                 context: executionContext,
-                continuation: continuation,
-                approvalHandler: approvalHandler
+                options: options,
+                continuation: continuation
             )
         }
 
@@ -116,28 +117,28 @@ extension Agent {
         var allResults = try await executeIndexedStreamingCalls(
             autoExecute,
             context: executionContext,
-            continuation: continuation,
-            approvalHandler: handler
+            options: options,
+            continuation: continuation
         )
 
         let (approved, denied) = try await resolveApprovals(
-            needsApproval, handler: handler, allowlist: &allowlist, continuation: continuation
+            needsApproval, handler: handler, emit: emit, allowlist: &allowlist
         )
         try Task.checkCancellation()
 
         for entry in denied {
             let truncatedEntry = truncatedIndexedToolResult(entry)
-            continuation.yield(.make(.toolCallCompleted(
+            emit.yield(.toolCallCompleted(
                 id: truncatedEntry.call.id, name: truncatedEntry.call.name, result: truncatedEntry.result
-            )))
+            ))
             allResults.append(truncatedEntry)
         }
 
         try await allResults.append(contentsOf: executeIndexedStreamingCalls(
             approved,
             context: executionContext,
-            continuation: continuation,
-            approvalHandler: handler
+            options: options,
+            continuation: continuation
         ))
         return allResults.sorted { $0.index < $1.index }
     }
@@ -194,14 +195,14 @@ extension Agent {
     private func executeIndexedStreamingCalls(
         _ calls: [IndexedToolCall],
         context: C,
-        continuation: AsyncThrowingStream<StreamEvent, Error>.Continuation,
-        approvalHandler: ToolApprovalHandler?
+        options: InvocationOptions,
+        continuation: AsyncThrowingStream<StreamEvent, Error>.Continuation
     ) async throws -> [IndexedToolResult] {
         let results = try await executeToolsStreaming(
             calls.map(\.call),
             context: context,
-            continuation: continuation,
-            approvalHandler: approvalHandler
+            options: options,
+            continuation: continuation
         )
         return zip(calls, results).map { indexed, entry in
             IndexedToolResult(

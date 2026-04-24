@@ -54,4 +54,34 @@ struct StreamEventOriginPropagationTests {
         #expect(stream.toolCalls[0].id == "parent-tc/child-id")
         #expect(stream.toolCalls[0].name == "parent-tool > child-tool")
     }
+
+    @Test
+    func historyEmissionRewritePreservesReplayedOrigin() {
+        let checkpointID = CheckpointID()
+        let nested = StreamEvent(
+            origin: .replayed(from: checkpointID),
+            kind: .iterationCompleted(
+                usage: TokenUsage(input: 1, output: 1),
+                iteration: 1,
+                history: [.user("Hello")]
+            )
+        )
+        let outer = StreamEvent(
+            origin: .replayed(from: checkpointID),
+            kind: .subAgentEvent(toolCallId: "tc", toolName: "delegate", event: nested)
+        )
+        let configuration = AgentConfiguration(historyEmissionDepthLimit: 0)
+        let agent = Agent<EmptyContext>(
+            client: StreamingMockLLMClient(streamSequences: []),
+            tools: [],
+            configuration: configuration
+        )
+        let processed = agent.applyHistoryEmissionLimitToSubAgentEvent(outer, parentDepth: 0)
+        #expect(processed.origin == .replayed(from: checkpointID))
+        if case let .subAgentEvent(_, _, rewrittenNested) = processed.kind {
+            #expect(rewrittenNested.origin == .replayed(from: checkpointID))
+        } else {
+            Issue.record("Expected subAgentEvent kind")
+        }
+    }
 }

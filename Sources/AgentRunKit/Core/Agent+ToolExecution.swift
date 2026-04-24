@@ -57,28 +57,27 @@ extension Agent {
         _ call: ToolCall,
         tool: any StreamableSubAgentTool<C>,
         context: C,
-        continuation: AsyncThrowingStream<StreamEvent, Error>.Continuation,
-        approvalHandler: ToolApprovalHandler? = nil
+        options: InvocationOptions,
+        continuation: AsyncThrowingStream<StreamEvent, Error>.Continuation
     ) async throws -> ToolResult {
-        continuation.yield(.make(.subAgentStarted(toolCallId: call.id, toolName: call.name)))
-
-        var result = ToolResult.error("Sub-agent did not complete")
-        defer {
-            continuation.yield(.make(.subAgentCompleted(toolCallId: call.id, toolName: call.name, result: result)))
-        }
+        let eventFactory = options.eventFactory
+        continuation.yield(eventFactory.make(.subAgentStarted(toolCallId: call.id, toolName: call.name)))
 
         let parentDepth = (context as? any CurrentDepthProviding)?.currentDepth ?? 0
         let eventHandler: @Sendable (StreamEvent) -> Void = { [self] event in
             let processed = applyHistoryEmissionLimitToSubAgentEvent(event, parentDepth: parentDepth)
-            continuation.yield(.make(.subAgentEvent(toolCallId: call.id, toolName: call.name, event: processed)))
+            continuation.yield(eventFactory.make(
+                .subAgentEvent(toolCallId: call.id, toolName: call.name, event: processed)
+            ))
         }
 
+        let result: ToolResult
         do {
             result = try await withTimeout(resolveTimeout(for: call), toolName: call.name) {
                 try await tool.executeStreaming(
                     toolCallId: call.id, arguments: call.argumentsData,
-                    context: context, eventHandler: eventHandler,
-                    approvalHandler: approvalHandler
+                    context: context, parentSessionID: eventFactory.sessionID,
+                    eventHandler: eventHandler, approvalHandler: options.approvalHandler
                 )
             }
         } catch is CancellationError {
@@ -88,22 +87,24 @@ extension Agent {
         } catch {
             result = ToolResult.error("Tool failed: \(error)")
         }
-
+        continuation.yield(eventFactory.make(
+            .subAgentCompleted(toolCallId: call.id, toolName: call.name, result: result)
+        ))
         return result
     }
 
     func executeToolsStreaming(
         _ calls: [ToolCall],
         context: C,
-        continuation: AsyncThrowingStream<StreamEvent, Error>.Continuation,
-        approvalHandler: ToolApprovalHandler? = nil
+        options: InvocationOptions,
+        continuation: AsyncThrowingStream<StreamEvent, Error>.Continuation
     ) async throws -> [(call: ToolCall, result: ToolResult)] {
         var allResults: [(call: ToolCall, result: ToolResult)] = []
+        let eventFactory = options.eventFactory
         for wave in executionWaves(calls) {
             if wave.concurrent {
                 try await allResults.append(contentsOf: executeConcurrentStreamingWave(
-                    wave.calls, context: context,
-                    continuation: continuation, approvalHandler: approvalHandler
+                    wave.calls, context: context, options: options, continuation: continuation
                 ))
             } else {
                 let call = wave.calls[0]
@@ -111,13 +112,15 @@ extension Agent {
                     as? any StreamableSubAgentTool<C> {
                     try await executeStreamableWithTimeout(
                         call, tool: streamableTool, context: context,
-                        continuation: continuation, approvalHandler: approvalHandler
+                        options: options, continuation: continuation
                     )
                 } else {
-                    try await executeWithTimeout(call, context: context, approvalHandler: approvalHandler)
+                    try await executeWithTimeout(call, context: context, approvalHandler: options.approvalHandler)
                 }
                 let truncated = truncatedToolResult(result, toolName: call.name)
-                continuation.yield(.make(.toolCallCompleted(id: call.id, name: call.name, result: truncated)))
+                continuation.yield(eventFactory.make(
+                    .toolCallCompleted(id: call.id, name: call.name, result: truncated)
+                ))
                 allResults.append((call, truncated))
             }
         }
@@ -200,20 +203,23 @@ extension Agent {
     private func executeConcurrentStreamingWave(
         _ calls: [ToolCall],
         context: C,
-        continuation: AsyncThrowingStream<StreamEvent, Error>.Continuation,
-        approvalHandler: ToolApprovalHandler?
+        options: InvocationOptions,
+        continuation: AsyncThrowingStream<StreamEvent, Error>.Continuation
     ) async throws -> [(call: ToolCall, result: ToolResult)] {
-        try await withThrowingTaskGroup(of: (Int, ToolCall, ToolResult).self) { group in
+        let eventFactory = options.eventFactory
+        return try await withThrowingTaskGroup(of: (Int, ToolCall, ToolResult).self) { group in
             for (index, call) in calls.enumerated() {
                 group.addTask {
                     let result: ToolResult = if let streamableTool = self.tool(named: call.name)
                         as? any StreamableSubAgentTool<C> {
                         try await self.executeStreamableWithTimeout(
                             call, tool: streamableTool, context: context,
-                            continuation: continuation, approvalHandler: approvalHandler
+                            options: options, continuation: continuation
                         )
                     } else {
-                        try await self.executeWithTimeout(call, context: context, approvalHandler: approvalHandler)
+                        try await self.executeWithTimeout(
+                            call, context: context, approvalHandler: options.approvalHandler
+                        )
                     }
                     return (index, call, result)
                 }
@@ -222,7 +228,9 @@ extension Agent {
             var results = [(Int, ToolCall, ToolResult)]()
             for try await (index, call, result) in group {
                 let truncated = truncatedToolResult(result, toolName: call.name)
-                continuation.yield(.make(.toolCallCompleted(id: call.id, name: call.name, result: truncated)))
+                continuation.yield(eventFactory.make(
+                    .toolCallCompleted(id: call.id, name: call.name, result: truncated)
+                ))
                 results.append((index, call, truncated))
             }
             return results.sorted { $0.0 < $1.0 }.map { ($0.1, $0.2) }
