@@ -4,8 +4,8 @@ import Foundation
     /// An MCP transport that communicates over process stdin/stdout.
     ///
     /// @unchecked Sendable justification: Process and Pipe are not Sendable.
-    /// Mutable state (process, stdinPipe) follows strict lifecycle: written once
-    /// in connect(), read in send()/disconnect(), cleared in disconnect().
+    /// Mutable state (process, stdinPipe, stderrPipe) follows strict lifecycle:
+    /// written once in connect(), read in send()/disconnect(), cleared in disconnect().
     /// stream and continuation are immutable let properties constructed in init.
     /// The owning MCPClient actor serializes all access through the MCPTransport protocol.
     public final class StdioMCPTransport: MCPTransport, @unchecked Sendable {
@@ -18,6 +18,7 @@ import Foundation
 
         private var process: Process?
         private var stdinPipe: Pipe?
+        private var stderrPipe: Pipe?
 
         public init(
             command: String,
@@ -61,6 +62,7 @@ import Foundation
 
             self.process = process
             self.stdinPipe = stdinPipe
+            self.stderrPipe = stderrPipe
 
             let cont = continuation
             Task {
@@ -93,6 +95,7 @@ import Foundation
             guard let process, process.isRunning else {
                 process = nil
                 stdinPipe = nil
+                stderrPipe = nil
                 return
             }
 
@@ -109,6 +112,7 @@ import Foundation
             }
             process.waitUntilExit()
             self.process = nil
+            self.stderrPipe = nil
         }
 
         public func send(_ data: Data) async throws {
