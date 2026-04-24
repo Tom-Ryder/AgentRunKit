@@ -226,7 +226,13 @@ public struct VertexAnthropicClient: LLMClient, Sendable {
         let action = stream ? "streamRawPredict" : "rawPredict"
         let basePath = "v1/projects/\(projectID)/locations/\(location)"
             + "/publishers/anthropic/models/\(modelIdentifier):\(action)"
-        guard let baseURL = URL(string: "https://\(location)-aiplatform.googleapis.com") else {
+        let host =
+            if location == "global" {
+                "https://aiplatform.googleapis.com"
+            } else {
+                "https://\(location)-aiplatform.googleapis.com"
+            }
+        guard let baseURL = URL(string: host) else {
             throw AgentError.llmError(.other("Invalid Vertex AI location: \(location)"))
         }
         let url = baseURL.appendingPathComponent(basePath)
