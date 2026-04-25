@@ -6,7 +6,7 @@ private let apiKey = ProcessInfo.processInfo.environment["OPENROUTER_API_KEY"] ?
 private let hasAPIKey = !apiKey.isEmpty
 private let defaultModel = "google/gemini-3-flash-preview"
 
-@Suite(.enabled(if: hasAPIKey, "Requires OPENROUTER_API_KEY environment variable"))
+@Suite(.enabled(if: hasAPIKey, "Requires OPENROUTER_API_KEY environment variable"), .tags(.provider, .requiresNetwork))
 struct OpenAIClientIntegrationTests {
     let client = OpenAIClient(
         apiKey: apiKey,
@@ -71,7 +71,7 @@ struct OpenAIClientIntegrationTests {
     }
 }
 
-@Suite(.enabled(if: hasAPIKey, "Requires OPENROUTER_API_KEY environment variable"))
+@Suite(.enabled(if: hasAPIKey, "Requires OPENROUTER_API_KEY environment variable"), .tags(.requiresNetwork))
 struct AgentIntegrationTests {
     @Test
     func agentCompletesWithFinishTool() async throws {
@@ -188,7 +188,7 @@ private struct EchoOutput: Codable {
     let echoed: String
 }
 
-@Suite(.enabled(if: hasAPIKey, "Requires OPENROUTER_API_KEY environment variable"))
+@Suite(.enabled(if: hasAPIKey, "Requires OPENROUTER_API_KEY environment variable"), .tags(.requiresNetwork))
 struct AutoSchemaIntegrationTests {
     @Test
     func autoSchemaToolWithRealLLM() async throws {
@@ -262,7 +262,7 @@ private actor ExecutionTimeTracker {
     }
 }
 
-@Suite(.enabled(if: hasAPIKey, "Requires OPENROUTER_API_KEY environment variable"))
+@Suite(.enabled(if: hasAPIKey, "Requires OPENROUTER_API_KEY environment variable"), .tags(.requiresNetwork, .slow))
 struct ParallelExecutionIntegrationTests {
     @Test
     func parallelToolsExecuteConcurrently() async throws {

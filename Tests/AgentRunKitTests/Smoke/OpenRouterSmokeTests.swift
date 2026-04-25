@@ -6,7 +6,10 @@ private let apiKey = ProcessInfo.processInfo.environment["OPENROUTER_API_KEY"] ?
 private let hasAPIKey = !apiKey.isEmpty
 private let model = ProcessInfo.processInfo.environment["SMOKE_OPENROUTER_MODEL"] ?? "google/gemini-3-flash-preview"
 
-@Suite(.enabled(if: hasAPIKey, "Requires OPENROUTER_API_KEY environment variable"))
+@Suite(
+    .enabled(if: hasAPIKey, "Requires OPENROUTER_API_KEY environment variable"),
+    .tags(.smoke, .provider, .requiresNetwork)
+)
 struct OpenRouterSmokeTests {
     let client = OpenAIClient.openRouter(
         apiKey: apiKey,
@@ -135,7 +138,10 @@ struct OpenRouterSmokeTests {
 private let reasoningModel = ProcessInfo.processInfo.environment["SMOKE_OPENROUTER_REASONING_MODEL"]
     ?? "z-ai/glm-5"
 
-@Suite(.enabled(if: hasAPIKey, "Requires OPENROUTER_API_KEY"))
+@Suite(
+    .enabled(if: hasAPIKey, "Requires OPENROUTER_API_KEY"),
+    .tags(.smoke, .provider, .requiresNetwork)
+)
 struct OpenRouterReplayPolicySmokeTests {
     let client = OpenAIClient.openRouter(
         apiKey: apiKey,
@@ -208,8 +214,13 @@ private let responsesModel =
     ProcessInfo.processInfo.environment["SMOKE_OPENROUTER_RESPONSES_MODEL"] ?? ""
 private let hasResponsesModel = !responsesModel.isEmpty
 
-@Suite(.enabled(if: hasAPIKey && hasResponsesModel,
-                "Requires OPENROUTER_API_KEY and SMOKE_OPENROUTER_RESPONSES_MODEL"))
+@Suite(
+    .enabled(
+        if: hasAPIKey && hasResponsesModel,
+        "Requires OPENROUTER_API_KEY and SMOKE_OPENROUTER_RESPONSES_MODEL"
+    ),
+    .tags(.smoke, .provider, .requiresNetwork)
+)
 struct OpenRouterResponsesSmokeTests {
     func makeClient() -> ResponsesAPIClient {
         ResponsesAPIClient(

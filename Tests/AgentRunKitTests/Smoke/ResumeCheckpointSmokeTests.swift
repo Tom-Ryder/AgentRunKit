@@ -6,7 +6,10 @@ private let anthropicAPIKey = ProcessInfo.processInfo.environment["ANTHROPIC_API
 private let hasAnthropicKey = !anthropicAPIKey.isEmpty
 private let anthropicModel = ProcessInfo.processInfo.environment["SMOKE_ANTHROPIC_MODEL"] ?? "claude-sonnet-4-6"
 
-@Suite(.enabled(if: hasAnthropicKey, "Requires ANTHROPIC_API_KEY environment variable"))
+@Suite(
+    .enabled(if: hasAnthropicKey, "Requires ANTHROPIC_API_KEY environment variable"),
+    .tags(.smoke, .checkpointing, .requiresNetwork)
+)
 struct ResumeCheckpointSmokeTests {
     private func makeClient() throws -> AnthropicClient {
         try AnthropicClient(apiKey: anthropicAPIKey, model: anthropicModel, maxTokens: 1024)

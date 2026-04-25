@@ -32,7 +32,7 @@ private struct TestExercise: Codable, SchemaProviding {
     }
 }
 
-@Suite(.disabled(if: apiKey == nil, "Requires OPENROUTER_API_KEY environment variable"))
+@Suite(.disabled(if: apiKey == nil, "Requires OPENROUTER_API_KEY environment variable"), .tags(.requiresNetwork))
 struct StructuredOutputIntegrationTests {
     let client: OpenAIClient
 

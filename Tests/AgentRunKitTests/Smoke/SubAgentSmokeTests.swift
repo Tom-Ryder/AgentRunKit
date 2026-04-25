@@ -6,7 +6,7 @@ private let apiKey = ProcessInfo.processInfo.environment["OPENROUTER_API_KEY"] ?
 private let hasAPIKey = !apiKey.isEmpty
 private let model = ProcessInfo.processInfo.environment["SMOKE_OPENROUTER_MODEL"] ?? "google/gemini-3-flash-preview"
 
-@Suite(.enabled(if: hasAPIKey, "Requires OPENROUTER_API_KEY environment variable"))
+@Suite(.enabled(if: hasAPIKey, "Requires OPENROUTER_API_KEY environment variable"), .tags(.smoke, .requiresNetwork))
 struct SubAgentSmokeTests {
     let client = OpenAIClient(
         apiKey: apiKey,

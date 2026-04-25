@@ -11,7 +11,10 @@ private let cachingSystemPrompt = String(
     count: 150
 )
 
-@Suite(.enabled(if: hasAPIKey, "Requires ANTHROPIC_API_KEY environment variable"))
+@Suite(
+    .enabled(if: hasAPIKey, "Requires ANTHROPIC_API_KEY environment variable"),
+    .tags(.smoke, .provider, .requiresNetwork)
+)
 struct AnthropicSmokeTests {
     private func makeClient() throws -> AnthropicClient {
         try AnthropicClient(apiKey: apiKey, model: model, maxTokens: 1024)

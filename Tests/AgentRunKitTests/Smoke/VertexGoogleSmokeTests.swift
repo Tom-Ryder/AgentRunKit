@@ -17,7 +17,7 @@ private let vertexStaticToken = ProcessInfo.processInfo.environment["SMOKE_VERTE
     @Suite(.enabled(
         if: hasVertexGoogleADCConfig,
         "Requires VERTEX_PROJECT_ID, VERTEX_LOCATION, SMOKE_VERTEX_GOOGLE_MODEL, and Google ADC credentials"
-    ))
+    ), .tags(.smoke, .provider, .requiresNetwork))
     struct VertexGoogleSmokeTests {
         private func makeClient() throws -> VertexGoogleClient {
             try VertexGoogleClient(
@@ -63,7 +63,7 @@ private let hasVertexGoogleTokenConfig =
 @Suite(.enabled(
     if: hasVertexGoogleTokenConfig,
     "Requires VERTEX_PROJECT_ID, VERTEX_LOCATION, SMOKE_VERTEX_GOOGLE_MODEL, and SMOKE_VERTEX_STATIC_TOKEN"
-))
+), .tags(.smoke, .provider, .requiresNetwork))
 struct VertexGoogleTokenProviderSmokeTests {
     private func makeClient() -> VertexGoogleClient {
         VertexGoogleClient(

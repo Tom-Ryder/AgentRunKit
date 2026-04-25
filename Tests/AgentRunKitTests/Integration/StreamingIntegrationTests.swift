@@ -6,7 +6,7 @@ private let apiKey = ProcessInfo.processInfo.environment["OPENROUTER_API_KEY"] ?
 private let hasAPIKey = !apiKey.isEmpty
 private let defaultModel = "google/gemini-3-flash-preview"
 
-@Suite(.enabled(if: hasAPIKey, "Requires OPENROUTER_API_KEY environment variable"))
+@Suite(.enabled(if: hasAPIKey, "Requires OPENROUTER_API_KEY environment variable"), .tags(.streaming, .requiresNetwork))
 struct StreamingIntegrationTests {
     let client = OpenAIClient(
         apiKey: apiKey,

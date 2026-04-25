@@ -6,7 +6,10 @@ private let apiKey = ProcessInfo.processInfo.environment["GEMINI_API_KEY"] ?? ""
 private let hasAPIKey = !apiKey.isEmpty
 private let model = ProcessInfo.processInfo.environment["SMOKE_GEMINI_MODEL"] ?? "gemini-3-flash-preview"
 
-@Suite(.enabled(if: hasAPIKey, "Requires GEMINI_API_KEY environment variable"))
+@Suite(
+    .enabled(if: hasAPIKey, "Requires GEMINI_API_KEY environment variable"),
+    .tags(.smoke, .provider, .requiresNetwork)
+)
 struct GeminiSmokeTests {
     let client = GeminiClient(apiKey: apiKey, model: model, maxOutputTokens: 1024)
 

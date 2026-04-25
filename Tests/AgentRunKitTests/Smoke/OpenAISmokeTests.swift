@@ -6,7 +6,10 @@ private let apiKey = ProcessInfo.processInfo.environment["OPENAI_API_KEY"] ?? ""
 private let hasAPIKey = !apiKey.isEmpty
 private let model = ProcessInfo.processInfo.environment["SMOKE_OPENAI_CHAT_MODEL"] ?? "gpt-5.4-mini"
 
-@Suite(.enabled(if: hasAPIKey, "Requires OPENAI_API_KEY environment variable"))
+@Suite(
+    .enabled(if: hasAPIKey, "Requires OPENAI_API_KEY environment variable"),
+    .tags(.smoke, .provider, .requiresNetwork)
+)
 struct OpenAISmokeTests {
     let client = OpenAIClient.openAI(
         apiKey: apiKey,
