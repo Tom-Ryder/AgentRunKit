@@ -47,6 +47,7 @@ For a complete walkthrough, see <doc:GettingStarted>.
 ### Essentials
 
 - <doc:GettingStarted>
+- <doc:Examples>
 - <doc:AgentAndChat>
 - <doc:DefiningTools>
 

@@ -55,6 +55,19 @@ Full documentation including guides and API reference is available on [Swift Pac
 
 ---
 
+## Runnable Example
+
+`Examples/AgentCode` is an interactive terminal coding agent built with AgentRunKit. It demonstrates the full agent loop in a local workspace: streaming events, type-safe tools, approval-gated edits and command execution, bounded file access, transcript export, and deterministic offline mode.
+
+```bash
+cd Examples/AgentCode
+swift run agent-code
+```
+
+By default it opens a bundled broken Swift package so you can ask it to fix failing tests. Set `OPENAI_API_KEY` for a live OpenAI-compatible provider, or run without a key to exercise the CLI with the offline test client.
+
+---
+
 ## Installation
 
 Add to your `Package.swift`:
