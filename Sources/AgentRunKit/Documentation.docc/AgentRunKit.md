@@ -4,7 +4,7 @@ A Swift 6 framework for building LLM-powered agents with type-safe tool calling,
 
 ## Overview
 
-AgentRunKit provides a complete agent loop (generate a response, execute tool calls, repeat until done) with zero external dependencies. It works with any LLM provider through a unified ``LLMClient`` protocol.
+AgentRunKit provides a complete agent loop (generate a response, execute tool calls, repeat until done) with a zero-dependency core target. It works with any LLM provider through a unified ``LLMClient`` protocol.
 
 - **Agent loop**: ``Agent`` runs the full generate, tool-call, repeat cycle with configurable iteration limits and token budgets
 - **Streaming**: SSE parsing, `AsyncThrowingStream<StreamEvent, Error>`, and ``AgentStream`` for SwiftUI with `@Observable`

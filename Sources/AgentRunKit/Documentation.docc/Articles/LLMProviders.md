@@ -4,7 +4,7 @@ Choosing and configuring LLM provider clients.
 
 ## Overview
 
-AgentRunKit connects to LLM providers through the ``LLMClient`` protocol. Six built-in clients cover OpenAI, Anthropic, Google Gemini, Vertex AI, and the OpenAI Responses API. All support both streaming and non-streaming generation.
+AgentRunKit connects to LLM providers through the ``LLMClient`` protocol. Eight built-in clients cover OpenAI, Anthropic, Google Gemini, Vertex AI, the OpenAI Responses API, and on-device inference through Foundation Models and MLX. All support both streaming and non-streaming generation.
 
 ## The LLMClient Protocol
 
@@ -26,6 +26,8 @@ Any type conforming to ``LLMClient`` works with ``Agent``, ``Chat``, and ``SubAg
 | ``VertexAnthropicClient`` | OAuth closure (required) | Yes (`output_config.format`) | Yes (adaptive + manual) | Images, PDF (base64) | Yes | No |
 | ``VertexGoogleClient`` | OAuth closure (required) | Yes | Yes | Images, audio, video, PDF (`inlineData`) | No | No |
 | ``ResponsesAPIClient`` | Bearer token (optional) | Yes | Yes | Images (URL, base64) | No | No |
+| `FoundationModelsClient` | None | Schema-driven tools | Apple-managed | Text | No | No |
+| `MLXClient` | None | Model/template dependent | Model/template dependent | Text | No | No |
 
 Tool-calling capabilities vary by provider and profile. AgentRunKit resolves them per provider at request-build time and throws when the requested wire surface is unsupported instead of silently dropping fields.
 
@@ -40,6 +42,10 @@ Three clients preserve same-substrate continuity state, restoring provider-nativ
 - ``VertexAnthropicClient``: same Anthropic Messages substrate fidelity as ``AnthropicClient``.
 
 Other clients (``OpenAIClient``, ``GeminiClient``) use semantic-only replay. History is reconstructed from the semantic fields, which is sufficient for the agent loop but does not preserve provider-specific turn metadata.
+
+`FoundationModelsClient` runs on-device through Apple's Foundation Models framework and requires iOS 26+ or macOS 26+. Apple's session owns tool dispatch internally, so the AgentRunKit adapter maps the resulting content back into the shared agent loop.
+
+`MLXClient` runs on-device through the `AgentRunKitMLX` target on Apple Silicon. Tool-call and structured-output fidelity depends on the selected local model and chat template.
 
 ### Assistant Reasoning Replay on Chat Completions
 

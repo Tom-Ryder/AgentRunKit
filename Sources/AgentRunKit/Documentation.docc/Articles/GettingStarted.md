@@ -8,7 +8,7 @@ In your `Package.swift`:
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/Tom-Ryder/AgentRunKit.git", from: "1.20.1")
+    .package(url: "https://github.com/Tom-Ryder/AgentRunKit.git", from: "2.4.0")
 ]
 ```
 

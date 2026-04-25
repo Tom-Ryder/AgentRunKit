@@ -19,7 +19,7 @@
 </p>
 
 <p align="center">
-  <b>Zero dependencies</b> · <b>Full Sendable</b> · <b>Async/await</b> · <b>Cloud + Local</b> · <b>MCP</b>
+  <b>Zero-dependency core</b> · <b>Full Sendable</b> · <b>Async/await</b> · <b>Cloud + Local</b> · <b>MCP</b>
 </p>
 
 ---
@@ -61,7 +61,7 @@ Add to your `Package.swift`:
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/Tom-Ryder/AgentRunKit.git", from: "1.20.1")
+    .package(url: "https://github.com/Tom-Ryder/AgentRunKit.git", from: "2.4.0")
 ]
 ```
 
@@ -71,8 +71,8 @@ dependencies: [
 
 For on-device inference, additional targets are available:
 
-- `AgentRunKitMLX` for MLX on Apple Silicon (requires [mlx-swift-lm](https://github.com/ml-explore/mlx-swift-lm) as a dependency)
-- `AgentRunKitFoundationModels` for Apple Foundation Models (iOS 26+ / macOS 26+, no external dependencies)
+- `AgentRunKitMLX` for MLX on Apple Silicon (links [mlx-swift-lm](https://github.com/ml-explore/mlx-swift-lm))
+- `AgentRunKitFoundationModels` for Apple Foundation Models (iOS 26+ and macOS 26+, no external dependencies)
 
 ---
 
@@ -113,7 +113,7 @@ For on-device inference, additional targets are available:
 | iOS | 18.0+ |
 | macOS | 15.0+ |
 | Swift | 6.0+ |
-| Xcode | 16+ |
+| Xcode | 26+ for local development and CI |
 
 ---
 
