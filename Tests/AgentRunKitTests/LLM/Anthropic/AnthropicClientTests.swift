@@ -309,6 +309,27 @@ struct AnthropicRequestSerializationTests {
     }
 }
 
+struct AnthropicAgentBehaviorTests {
+    @Test
+    func directClientTerminatesContentOnlyAgentTurns() throws {
+        let client: any LLMClient = try AnthropicClient(apiKey: "test-key", model: "claude-sonnet-4-6")
+
+        #expect(client is any ContentOnlyTerminatingClient)
+    }
+
+    @Test
+    func vertexClientTerminatesContentOnlyAgentTurns() throws {
+        let client: any LLMClient = try VertexAnthropicClient(
+            projectID: "project",
+            location: "us-east5",
+            model: "claude-sonnet-4-6",
+            tokenProvider: { "token" }
+        )
+
+        #expect(client is any ContentOnlyTerminatingClient)
+    }
+}
+
 struct AnthropicURLRequestTests {
     @Test
     func setsCorrectHeaders() throws {

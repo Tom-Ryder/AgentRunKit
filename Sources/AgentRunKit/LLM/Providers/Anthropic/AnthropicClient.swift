@@ -168,6 +168,8 @@ public struct AnthropicClient: LLMClient, Sendable {
     }
 }
 
+extension AnthropicClient: ContentOnlyTerminatingClient {}
+
 extension AnthropicClient {
     static let anthropicAPIVersion = "2023-06-01"
     static let interleavedThinkingBeta = "interleaved-thinking-2025-05-14"

@@ -270,6 +270,8 @@ extension VertexAnthropicClient: HistoryRewriteAwareClient {
     }
 }
 
+extension VertexAnthropicClient: ContentOnlyTerminatingClient {}
+
 struct VertexAnthropicRequest: Encodable {
     static let vertexAnthropicVersion = "vertex-2023-10-16"
 
