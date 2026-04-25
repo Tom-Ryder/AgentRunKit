@@ -20,6 +20,9 @@ check: format lint test
 
 docs:
 	swift package generate-documentation --target AgentRunKit
+	swift package generate-documentation --target AgentRunKitTesting
+	swift package generate-documentation --target AgentRunKitFoundationModels
+	swift package generate-documentation --target AgentRunKitMLX
 
 docs-preview:
 	swift package --disable-sandbox preview-documentation --target AgentRunKit
