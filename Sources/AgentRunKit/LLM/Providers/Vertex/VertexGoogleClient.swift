@@ -150,13 +150,16 @@ public struct VertexGoogleClient: LLMClient, Sendable {
 
         let state = GeminiStreamState()
 
-        try await processSSEStream(
+        let completed = try await processSSEStream(
             bytes: bytes,
             stallTimeout: retryPolicy.streamStallTimeout
         ) { event in
             try await gemini.handleSSEEvent(
                 event, state: state, continuation: continuation
             )
+        }
+        guard completed else {
+            throw AgentError.llmError(.streamStalled)
         }
         continuation.finish()
     }

@@ -18,10 +18,13 @@ struct GeminiStreamingTests {
         let streamPair = AsyncThrowingStream<StreamDelta, Error>.makeStream()
         let byteStream = makeByteStream(from: sseLines)
 
-        try await processSSEStream(bytes: byteStream, stallTimeout: nil) { event in
+        let completed = try await processSSEStream(bytes: byteStream, stallTimeout: nil) { event in
             try await geminiClient.handleSSEEvent(
                 event, state: state, continuation: streamPair.continuation
             )
+        }
+        guard completed else {
+            throw AgentError.llmError(.streamStalled)
         }
         streamPair.continuation.finish()
 
@@ -96,6 +99,28 @@ struct GeminiStreamingTests {
             deltas.append(delta)
         }
         #expect(deltas.contains(.content("Hello")))
+    }
+
+    @Test
+    func publicStreamEndingBeforeFinishReasonThrowsStreamStalled() async throws {
+        let session = URLSession(configuration: StreamingTestURLProtocol.configuration())
+        defer { session.invalidateAndCancel() }
+        let client = GeminiClient(
+            apiKey: "test-key",
+            model: "gemini-2.5-pro",
+            session: session
+        )
+        let request = try client.buildRequest(messages: [.user("Hi")], tools: [], functionCallingMode: .auto)
+        let urlRequest = try client.buildURLRequest(request, stream: true)
+        let requestURL = try #require(urlRequest.url)
+        let body = "data: {\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[{\"text\":\"partial\"}]}}]}\n\n"
+        StreamingTestURLProtocol.register(url: requestURL, body: Data(body.utf8))
+        defer { StreamingTestURLProtocol.unregister(url: requestURL) }
+
+        let result = await collectStreamResult(client.stream(messages: [.user("Hi")], tools: [], requestContext: nil))
+
+        #expect(result.deltas == [.content("partial")])
+        assertStreamStalled(result.error)
     }
 
     @Test

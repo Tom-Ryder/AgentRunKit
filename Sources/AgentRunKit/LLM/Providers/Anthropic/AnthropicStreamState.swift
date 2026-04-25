@@ -16,6 +16,7 @@ actor AnthropicStreamState {
     private var hasOpaqueDeltaBlocks = false
     private(set) var toolCallCount: Int = 0
     private(set) var inputUsage: AnthropicUsage?
+    private var outputTokens: Int?
     private(set) var isCompleted: Bool = false
     private var maxBlockIndex: Int = -1
 
@@ -25,6 +26,19 @@ actor AnthropicStreamState {
 
     func setInputUsage(_ usage: AnthropicUsage) {
         inputUsage = usage
+    }
+
+    func setOutputTokens(_ tokens: Int) {
+        outputTokens = tokens
+    }
+
+    func finalUsage() -> TokenUsage {
+        TokenUsage(
+            input: inputUsage?.inputTokens ?? 0,
+            output: outputTokens ?? 0,
+            cacheRead: inputUsage?.cacheReadInputTokens,
+            cacheWrite: inputUsage?.cacheCreationInputTokens
+        )
     }
 
     func setBlockType(_ index: Int, _ type: BlockType) {

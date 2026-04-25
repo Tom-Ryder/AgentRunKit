@@ -124,6 +124,46 @@ struct VertexAnthropicURLTests {
     }
 }
 
+struct VertexAnthropicStreamingCompletionTests {
+    @Test
+    func publicStreamEndingBeforeMessageStopThrowsStreamStalled() async throws {
+        let session = URLSession(configuration: StreamingTestURLProtocol.configuration())
+        defer { session.invalidateAndCancel() }
+        let client = try VertexAnthropicClient(
+            projectID: "test-project",
+            location: "us-east5",
+            model: "claude-sonnet-4-6",
+            tokenProvider: { "test-token-123" },
+            session: session
+        )
+        let request = try client.anthropic.buildRequest(
+            messages: [.user("Hi")],
+            tools: [],
+            stream: true,
+            transport: .vertex
+        )
+        let urlRequest = try client.buildVertexURLRequest(
+            VertexAnthropicRequest(inner: request),
+            stream: true,
+            token: "test-token-123"
+        )
+        let requestURL = try #require(urlRequest.url)
+        let body = [
+            #"data: {"type":"content_block_start","index":0,"content_block":{"type":"text"}}"#,
+            #"data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"partial"}}"#,
+            #"data: {"type":"content_block_stop","index":0}"#,
+            #"data: {"type":"message_delta","usage":{"output_tokens":42}}"#,
+        ].joined(separator: "\n\n").appending("\n\n")
+        StreamingTestURLProtocol.register(url: requestURL, body: Data(body.utf8))
+        defer { StreamingTestURLProtocol.unregister(url: requestURL) }
+
+        let result = await collectStreamResult(client.stream(messages: [.user("Hi")], tools: [], requestContext: nil))
+
+        #expect(result.deltas == [.content("partial")])
+        assertStreamStalled(result.error)
+    }
+}
+
 struct VertexAnthropicRequestTests {
     @Test
     func requestBodyContainsAnthropicVersion() throws {
@@ -369,7 +409,7 @@ struct VertexAnthropicStreamingContinuityTests {
         let state = AnthropicStreamState()
         let runPair = AsyncThrowingStream<RunStreamElement, Error>.makeStream()
 
-        try await processSSEStream(
+        let completed = try await processSSEStream(
             bytes: controlled,
             stallTimeout: nil
         ) { event in
@@ -377,6 +417,7 @@ struct VertexAnthropicStreamingContinuityTests {
                 _ = runPair.continuation.yield(.delta(delta))
             }
         }
+        #expect(completed)
 
         let blocks = try await state.finalizedBlocks()
         #expect(!blocks.isEmpty)

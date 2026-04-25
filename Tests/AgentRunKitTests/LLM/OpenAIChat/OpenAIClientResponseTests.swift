@@ -298,6 +298,31 @@ struct OpenAIClientResponseTests {
     }
 }
 
+struct OpenAIClientStreamingCompletionTests {
+    @Test
+    func publicStreamEndingBeforeDoneThrowsStreamStalled() async throws {
+        let session = URLSession(configuration: StreamingTestURLProtocol.configuration())
+        defer { session.invalidateAndCancel() }
+        let client = try OpenAIClient(
+            apiKey: "test-key",
+            model: "test-model",
+            baseURL: #require(URL(string: "https://openai-streaming.test/v1")),
+            session: session
+        )
+        let request = try client.buildRequest(messages: [.user("Hi")], tools: [], stream: true)
+        let urlRequest = try client.buildURLRequest(request)
+        let requestURL = try #require(urlRequest.url)
+        let body = #"data: {"choices":[{"delta":{"content":"partial"},"index":0}]}"# + "\n\n"
+        StreamingTestURLProtocol.register(url: requestURL, body: Data(body.utf8))
+        defer { StreamingTestURLProtocol.unregister(url: requestURL) }
+
+        let result = await collectStreamResult(client.stream(messages: [.user("Hi")], tools: [], requestContext: nil))
+
+        #expect(result.deltas == [.content("partial")])
+        assertStreamStalled(result.error)
+    }
+}
+
 struct StreamingChunkParsingTests {
     @Test
     func streamingChunkWithReasoningFieldParsesCorrectly() throws {

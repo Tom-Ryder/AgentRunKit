@@ -93,6 +93,7 @@ private struct StreamAccumulation {
     var usage: TokenUsage?
     var continuity: AssistantContinuity?
     var yieldedEvent = false
+    var sawFinished = false
 
     mutating func apply(
         _ input: RunStreamElement,
@@ -141,6 +142,7 @@ private struct StreamAccumulation {
             yieldedEvent = true
             continuation.yield(eventFactory.make(.audioTranscript(text)))
         case let .finished(iterationUsage):
+            sawFinished = true
             guard let iterationUsage else { return }
             totalUsage += iterationUsage
             usage = iterationUsage
@@ -258,6 +260,10 @@ struct StreamProcessor {
         guard state.pendingArguments.isEmpty else {
             emittedOutput = state.yieldedEvent
             throw AgentError.malformedStream(.orphanedToolCallArguments(indices: state.pendingArguments.keys.sorted()))
+        }
+        guard state.sawFinished else {
+            emittedOutput = state.yieldedEvent
+            throw AgentError.llmError(.streamStalled)
         }
 
         emittedOutput = true

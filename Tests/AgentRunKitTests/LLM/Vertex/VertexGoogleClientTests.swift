@@ -107,6 +107,32 @@ struct VertexGoogleURLTests {
     }
 }
 
+struct VertexGoogleStreamingCompletionTests {
+    @Test
+    func publicStreamEndingBeforeFinishReasonThrowsStreamStalled() async throws {
+        let session = URLSession(configuration: StreamingTestURLProtocol.configuration())
+        defer { session.invalidateAndCancel() }
+        let client = VertexGoogleClient(
+            projectID: "test-project",
+            location: "us-central1",
+            model: "gemini-2.5-pro",
+            tokenProvider: { "test-token-123" },
+            session: session
+        )
+        let request = try client.gemini.buildRequest(messages: [.user("Hi")], tools: [])
+        let urlRequest = try client.buildVertexURLRequest(request, stream: true, token: "test-token-123")
+        let requestURL = try #require(urlRequest.url)
+        let body = "data: {\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[{\"text\":\"partial\"}]}}]}\n\n"
+        StreamingTestURLProtocol.register(url: requestURL, body: Data(body.utf8))
+        defer { StreamingTestURLProtocol.unregister(url: requestURL) }
+
+        let result = await collectStreamResult(client.stream(messages: [.user("Hi")], tools: [], requestContext: nil))
+
+        #expect(result.deltas == [.content("partial")])
+        assertStreamStalled(result.error)
+    }
+}
+
 struct VertexGoogleResponseTests {
     @Test
     func responseParsingDelegatedToGemini() throws {

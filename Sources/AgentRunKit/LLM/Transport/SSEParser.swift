@@ -88,13 +88,14 @@ func buildJSONPostRequest(
     return request
 }
 
+@discardableResult
 func processSSEStream<S: AsyncSequence & Sendable>(
     bytes: S,
     stallTimeout: Duration?,
     handler: @escaping @Sendable (SSEEvent) async throws -> Bool
-) async throws where S.Element == UInt8 {
+) async throws -> Bool where S.Element == UInt8 {
     if let stallTimeout {
-        try await withThrowingTaskGroup(of: Void.self) { group in
+        return try await withThrowingTaskGroup(of: Bool.self) { group in
             let watchdog = StallWatchdog()
 
             group.addTask {
@@ -106,6 +107,7 @@ func processSSEStream<S: AsyncSequence & Sendable>(
                         throw AgentError.llmError(.streamStalled)
                     }
                 }
+                return false
             }
 
             group.addTask {
@@ -114,27 +116,31 @@ func processSSEStream<S: AsyncSequence & Sendable>(
                     await watchdog.recordActivity()
                     if let event = parser.appendLine(line),
                        try await handler(event) {
-                        return
+                        return true
                     }
                 }
                 if let event = parser.finish() {
-                    _ = try await handler(event)
+                    return try await handler(event)
                 }
+                return false
             }
 
-            try await group.next()
+            let completed = try await group.next() ?? false
             group.cancelAll()
-        }
-    } else {
-        var parser = SSEEventParser()
-        for try await line in UnboundedLines(source: bytes) {
-            guard let event = parser.appendLine(line) else { continue }
-            guard try await !handler(event) else { return }
-        }
-        if let event = parser.finish() {
-            _ = try await handler(event)
+            return completed
         }
     }
+    var parser = SSEEventParser()
+    for try await line in UnboundedLines(source: bytes) {
+        guard let event = parser.appendLine(line) else { continue }
+        guard try await !handler(event) else {
+            return true
+        }
+    }
+    if let event = parser.finish() {
+        return try await handler(event)
+    }
+    return false
 }
 
 actor StallWatchdog {

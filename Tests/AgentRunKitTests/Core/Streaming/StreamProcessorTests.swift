@@ -131,6 +131,39 @@ struct StreamProcessorEmittedOutputTests {
     }
 }
 
+struct StreamProcessorCompletionTests {
+    @Test
+    func streamEndingWithoutFinishedDeltaThrowsStreamStalled() async {
+        let client = ScriptedStreamClient(
+            deltas: [.content("partial")],
+            error: nil
+        )
+        let processor = StreamProcessor(client: client, toolDefinitions: [], policy: .chat, eventFactory: testFactory)
+        let (_, eventContinuation) = AsyncThrowingStream<StreamEvent, Error>.makeStream()
+        var totalUsage = TokenUsage()
+        var emittedOutput = false
+
+        do {
+            _ = try await processor.process(
+                messages: [.user("Hi")],
+                totalUsage: &totalUsage,
+                emittedOutput: &emittedOutput,
+                continuation: eventContinuation
+            )
+            Issue.record("Expected streamStalled error")
+        } catch let error as AgentError {
+            guard case let .llmError(transport) = error else {
+                Issue.record("Expected llmError, got \(error)")
+                return
+            }
+            #expect(transport == .streamStalled)
+            #expect(emittedOutput)
+        } catch {
+            Issue.record("Expected AgentError, got \(error)")
+        }
+    }
+}
+
 struct StreamProcessorToolCallAccumulationTests {
     @Test
     func duplicateToolCallStartDoesNotResetAccumulatedArguments() async throws {

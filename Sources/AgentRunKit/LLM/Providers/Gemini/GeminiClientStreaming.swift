@@ -26,13 +26,16 @@ extension GeminiClient {
 
         let state = GeminiStreamState()
 
-        try await processSSEStream(
+        let completed = try await processSSEStream(
             bytes: bytes,
             stallTimeout: retryPolicy.streamStallTimeout
         ) { event in
             try await self.handleSSEEvent(
                 event, state: state, continuation: continuation
             )
+        }
+        guard completed else {
+            throw AgentError.llmError(.streamStalled)
         }
         continuation.finish()
     }

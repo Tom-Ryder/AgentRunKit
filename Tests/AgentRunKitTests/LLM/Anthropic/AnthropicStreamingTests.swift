@@ -70,6 +70,7 @@ struct AnthropicStreamingTests {
         let deltas = try await collectStreamDeltas(client: makeClient(), lines: lines)
 
         #expect(deltas.contains(.content("Hello")))
+        #expect(deltas.contains(.finished(usage: TokenUsage(input: 0, output: 0))))
     }
 
     @Test
@@ -150,6 +151,69 @@ struct AnthropicStreamingTests {
         } else {
             Issue.record("Expected .finished delta")
         }
+    }
+
+    @Test
+    func messageDeltaWithoutMessageStopDoesNotEmitFinished() async throws {
+        let allBytes = [
+            sseLine(#"{"type":"content_block_start","index":0,"content_block":{"type":"text"}}"#),
+            sseLine(#"{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Hi"}}"#),
+            sseLine(#"{"type":"content_block_stop","index":0}"#),
+            sseLine(#"{"type":"message_delta","usage":{"output_tokens":42}}"#),
+        ].joined(separator: "\n\n").appending("\n\n")
+        let (byteStream, byteContinuation) = AsyncStream<UInt8>.makeStream()
+        for byte in Array(allBytes.utf8) {
+            byteContinuation.yield(byte)
+        }
+        byteContinuation.finish()
+
+        let client = try makeClient()
+        let controlled = ControlledByteStream(stream: byteStream)
+        let state = AnthropicStreamState()
+        let streamPair = AsyncThrowingStream<StreamDelta, Error>.makeStream()
+
+        let completed = try await processSSEStream(
+            bytes: controlled,
+            stallTimeout: nil
+        ) { event in
+            try await client.handleSSEEvent(event, state: state, continuation: streamPair.continuation)
+        }
+        #expect(!completed)
+        streamPair.continuation.finish()
+
+        var deltas: [StreamDelta] = []
+        for try await delta in streamPair.stream {
+            deltas.append(delta)
+        }
+        #expect(!deltas.contains(.finished(usage: TokenUsage(input: 0, output: 42))))
+    }
+
+    @Test
+    func publicStreamEndingBeforeMessageStopThrowsStreamStalled() async throws {
+        let session = URLSession(configuration: StreamingTestURLProtocol.configuration())
+        defer { session.invalidateAndCancel() }
+        let client = try AnthropicClient(
+            apiKey: "test-key",
+            model: "claude-sonnet-4-6",
+            baseURL: #require(URL(string: "https://anthropic-streaming.test/v1")),
+            session: session
+        )
+        let request = try client.buildRequest(messages: [.user("Hi")], tools: [], stream: true)
+        let urlRequest = try client.buildURLRequest(request)
+        let requestURL = try #require(urlRequest.url)
+        let body = [
+            sseLine(#"{"type":"content_block_start","index":0,"content_block":{"type":"text"}}"#),
+            sseLine(#"{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"partial"}}"#),
+            sseLine(#"{"type":"content_block_stop","index":0}"#),
+            sseLine(#"{"type":"message_delta","usage":{"output_tokens":42}}"#),
+        ].joined(separator: "\n\n").appending("\n\n")
+        StreamingTestURLProtocol.register(url: requestURL, body: Data(body.utf8))
+        defer { StreamingTestURLProtocol.unregister(url: requestURL) }
+
+        let result = await collectStreamResult(client.stream(messages: [.user("Hi")], tools: [], requestContext: nil))
+
+        #expect(result.deltas == [.content("partial")])
+        assertStreamStalled(result.error)
     }
 
     @Test
@@ -595,13 +659,16 @@ extension AnthropicClient {
         continuation: AsyncThrowingStream<StreamDelta, Error>.Continuation
     ) async throws {
         let state = AnthropicStreamState()
-        try await processSSEStream(
+        let completed = try await processSSEStream(
             bytes: byteStream,
             stallTimeout: nil
         ) { event in
             try await self.handleSSEEvent(
                 event, state: state, continuation: continuation
             )
+        }
+        guard completed else {
+            throw AgentError.llmError(.streamStalled)
         }
         continuation.finish()
     }
@@ -611,13 +678,16 @@ extension AnthropicClient {
         continuation: AsyncThrowingStream<StreamDelta, Error>.Continuation
     ) async throws -> AnthropicStreamState {
         let state = AnthropicStreamState()
-        try await processSSEStream(
+        let completed = try await processSSEStream(
             bytes: byteStream,
             stallTimeout: nil
         ) { event in
             try await self.handleSSEEvent(
                 event, state: state, continuation: continuation
             )
+        }
+        guard completed else {
+            throw AgentError.llmError(.streamStalled)
         }
         continuation.finish()
         return state

@@ -807,6 +807,42 @@ struct StreamStallDetectionTests {
         let total = await counter.count
         #expect(total >= 2)
     }
+
+    @Test
+    func streamEndingBeforeHandlerCompletionReturnsFalse() async throws {
+        let (byteStream, byteContinuation) = AsyncStream<UInt8>.makeStream()
+
+        for byte in sseChunk(minimalChunkJSON) {
+            byteContinuation.yield(byte)
+        }
+        byteContinuation.finish()
+
+        let controlled = ControlledByteStream(stream: byteStream)
+
+        let completed = try await processSSEStream(
+            bytes: controlled,
+            stallTimeout: nil
+        ) { _ in false }
+        #expect(!completed)
+    }
+
+    @Test
+    func streamEndingBeforeHandlerCompletionReturnsFalseWithStallDetection() async throws {
+        let (byteStream, byteContinuation) = AsyncStream<UInt8>.makeStream()
+
+        for byte in sseChunk(minimalChunkJSON) {
+            byteContinuation.yield(byte)
+        }
+        byteContinuation.finish()
+
+        let controlled = ControlledByteStream(stream: byteStream)
+
+        let completed = try await processSSEStream(
+            bytes: controlled,
+            stallTimeout: .seconds(5)
+        ) { _ in false }
+        #expect(!completed)
+    }
 }
 
 struct SSEParserTests {

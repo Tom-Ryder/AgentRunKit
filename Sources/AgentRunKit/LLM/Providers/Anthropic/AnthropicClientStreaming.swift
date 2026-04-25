@@ -22,13 +22,16 @@ extension AnthropicClient {
 
         let state = AnthropicStreamState()
 
-        try await processSSEStream(
+        let completed = try await processSSEStream(
             bytes: bytes,
             stallTimeout: retryPolicy.streamStallTimeout
         ) { event in
             try await self.handleSSEEvent(
                 event, state: state, continuation: continuation
             )
+        }
+        guard completed else {
+            throw AgentError.llmError(.streamStalled)
         }
         continuation.finish()
     }
@@ -54,13 +57,16 @@ extension AnthropicClient {
 
         let state = AnthropicStreamState()
 
-        try await processSSEStream(
+        let completed = try await processSSEStream(
             bytes: bytes,
             stallTimeout: retryPolicy.streamStallTimeout
         ) { event in
             try await self.handleSSEEvent(event, state: state) { delta in
                 continuation.yield(.delta(delta))
             }
+        }
+        guard completed else {
+            throw AgentError.llmError(.streamStalled)
         }
 
         if await state.isCompleted {
@@ -129,9 +135,10 @@ extension AnthropicClient {
                 data: data, state: state, yield: yield
             )
         case .messageDelta:
-            try await handleMessageDelta(data: data, state: state, yield: yield)
+            try await handleMessageDelta(data: data, state: state)
         case .messageStop:
             await state.markCompleted()
+            await yield(.finished(usage: state.finalUsage()))
             return true
         case .error:
             try handleError(data: data)
@@ -244,20 +251,10 @@ extension AnthropicClient {
 
     private func handleMessageDelta(
         data: Data,
-        state: AnthropicStreamState,
-        yield: @Sendable (StreamDelta) -> Void
+        state: AnthropicStreamState
     ) async throws {
         let event = try decodeEvent(AnthropicMessageDeltaEvent.self, from: data)
-        let outputTokens = event.usage?.outputTokens ?? 0
-        let inputUsage = await state.inputUsage
-
-        let usage = TokenUsage(
-            input: inputUsage?.inputTokens ?? 0,
-            output: outputTokens,
-            cacheRead: inputUsage?.cacheReadInputTokens,
-            cacheWrite: inputUsage?.cacheCreationInputTokens
-        )
-        yield(.finished(usage: usage))
+        await state.setOutputTokens(event.usage?.outputTokens ?? 0)
     }
 
     private func handleError(data: Data) throws {

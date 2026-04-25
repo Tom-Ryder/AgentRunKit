@@ -40,7 +40,7 @@ public enum TransportError: Error, Sendable, Equatable, CustomStringConvertible 
         case let .encodingFailed(description): "Encoding failed: \(description)"
         case let .decodingFailed(description): "Decoding failed: \(description)"
         case .noChoices: "No choices in response"
-        case .streamStalled: "Stream stalled (no data received within timeout)"
+        case .streamStalled: "Stream stalled or ended before completion"
         case let .capabilityMismatch(model, requirement):
             "Capability mismatch for model '\(model)': \(requirement)"
         case let .featureUnsupported(provider, feature):
