@@ -1,21 +1,12 @@
 import Foundation
 
 #if os(macOS)
-    /// Mutable line buffer for the readability handler.
-    ///
-    /// `readabilityHandler` callbacks are serialized on a single dispatch
-    /// source queue, so concurrent access cannot occur. The class wrapper
-    /// provides reference semantics that satisfy Swift 6 `@Sendable` capture
-    /// rules without introducing unnecessary synchronization overhead.
-    private final class LineBuffer: @unchecked Sendable {
-        var data = Data()
-    }
-
     /// An MCP transport that communicates over process stdin/stdout.
     ///
     /// @unchecked Sendable justification: Process and Pipe are not Sendable.
-    /// Mutable state (process, stdoutHandle, stdinPipe) follows strict lifecycle:
-    /// written once in connect(), read in send()/disconnect(), cleared in disconnect().
+    /// Mutable state (process, stdinPipe, stdoutHandle, stdoutChunkContinuation,
+    /// stdoutReaderTask) follows strict lifecycle: written once in connect(),
+    /// read in send()/disconnect(), cleared in disconnect().
     /// stream and continuation are immutable let properties constructed in init.
     /// The owning MCPClient actor serializes all access through the MCPTransport protocol.
     public final class StdioMCPTransport: MCPTransport, @unchecked Sendable {
@@ -29,6 +20,8 @@ import Foundation
         private var process: Process?
         private var stdinPipe: Pipe?
         private var stdoutHandle: FileHandle?
+        private var stdoutChunkContinuation: AsyncStream<Data>.Continuation?
+        private var stdoutReaderTask: Task<Void, Never>?
 
         public init(
             command: String,
@@ -73,44 +66,31 @@ import Foundation
             self.process = process
             self.stdinPipe = stdinPipe
 
-            // Use readabilityHandler for non-blocking reads instead of
-            // FileHandle.bytes, which blocks a cooperative thread pool thread
-            // per connection and causes thread starvation when multiple MCP
-            // servers are active concurrently. The handler is invoked on a
-            // background dispatch source thread whenever data is available.
             let handle = stdoutPipe.fileHandleForReading
             stdoutHandle = handle
-            let cont = continuation
-            let newline = UInt8(ascii: "\n")
-            let buffer = LineBuffer()
+            let (chunks, chunkContinuation) = AsyncStream<Data>.makeStream()
+            stdoutChunkContinuation = chunkContinuation
+            stdoutReaderTask = makeStdoutReaderTask(chunks: chunks)
 
             handle.readabilityHandler = { fileHandle in
                 let chunk = fileHandle.availableData
                 guard !chunk.isEmpty else {
-                    // EOF — process closed stdout
                     fileHandle.readabilityHandler = nil
-                    cont.finish()
+                    chunkContinuation.finish()
                     return
                 }
-
-                buffer.data.append(chunk)
-
-                // Extract complete newline-delimited JSON-RPC messages
-                while let newlineIndex = buffer.data.firstIndex(of: newline) {
-                    let messageEnd = buffer.data.index(after: newlineIndex)
-                    let message = buffer.data[buffer.data.startIndex ..< messageEnd]
-                    buffer.data = Data(buffer.data[messageEnd...])
-                    if !message.isEmpty {
-                        cont.yield(Data(message))
-                    }
-                }
+                chunkContinuation.yield(chunk)
             }
         }
 
         public func disconnect() async {
-            continuation.finish()
             stdoutHandle?.readabilityHandler = nil
             stdoutHandle = nil
+            stdoutChunkContinuation?.finish()
+            stdoutChunkContinuation = nil
+            stdoutReaderTask?.cancel()
+            stdoutReaderTask = nil
+            continuation.finish()
 
             guard let process, process.isRunning else {
                 process = nil
@@ -147,6 +127,29 @@ import Foundation
 
         public nonisolated func messages() -> AsyncThrowingStream<Data, Error> {
             stream
+        }
+
+        private func makeStdoutReaderTask(chunks: AsyncStream<Data>) -> Task<Void, Never> {
+            let continuation = continuation
+            return Task {
+                var buffer = Data()
+                let newline = UInt8(ascii: "\n")
+
+                for await chunk in chunks {
+                    buffer.append(chunk)
+
+                    while let newlineIndex = buffer.firstIndex(of: newline) {
+                        let messageEnd = buffer.index(after: newlineIndex)
+                        let message = buffer[buffer.startIndex ..< messageEnd]
+                        buffer = Data(buffer[messageEnd...])
+                        if !message.isEmpty {
+                            continuation.yield(Data(message))
+                        }
+                    }
+                }
+
+                continuation.finish()
+            }
         }
     }
 #endif
