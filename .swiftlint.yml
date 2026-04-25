@@ -1,6 +1,8 @@
 excluded:
   - .build
   - .claude
+  - Examples/AgentCode/.build
+  - Examples/AgentCode/DemoWorkspace/.build
   - _reference
   - Spike
 
