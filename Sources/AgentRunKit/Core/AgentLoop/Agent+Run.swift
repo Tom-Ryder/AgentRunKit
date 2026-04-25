@@ -83,7 +83,7 @@ extension Agent {
         return { summaryRequest in
             try await self.client.generateForRun(
                 messages: summaryRequest,
-                tools: self.toolDefinitions,
+                tools: [],
                 responseFormat: nil,
                 requestContext: nil,
                 requestMode: mode

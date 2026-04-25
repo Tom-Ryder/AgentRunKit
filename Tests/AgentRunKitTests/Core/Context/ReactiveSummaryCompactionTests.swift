@@ -6,6 +6,7 @@ private actor SummaryMockLLMClient: LLMClient {
     private let responses: [AssistantMessage]
     private var callIndex = 0
     private(set) var generateCallCount = 0
+    private(set) var capturedTools: [[ToolDefinition]] = []
     private let failSummarization: Bool
 
     init(
@@ -19,10 +20,11 @@ private actor SummaryMockLLMClient: LLMClient {
     }
 
     func generate(
-        messages: [ChatMessage], tools _: [ToolDefinition],
+        messages: [ChatMessage], tools: [ToolDefinition],
         responseFormat _: ResponseFormat?, requestContext _: RequestContext?
     ) async throws -> AssistantMessage {
         generateCallCount += 1
+        capturedTools.append(tools)
         if failSummarization, case let .user(text) = messages.last,
            text.contains("CONTEXT CHECKPOINT") {
             throw AgentError.llmError(.other("Summarization failed"))
@@ -53,7 +55,6 @@ struct ReactiveSummaryCompactionTests {
         )
         var compactor = ContextCompactor(
             client: client,
-            toolDefinitions: [],
             configuration: AgentConfiguration(compactionThreshold: 0.5)
         )
         var messages: [ChatMessage] = [
@@ -71,11 +72,84 @@ struct ReactiveSummaryCompactionTests {
     }
 
     @Test
+    func summaryRequestDoesNotExposeTools() async throws {
+        let client = SummaryMockLLMClient(
+            responses: [AssistantMessage(content: "Summary of progress")],
+            contextWindowSize: 1000
+        )
+        var compactor = ContextCompactor(
+            client: client,
+            configuration: AgentConfiguration(compactionThreshold: 0.5)
+        )
+        var messages: [ChatMessage] = [
+            .user("Task"),
+            .assistant(AssistantMessage(content: "short")),
+            .user("Continue"),
+        ]
+        var totalUsage = TokenUsage()
+
+        let outcome = try await compactor.reactiveCompact(&messages, totalUsage: &totalUsage)
+
+        #expect(outcome == .compacted)
+        let capturedTools = await client.capturedTools
+        #expect(capturedTools.count == 1)
+        #expect(capturedTools[0].isEmpty)
+    }
+
+    @Test
+    func toolCallOnlySummaryResponseIsRejected() async throws {
+        let client = SummaryMockLLMClient(
+            responses: [AssistantMessage(
+                content: "",
+                toolCalls: [ToolCall(id: "call_1", name: "search", arguments: "{}")]
+            )],
+            contextWindowSize: 1000
+        )
+        var compactor = ContextCompactor(
+            client: client,
+            configuration: AgentConfiguration(compactionThreshold: 0.5)
+        )
+        var messages: [ChatMessage] = [
+            .user("Task"),
+            .assistant(AssistantMessage(content: "short")),
+            .user("Continue"),
+        ]
+        var totalUsage = TokenUsage()
+
+        let outcome = try await compactor.reactiveCompact(&messages, totalUsage: &totalUsage)
+
+        #expect(outcome == .unchanged)
+        #expect(await client.generateCallCount == 1)
+    }
+
+    @Test
+    func emptyTaggedSummaryResponseIsRejected() async throws {
+        let client = SummaryMockLLMClient(
+            responses: [AssistantMessage(content: "<analysis>draft</analysis><summary>   </summary>")],
+            contextWindowSize: 1000
+        )
+        var compactor = ContextCompactor(
+            client: client,
+            configuration: AgentConfiguration(compactionThreshold: 0.5)
+        )
+        var messages: [ChatMessage] = [
+            .user("Task"),
+            .assistant(AssistantMessage(content: "short")),
+            .user("Continue"),
+        ]
+        var totalUsage = TokenUsage()
+
+        let outcome = try await compactor.reactiveCompact(&messages, totalUsage: &totalUsage)
+
+        #expect(outcome == .unchanged)
+        #expect(await client.generateCallCount == 1)
+    }
+
+    @Test
     func summaryTierSkippedWhenCompactionThresholdNil() async throws {
         let client = SummaryMockLLMClient(responses: [], contextWindowSize: 1000)
         var compactor = ContextCompactor(
             client: client,
-            toolDefinitions: [],
             configuration: AgentConfiguration()
         )
         var messages: [ChatMessage] = [
@@ -99,7 +173,6 @@ struct ReactiveSummaryCompactionTests {
         )
         var compactor = ContextCompactor(
             client: client,
-            toolDefinitions: [],
             configuration: AgentConfiguration(compactionThreshold: 0.5)
         )
         var messages: [ChatMessage] = [
@@ -128,7 +201,6 @@ struct ReactiveSummaryCompactionTests {
         )
         var compactor = ContextCompactor(
             client: client,
-            toolDefinitions: [],
             configuration: AgentConfiguration(compactionThreshold: 0.5)
         )
         var messages: [ChatMessage] = [

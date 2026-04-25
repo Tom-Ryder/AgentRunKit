@@ -44,9 +44,9 @@ Compaction runs as a two-phase cascade. The agent tries the cheapest strategy fi
 
 If pruning reduces tool-result volume by more than 20%, the agent uses the pruned history and skips phase 2.
 
-**Phase 2: LLM summarization (one API call).** The agent sends the conversation to the LLM with a checkpoint prompt asking it to produce a detailed handoff summary. The summary replaces the middle of the conversation, preserving the system prompt, initial user message, and the most recent exchange. Customize the checkpoint prompt with ``AgentConfiguration/compactionPrompt``.
+**Phase 2: LLM summarization (one API call).** The agent sends the conversation to the LLM with a checkpoint prompt asking it to produce a detailed handoff summary. The summary request does not expose regular tools, and the response is accepted only when it contains non-empty text with no tool calls. The summary replaces the middle of the conversation, preserving the system prompt, initial user message, and the most recent exchange. Customize the checkpoint prompt with ``AgentConfiguration/compactionPrompt``.
 
-**Fallback.** If summarization fails (network error, provider outage), the agent falls back to message-count truncation via ``AgentConfiguration/maxMessages``.
+**Fallback.** If summarization fails (network error, provider outage, empty summary, or tool-call response), the agent falls back to message-count truncation via ``AgentConfiguration/maxMessages``.
 
 ## Reactive Prompt-Too-Long Recovery
 

@@ -25,7 +25,7 @@ struct ContextCompactionContinuityTests {
             ]
         )
         let compactor = ContextCompactor(
-            client: client, toolDefinitions: [], configuration: AgentConfiguration()
+            client: client, configuration: AgentConfiguration()
         )
         let messages: [ChatMessage] = [
             .user("Hello"),
@@ -74,7 +74,7 @@ struct ContextCompactionContinuityTests {
             ]
         )
         let compactor = ContextCompactor(
-            client: client, toolDefinitions: [], configuration: AgentConfiguration()
+            client: client, configuration: AgentConfiguration()
         )
         let messages: [ChatMessage] = [
             .user("Hello"),

@@ -9,6 +9,7 @@ actor CompactionMockLLMClient: LLMClient {
     private let responses: [AssistantMessage]
     private var callIndex: Int = 0
     private(set) var allCapturedMessages: [[ChatMessage]] = []
+    private(set) var allCapturedTools: [[ToolDefinition]] = []
     private(set) var generateCallCount: Int = 0
     private let failSummarization: Bool
 
@@ -23,10 +24,11 @@ actor CompactionMockLLMClient: LLMClient {
     }
 
     func generate(
-        messages: [ChatMessage], tools _: [ToolDefinition],
+        messages: [ChatMessage], tools: [ToolDefinition],
         responseFormat _: ResponseFormat?, requestContext _: RequestContext?
     ) async throws -> AssistantMessage {
         generateCallCount += 1
+        allCapturedTools.append(tools)
         if failSummarization, case let .user(text) = messages.last,
            text.contains("CONTEXT CHECKPOINT") {
             throw AgentError.llmError(.other("Summarization failed"))
@@ -157,6 +159,11 @@ struct CompactionTriggerTests {
         let allMessages = await client.allCapturedMessages
         #expect(allMessages.count == 3)
         #expect(hasCompactionBridge(allMessages[2]))
+        let allTools = await client.allCapturedTools
+        #expect(allTools.count == 3)
+        #expect(!allTools[0].isEmpty)
+        #expect(allTools[1].isEmpty)
+        #expect(!allTools[2].isEmpty)
     }
 
     @Test
@@ -288,7 +295,6 @@ struct CompactionFallbackTests {
         )
         var compactor = ContextCompactor(
             client: client,
-            toolDefinitions: [],
             configuration: AgentConfiguration(maxMessages: 20, compactionThreshold: 0.5)
         )
         var messages: [ChatMessage] = [
@@ -325,7 +331,6 @@ struct CompactionFallbackTests {
                 ],
                 contextWindowSize: 1000, failSummarization: false
             ),
-            toolDefinitions: [],
             configuration: AgentConfiguration(compactionThreshold: 0.5)
         )
         var messages: [ChatMessage] = [
@@ -348,7 +353,6 @@ struct CompactionFallbackTests {
         )
         var compactor = ContextCompactor(
             client: client,
-            toolDefinitions: [],
             configuration: AgentConfiguration(maxMessages: 20, compactionThreshold: 0.5)
         )
         var summarizationMessages: [ChatMessage] = [
@@ -429,7 +433,6 @@ struct ReactiveCompactionTests {
         let client = CompactionMockLLMClient(responses: [], contextWindowSize: 1000)
         var compactor = ContextCompactor(
             client: client,
-            toolDefinitions: [],
             configuration: AgentConfiguration(maxMessages: 2)
         )
         var messages: [ChatMessage] = [
@@ -456,7 +459,6 @@ struct ReactiveCompactionTests {
         )
         var compactor = ContextCompactor(
             client: client,
-            toolDefinitions: [],
             configuration: AgentConfiguration(compactionThreshold: 0.5)
         )
         var messages: [ChatMessage] = [
@@ -485,7 +487,6 @@ struct ReactiveCompactionTests {
         let client = CompactionMockLLMClient(responses: [], contextWindowSize: 1000)
         var compactor = ContextCompactor(
             client: client,
-            toolDefinitions: [],
             configuration: AgentConfiguration()
         )
         var messages: [ChatMessage] = [
@@ -511,7 +512,6 @@ struct ReactiveCompactionTests {
         let client = CompactionMockLLMClient(responses: [], contextWindowSize: 1000)
         var compactor = ContextCompactor(
             client: client,
-            toolDefinitions: [],
             configuration: AgentConfiguration(compactionThreshold: 0.5)
         )
         var messages: [ChatMessage] = [
@@ -650,7 +650,7 @@ struct CompactionContextPreservationTests {
             ]
         )
         let compactor = ContextCompactor(
-            client: client, toolDefinitions: [], configuration: AgentConfiguration()
+            client: client, configuration: AgentConfiguration()
         )
         let messages: [ChatMessage] = [
             .user("Hello"),
@@ -674,7 +674,7 @@ struct ObservationPruningTests {
     private var compactor: ContextCompactor {
         ContextCompactor(
             client: CompactionMockLLMClient(responses: []),
-            toolDefinitions: [], configuration: AgentConfiguration()
+            configuration: AgentConfiguration()
         )
     }
 
@@ -814,7 +814,7 @@ struct MediaStrippingTests {
             ]
         )
         let compactor = ContextCompactor(
-            client: client, toolDefinitions: [], configuration: AgentConfiguration()
+            client: client, configuration: AgentConfiguration()
         )
         let messages: [ChatMessage] = [
             .user([
@@ -848,7 +848,7 @@ struct MediaStrippingTests {
             ]
         )
         let compactor = ContextCompactor(
-            client: client, toolDefinitions: [], configuration: AgentConfiguration()
+            client: client, configuration: AgentConfiguration()
         )
         let messages: [ChatMessage] = [
             .user("Plain text message"),

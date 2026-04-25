@@ -18,12 +18,10 @@ struct ContextCompactor {
     }
 
     let client: any LLMClient
-    let toolDefinitions: [ToolDefinition]
     let configuration: AgentConfiguration
 
-    init(client: any LLMClient, toolDefinitions: [ToolDefinition], configuration: AgentConfiguration) {
+    init(client: any LLMClient, configuration: AgentConfiguration) {
         self.client = client
-        self.toolDefinitions = toolDefinitions
         self.configuration = configuration
     }
 
@@ -67,7 +65,8 @@ struct ContextCompactor {
 
         do {
             let response = try await summaryResponse(pruning.messages, summaryGenerator: summaryGenerator)
-            let compacted = compactedMessages(from: pruning.messages, summary: response.content)
+            let summary = try Self.validatedSummary(from: response)
+            let compacted = compactedMessages(from: pruning.messages, summary: summary)
             let compactionUsage = response.tokenUsage ?? TokenUsage()
             messages = compacted
             totalUsage += compactionUsage
@@ -107,7 +106,8 @@ struct ContextCompactor {
 
         do {
             let response = try await summaryResponse(messages, summaryGenerator: summaryGenerator)
-            let compacted = compactedMessages(from: messages, summary: response.content)
+            let summary = try Self.validatedSummary(from: response)
+            let compacted = compactedMessages(from: messages, summary: summary)
             let compactionUsage = response.tokenUsage ?? TokenUsage()
             messages = compacted
             totalUsage += compactionUsage
@@ -178,7 +178,7 @@ struct ContextCompactor {
         }
         return try await client.generate(
             messages: summaryRequest,
-            tools: toolDefinitions,
+            tools: [],
             responseFormat: nil,
             requestContext: nil
         )
@@ -186,14 +186,14 @@ struct ContextCompactor {
 
     func summarize(_ messages: [ChatMessage]) async throws -> (messages: [ChatMessage], usage: TokenUsage) {
         let response = try await summaryResponse(messages, summaryGenerator: nil)
-        let compacted = compactedMessages(from: messages, summary: response.content)
+        let compacted = try compactedMessages(from: messages, summary: Self.validatedSummary(from: response))
         return (compacted, response.tokenUsage ?? TokenUsage())
     }
 
     func compactedMessages(from messages: [ChatMessage], summary: String) -> [ChatMessage] {
         let taskContext = extractTaskContext(messages)
         let recentContext = extractRecentContext(messages).map { $0.strippingResponsesContinuationAnchorIfAssistant() }
-        let bridge = Self.bridgeMessage(summary: Self.extractSummary(from: summary))
+        let bridge = Self.bridgeMessage(summary: summary)
         let acknowledgment = AssistantMessage(content: "Understood. Resuming from the checkpoint.")
 
         var compacted = taskContext
@@ -232,15 +232,29 @@ struct ContextCompactor {
 }
 
 private extension ContextCompactor {
+    static func validatedSummary(from response: AssistantMessage) throws -> String {
+        guard response.toolCalls.isEmpty else {
+            throw AgentError.llmError(
+                .decodingFailed(description: "Compaction summary response included tool calls")
+            )
+        }
+        let summary = extractSummary(from: response.content)
+        guard !summary.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw AgentError.llmError(
+                .decodingFailed(description: "Compaction summary response was empty")
+            )
+        }
+        return summary
+    }
+
     static func extractSummary(from response: String) -> String {
         guard let startRange = response.range(of: "<summary>"),
               let endRange = response[startRange.upperBound...].range(of: "</summary>")
         else {
-            return response
+            return response.trimmingCharacters(in: .whitespacesAndNewlines)
         }
         let content = response[startRange.upperBound ..< endRange.lowerBound]
-        let trimmed = content.trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmed.isEmpty ? response : trimmed
+        return content.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     static func stripMedia(_ messages: [ChatMessage]) -> [ChatMessage] {

@@ -163,9 +163,7 @@ extension Agent {
 
         var totalUsage = TokenUsage()
         var lastTotalTokens: Int?
-        var compactor = ContextCompactor(
-            client: client, toolDefinitions: toolDefinitions, configuration: configuration
-        )
+        var compactor = ContextCompactor(client: client, configuration: configuration)
         state.budgetPhase = try makeBudgetPhase()
 
         for iteration in 1 ... configuration.maxIterations {
@@ -351,7 +349,7 @@ extension Agent {
             client: client, toolDefinitions: toolDefinitions, policy: .agent,
             eventFactory: options.eventFactory
         )
-        var compactor = ContextCompactor(client: client, toolDefinitions: toolDefinitions, configuration: configuration)
+        var compactor = ContextCompactor(client: client, configuration: configuration)
 
         let iterationContext = StreamIterationContext(
             processor: processor, context: context, options: options, continuation: continuation
