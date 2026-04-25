@@ -28,13 +28,13 @@
         }
 
         func call(arguments: GeneratedContent) async throws -> String {
-            let jsonValue = Self.toJSONValue(arguments)
+            let jsonValue = try Self.toJSONValue(arguments)
             let data = try JSONEncoder().encode(jsonValue)
             let result = try await wrappedTool.execute(arguments: data, context: context)
             return result.content
         }
 
-        static func toJSONValue(_ content: GeneratedContent) -> JSONValue {
+        static func toJSONValue(_ content: GeneratedContent) throws -> JSONValue {
             switch content.kind {
             case .null:
                 return .null
@@ -48,12 +48,13 @@
             case let .string(value):
                 return .string(value)
             case let .array(elements):
-                return .array(elements.map { toJSONValue($0) })
+                return try .array(elements.map { try toJSONValue($0) })
             case let .structure(properties, _):
-                return .object(properties.mapValues { toJSONValue($0) })
+                return try .object(properties.mapValues { try toJSONValue($0) })
             @unknown default:
-                assertionFailure("Unhandled GeneratedContent.Kind: \(content.kind)")
-                return .null
+                throw AgentError.llmError(
+                    .decodingFailed(description: "Unsupported FoundationModels GeneratedContent.Kind: \(content.kind)")
+                )
             }
         }
     }

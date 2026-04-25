@@ -58,7 +58,7 @@
         @Test func toJSONValueString() throws {
             guard #available(macOS 26, iOS 26, *) else { return }
             let generated = try makeContent(json: #"{"value":"hello"}"#)
-            let jsonValue = FMToolAdapter<EmptyContext>.toJSONValue(generated)
+            let jsonValue = try FMToolAdapter<EmptyContext>.toJSONValue(generated)
             guard case let .object(dict) = jsonValue else {
                 Issue.record("Expected object")
                 return
@@ -69,7 +69,7 @@
         @Test func toJSONValueInteger() throws {
             guard #available(macOS 26, iOS 26, *) else { return }
             let generated = try makeContent(json: #"{"count":42}"#)
-            let jsonValue = FMToolAdapter<EmptyContext>.toJSONValue(generated)
+            let jsonValue = try FMToolAdapter<EmptyContext>.toJSONValue(generated)
             guard case let .object(dict) = jsonValue else {
                 Issue.record("Expected object")
                 return
@@ -80,7 +80,7 @@
         @Test func toJSONValueDouble() throws {
             guard #available(macOS 26, iOS 26, *) else { return }
             let generated = try makeContent(json: #"{"score":3.14}"#)
-            let jsonValue = FMToolAdapter<EmptyContext>.toJSONValue(generated)
+            let jsonValue = try FMToolAdapter<EmptyContext>.toJSONValue(generated)
             guard case let .object(dict) = jsonValue else {
                 Issue.record("Expected object")
                 return
@@ -91,7 +91,7 @@
         @Test func toJSONValueBool() throws {
             guard #available(macOS 26, iOS 26, *) else { return }
             let generated = try makeContent(json: #"{"flag":true}"#)
-            let jsonValue = FMToolAdapter<EmptyContext>.toJSONValue(generated)
+            let jsonValue = try FMToolAdapter<EmptyContext>.toJSONValue(generated)
             guard case let .object(dict) = jsonValue else {
                 Issue.record("Expected object")
                 return
@@ -102,7 +102,7 @@
         @Test func toJSONValueArray() throws {
             guard #available(macOS 26, iOS 26, *) else { return }
             let generated = try makeContent(json: #"{"items":["a","b"]}"#)
-            let jsonValue = FMToolAdapter<EmptyContext>.toJSONValue(generated)
+            let jsonValue = try FMToolAdapter<EmptyContext>.toJSONValue(generated)
             guard case let .object(dict) = jsonValue else {
                 Issue.record("Expected object")
                 return
@@ -113,7 +113,7 @@
         @Test func toJSONValueRoundTrip() throws {
             guard #available(macOS 26, iOS 26, *) else { return }
             let generated = try makeContent(json: #"{"name":"test","count":5}"#)
-            let jsonValue = FMToolAdapter<EmptyContext>.toJSONValue(generated)
+            let jsonValue = try FMToolAdapter<EmptyContext>.toJSONValue(generated)
             let data = try JSONEncoder().encode(jsonValue)
             let decoded = try JSONDecoder().decode([String: JSONValue].self, from: data)
             #expect(decoded["name"] == .string("test"))
@@ -123,7 +123,7 @@
         @Test func toJSONValueNull() throws {
             guard #available(macOS 26, iOS 26, *) else { return }
             let generated = try makeContent(json: #"{"missing":null}"#)
-            let jsonValue = FMToolAdapter<EmptyContext>.toJSONValue(generated)
+            let jsonValue = try FMToolAdapter<EmptyContext>.toJSONValue(generated)
             guard case let .object(dict) = jsonValue else {
                 Issue.record("Expected object")
                 return
