@@ -184,6 +184,73 @@ struct MCPToolTests {
     }
 
     @Test
+    func missingContentThrows() {
+        let data = Data(#"{"isError":false}"#.utf8)
+
+        #expect(throws: DecodingError.self) {
+            _ = try JSONDecoder().decode(MCPCallResult.self, from: data)
+        }
+    }
+
+    @Test
+    func nullContentThrows() {
+        let data = Data(#"{"content":null,"isError":false}"#.utf8)
+
+        #expect(throws: DecodingError.self) {
+            _ = try JSONDecoder().decode(MCPCallResult.self, from: data)
+        }
+    }
+
+    @Test
+    func malformedTextContentThrows() {
+        let data = Data(#"{"content":[{"type":"text"}]}"#.utf8)
+
+        #expect(throws: DecodingError.self) {
+            _ = try JSONDecoder().decode(MCPCallResult.self, from: data)
+        }
+    }
+
+    @Test
+    func malformedBinaryContentThrows() {
+        let missingData = Data(#"{"content":[{"type":"image","mimeType":"image/png"}]}"#.utf8)
+        let invalidBase64 = Data(#"{"content":[{"type":"audio","data":"%%%","mimeType":"audio/wav"}]}"#.utf8)
+
+        #expect(throws: DecodingError.self) {
+            _ = try JSONDecoder().decode(MCPCallResult.self, from: missingData)
+        }
+        #expect(throws: DecodingError.self) {
+            _ = try JSONDecoder().decode(MCPCallResult.self, from: invalidBase64)
+        }
+    }
+
+    @Test
+    func malformedResourceContentThrows() {
+        let data = Data(#"{"content":[{"type":"resource"}]}"#.utf8)
+
+        #expect(throws: DecodingError.self) {
+            _ = try JSONDecoder().decode(MCPCallResult.self, from: data)
+        }
+    }
+
+    @Test
+    func malformedContentArrayElementThrows() {
+        let data = Data(#"{"content":[{"type":"text","text":"ok"},{"type":"text"}]}"#.utf8)
+
+        #expect(throws: DecodingError.self) {
+            _ = try JSONDecoder().decode(MCPCallResult.self, from: data)
+        }
+    }
+
+    @Test
+    func invalidIsErrorThrows() {
+        let data = Data(#"{"isError":"false","content":[{"type":"text","text":"ok"}]}"#.utf8)
+
+        #expect(throws: DecodingError.self) {
+            _ = try JSONDecoder().decode(MCPCallResult.self, from: data)
+        }
+    }
+
+    @Test
     func multipleTextContentJoined() {
         let result = MCPCallResult(content: [.text("line 1"), .text("line 2")])
         let toolResult = result.toToolResult()

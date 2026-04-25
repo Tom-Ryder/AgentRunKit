@@ -27,10 +27,7 @@ extension MCPContent: Decodable {
 
         switch type {
         case "text":
-            guard let text = try container.decodeIfPresent(String.self, forKey: .text) else {
-                self = .text("[Malformed text content]")
-                return
-            }
+            let text = try container.decode(String.self, forKey: .text)
             self = .text(text)
 
         case "image":
@@ -40,10 +37,7 @@ extension MCPContent: Decodable {
             self = try Self.decodeBinary(from: container, factory: MCPContent.audio, label: "audio")
 
         case "resource":
-            guard let res = try container.decodeIfPresent(ResourceFields.self, forKey: .resource) else {
-                self = .text("[Malformed resource content]")
-                return
-            }
+            let res = try container.decode(ResourceFields.self, forKey: .resource)
             if res.text != nil || res.mimeType != nil {
                 self = .embeddedResource(uri: res.uri, mimeType: res.mimeType, text: res.text)
             } else {
@@ -62,13 +56,14 @@ extension MCPContent: Decodable {
         factory: (Data, String) -> MCPContent,
         label: String
     ) throws -> MCPContent {
-        guard let b64 = try container.decodeIfPresent(String.self, forKey: .data),
-              let mime = try container.decodeIfPresent(String.self, forKey: .mimeType)
-        else {
-            return .text("[Malformed \(label) content]")
-        }
+        let b64 = try container.decode(String.self, forKey: .data)
+        let mime = try container.decode(String.self, forKey: .mimeType)
         guard let decoded = Data(base64Encoded: b64) else {
-            return .text("[Invalid base64 \(mime)]")
+            throw DecodingError.dataCorruptedError(
+                forKey: .data,
+                in: container,
+                debugDescription: "Invalid base64 data for \(label) content"
+            )
         }
         return factory(decoded, mime)
     }
@@ -92,7 +87,7 @@ public struct MCPCallResult: Sendable, Equatable, Decodable {
 
     public init(from decoder: any Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        isError = (try? container.decode(Bool.self, forKey: .isError)) ?? false
+        isError = try container.decodeIfPresent(Bool.self, forKey: .isError) ?? false
 
         if let structured = try container.decodeIfPresent(JSONValue.self, forKey: .structuredContent) {
             structuredContent = try JSONEncoder().encode(structured)
@@ -100,17 +95,7 @@ public struct MCPCallResult: Sendable, Equatable, Decodable {
             structuredContent = nil
         }
 
-        var items: [MCPContent] = []
-        if var contentContainer = try? container.nestedUnkeyedContainer(forKey: .content) {
-            while !contentContainer.isAtEnd {
-                let raw = try contentContainer.decode(JSONValue.self)
-                let rawData = try JSONEncoder().encode(raw)
-                if let item = try? JSONDecoder().decode(MCPContent.self, from: rawData) {
-                    items.append(item)
-                }
-            }
-        }
-        content = items
+        content = try container.decode([MCPContent].self, forKey: .content)
     }
 
     /// Converts MCP content to a text-based tool result, preferring structured content when available.
