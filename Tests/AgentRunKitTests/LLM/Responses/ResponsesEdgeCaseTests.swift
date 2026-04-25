@@ -16,7 +16,7 @@ struct ResponsesEdgeCaseTests {
     }
 
     @Test
-    func strictToolDefinition_silentlyDropsStrictFlagInRequest() async throws {
+    func strictToolDefinitionEncodesStrictTrueInRequest() async throws {
         let tool = ToolDefinition(
             name: "get_weather",
             description: "Get weather",
@@ -34,7 +34,46 @@ struct ResponsesEdgeCaseTests {
         #expect(tools.count == 1)
         #expect(tools[0]["type"] as? String == "function")
         #expect(tools[0]["name"] as? String == "get_weather")
-        #expect(tools[0]["strict"] == nil, "Responses server normalizes strict; the client should not emit it")
+        #expect(tools[0]["strict"] as? Bool == true)
+    }
+
+    @Test
+    func strictToolDefinitionEncodesStrictFalseInRequest() async throws {
+        let tool = ToolDefinition(
+            name: "get_weather",
+            description: "Get weather",
+            parametersSchema: .object(properties: ["city": .string()], required: ["city"]),
+            strict: false
+        )
+        let client = ResponsesAPIClient(
+            apiKey: "test-key", model: "gpt-4.1",
+            baseURL: ResponsesAPIClient.openAIBaseURL, store: false
+        )
+        let request = try await client.buildRequest(messages: [.user("Hi")], tools: [tool])
+        let json = try encodeRequest(request)
+
+        let tools = try #require(json["tools"] as? [[String: Any]])
+        #expect(tools.count == 1)
+        #expect(tools[0]["strict"] as? Bool == false)
+    }
+
+    @Test
+    func nilStrictToolDefinitionOmitsStrictInRequest() async throws {
+        let tool = ToolDefinition(
+            name: "get_weather",
+            description: "Get weather",
+            parametersSchema: .object(properties: ["city": .string()], required: ["city"])
+        )
+        let client = ResponsesAPIClient(
+            apiKey: "test-key", model: "gpt-4.1",
+            baseURL: ResponsesAPIClient.openAIBaseURL, store: false
+        )
+        let request = try await client.buildRequest(messages: [.user("Hi")], tools: [tool])
+        let json = try encodeRequest(request)
+
+        let tools = try #require(json["tools"] as? [[String: Any]])
+        #expect(tools.count == 1)
+        #expect(tools[0]["strict"] == nil)
     }
 
     @Test

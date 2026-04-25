@@ -198,14 +198,16 @@ struct ResponsesFunctionToolDefinition: Encodable {
     let name: String
     let description: String
     let parameters: JSONSchema
+    let strict: Bool?
 
     enum CodingKeys: String, CodingKey {
-        case type, name, description, parameters
+        case type, name, description, parameters, strict
     }
 
     init(_ definition: ToolDefinition) {
         name = definition.name
         description = definition.description
         parameters = definition.parametersSchema
+        strict = definition.strict
     }
 }

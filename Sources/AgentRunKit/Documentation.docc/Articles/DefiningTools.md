@@ -128,7 +128,7 @@ let searchTool = try Tool<SearchParams, String, EmptyContext>(
 | `isConcurrencySafe` | `false` | Whether the tool can safely run concurrently with other tools. ``Agent`` honors this: unsafe tools form exclusive barriers in the execution schedule. |
 | `isReadOnly` | `false` | Whether the tool only reads state without side effects. Advisory; not currently enforced. |
 | `maxResultCharacters` | `nil` | Per-tool override for ``AgentConfiguration/maxToolResultCharacters``. When set, this limit governs instead of the global default. |
-| `strict` | `nil` | Whether the provider should enforce strict JSON Schema adherence on the tool's arguments. Emitted on the wire only where the target provider supports strict function schemas (first-party OpenAI Chat, Anthropic). |
+| `strict` | `nil` | Whether the provider should enforce strict JSON Schema adherence on the tool's arguments. Preserved on first-party OpenAI Chat and Responses function tools where supported; unsupported providers reject strict schemas instead of dropping the request. |
 
 Defaults are fail-closed: tools are assumed non-concurrent and non-read-only unless explicitly declared otherwise. Direct ``AnyTool`` conformers can override these properties in the same way.
 
