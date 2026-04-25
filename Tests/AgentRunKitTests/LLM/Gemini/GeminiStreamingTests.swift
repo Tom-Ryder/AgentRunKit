@@ -15,20 +15,31 @@ struct GeminiStreamingTests {
     ) async throws -> [StreamDelta] {
         let geminiClient = client ?? makeClient()
         let state = GeminiStreamState()
-        var deltas: [StreamDelta] = []
+        let streamPair = AsyncThrowingStream<StreamDelta, Error>.makeStream()
+        let byteStream = makeByteStream(from: sseLines)
 
-        for line in sseLines {
-            let continuation = AsyncThrowingStream<StreamDelta, Error>.makeStream()
-            let finished = try await geminiClient.handleSSELine(
-                line, state: state, continuation: continuation.continuation
+        try await processSSEStream(bytes: byteStream, stallTimeout: nil) { event in
+            try await geminiClient.handleSSEEvent(
+                event, state: state, continuation: streamPair.continuation
             )
-            continuation.continuation.finish()
-            for try await delta in continuation.stream {
-                deltas.append(delta)
-            }
-            if finished { break }
+        }
+        streamPair.continuation.finish()
+
+        var deltas: [StreamDelta] = []
+        for try await delta in streamPair.stream {
+            deltas.append(delta)
         }
         return deltas
+    }
+
+    private func makeByteStream(from sseLines: [String]) -> ControlledByteStream {
+        let allBytes = sseLines.joined(separator: "\n\n").appending("\n\n")
+        let (stream, continuation) = AsyncStream<UInt8>.makeStream()
+        for byte in Array(allBytes.utf8) {
+            continuation.yield(byte)
+        }
+        continuation.finish()
+        return ControlledByteStream(stream: stream)
     }
 
     @Test
@@ -56,6 +67,35 @@ struct GeminiStreamingTests {
             #expect(usage?.input == 10)
             #expect(usage?.output == 5)
         }
+    }
+
+    @Test
+    func multilineSSEDataYieldsContent() async throws {
+        let bytes = Array("""
+        data: {"candidates":[{"content":{"role":"model",
+        data: "parts":[{"text":"Hello"}]}}]}
+
+        """.utf8)
+        let (byteStream, byteContinuation) = AsyncStream<UInt8>.makeStream()
+        for byte in bytes {
+            byteContinuation.yield(byte)
+        }
+        byteContinuation.finish()
+
+        let client = makeClient()
+        let state = GeminiStreamState()
+        let streamPair = AsyncThrowingStream<StreamDelta, Error>.makeStream()
+
+        try await processSSEStream(bytes: ControlledByteStream(stream: byteStream), stallTimeout: nil) { event in
+            try await client.handleSSEEvent(event, state: state, continuation: streamPair.continuation)
+        }
+        streamPair.continuation.finish()
+
+        var deltas: [StreamDelta] = []
+        for try await delta in streamPair.stream {
+            deltas.append(delta)
+        }
+        #expect(deltas.contains(.content("Hello")))
     }
 
     @Test
@@ -311,9 +351,9 @@ struct GeminiStreamingTests {
         let continuation = AsyncThrowingStream<StreamDelta, Error>.makeStream()
 
         do {
-            _ = try await client.handleSSELine(
-                lines[0], state: state, continuation: continuation.continuation
-            )
+            try await processSSEStream(bytes: makeByteStream(from: lines), stallTimeout: nil) { event in
+                try await client.handleSSEEvent(event, state: state, continuation: continuation.continuation)
+            }
             Issue.record("Expected error")
         } catch let error as AgentError {
             guard case let .llmError(transport) = error,

@@ -184,6 +184,25 @@ struct ResponsesStreamingTests {
     }
 
     @Test
+    func multilineSSEDataYieldsContent() async throws {
+        let lines = [
+            """
+            event: response.output_text.delta
+            data: {"type":"response.output_text.delta",
+            data: "delta":"Hello"}
+            """,
+            responsesSSELine(
+                #"{"type":"response.completed","response":{"id":"resp_001","status":"completed","#
+                    + #""output":[{"type":"message","content":[{"type":"output_text","text":"Hello"}]}],"#
+                    + #""usage":{"input_tokens":10,"output_tokens":5}}}"#
+            ),
+        ]
+        let deltas = try await collectResponsesStreamDeltas(client: makeResponsesStreamingClient(), lines: lines)
+
+        #expect(deltas.first == .content("Hello"))
+    }
+
+    @Test
     func functionCallStartYieldsToolCallStart() async throws {
         let addedJSON =
             #"{"type":"response.output_item.added","output_index":0,"#
@@ -892,7 +911,7 @@ private func collectRunStreamElementsResult(
     client: ResponsesAPIClient,
     lines: [String]
 ) async -> (elements: [RunStreamElement], error: (any Error)?) {
-    let allBytes = lines.joined(separator: "\n").appending("\n")
+    let allBytes = lines.joined(separator: "\n\n").appending("\n\n")
     let (byteStream, byteContinuation) = AsyncStream<UInt8>.makeStream()
     for byte in Array(allBytes.utf8) {
         byteContinuation.yield(byte)

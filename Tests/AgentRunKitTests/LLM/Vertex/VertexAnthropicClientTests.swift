@@ -358,7 +358,7 @@ struct VertexAnthropicStreamingContinuityTests {
             sseLine(#"{"type":"message_delta","usage":{"output_tokens":10}}"#),
             sseLine(#"{"type":"message_stop"}"#),
         ]
-        let allBytes = lines.joined(separator: "\n").appending("\n")
+        let allBytes = lines.joined(separator: "\n\n").appending("\n\n")
         let (byteStream, byteContinuation) = AsyncStream<UInt8>.makeStream()
         for byte in Array(allBytes.utf8) {
             byteContinuation.yield(byte)
@@ -372,8 +372,8 @@ struct VertexAnthropicStreamingContinuityTests {
         try await processSSEStream(
             bytes: controlled,
             stallTimeout: nil
-        ) { line in
-            try await vertexClient.anthropic.handleSSELine(line, state: state) { delta in
+        ) { event in
+            try await vertexClient.anthropic.handleSSEEvent(event, state: state) { delta in
                 _ = runPair.continuation.yield(.delta(delta))
             }
         }

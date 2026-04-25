@@ -153,9 +153,9 @@ public struct VertexGoogleClient: LLMClient, Sendable {
         try await processSSEStream(
             bytes: bytes,
             stallTimeout: retryPolicy.streamStallTimeout
-        ) { line in
-            try await gemini.handleSSELine(
-                line, state: state, continuation: continuation
+        ) { event in
+            try await gemini.handleSSEEvent(
+                event, state: state, continuation: continuation
             )
         }
         continuation.finish()

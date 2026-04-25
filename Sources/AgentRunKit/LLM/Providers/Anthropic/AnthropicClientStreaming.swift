@@ -25,9 +25,9 @@ extension AnthropicClient {
         try await processSSEStream(
             bytes: bytes,
             stallTimeout: retryPolicy.streamStallTimeout
-        ) { line in
-            try await self.handleSSELine(
-                line, state: state, continuation: continuation
+        ) { event in
+            try await self.handleSSEEvent(
+                event, state: state, continuation: continuation
             )
         }
         continuation.finish()
@@ -57,8 +57,8 @@ extension AnthropicClient {
         try await processSSEStream(
             bytes: bytes,
             stallTimeout: retryPolicy.streamStallTimeout
-        ) { line in
-            try await self.handleSSELine(line, state: state) { delta in
+        ) { event in
+            try await self.handleSSEEvent(event, state: state) { delta in
                 continuation.yield(.delta(delta))
             }
         }
@@ -73,23 +73,29 @@ extension AnthropicClient {
         continuation.finish()
     }
 
-    func handleSSELine(
-        _ line: String,
+    func handleSSEEvent(
+        _ event: SSEEvent,
         state: AnthropicStreamState,
         continuation: AsyncThrowingStream<StreamDelta, Error>.Continuation
     ) async throws -> Bool {
-        try await handleSSELine(line, state: state) { delta in
+        try await handleSSEEvent(event, state: state) { delta in
             continuation.yield(delta)
         }
     }
 
-    func handleSSELine(
-        _ line: String,
+    func handleSSEEvent(
+        _ event: SSEEvent,
         state: AnthropicStreamState,
         yield: @Sendable (StreamDelta) -> Void
     ) async throws -> Bool {
-        try Task.checkCancellation()
-        guard let payload = extractSSEPayload(from: line) else { return false }
+        try await handleSSEPayload(event.data, state: state, yield: yield)
+    }
+
+    private func handleSSEPayload(
+        _ payload: String,
+        state: AnthropicStreamState,
+        yield: @Sendable (StreamDelta) -> Void
+    ) async throws -> Bool {
         let event = try decodeEvent(AnthropicEventTypeOnly.self, from: Data(payload.utf8))
         guard let eventType = event.type else { return false }
 

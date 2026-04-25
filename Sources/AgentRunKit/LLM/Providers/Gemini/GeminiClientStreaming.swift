@@ -29,22 +29,27 @@ extension GeminiClient {
         try await processSSEStream(
             bytes: bytes,
             stallTimeout: retryPolicy.streamStallTimeout
-        ) { line in
-            try await self.handleSSELine(
-                line, state: state, continuation: continuation
+        ) { event in
+            try await self.handleSSEEvent(
+                event, state: state, continuation: continuation
             )
         }
         continuation.finish()
     }
 
-    func handleSSELine(
-        _ line: String,
+    func handleSSEEvent(
+        _ event: SSEEvent,
         state: GeminiStreamState,
         continuation: AsyncThrowingStream<StreamDelta, Error>.Continuation
     ) async throws -> Bool {
-        try Task.checkCancellation()
-        guard let payload = extractSSEPayload(from: line) else { return false }
+        try await handleSSEPayload(event.data, state: state, continuation: continuation)
+    }
 
+    private func handleSSEPayload(
+        _ payload: String,
+        state: GeminiStreamState,
+        continuation: AsyncThrowingStream<StreamDelta, Error>.Continuation
+    ) async throws -> Bool {
         let data = Data(payload.utf8)
 
         if let errorResponse = try? JSONDecoder().decode(GeminiErrorResponse.self, from: data) {

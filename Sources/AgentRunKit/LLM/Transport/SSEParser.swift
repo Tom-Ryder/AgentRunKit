@@ -1,10 +1,72 @@
 import Foundation
 
-func extractSSEPayload(from line: String) -> String? {
-    guard line.hasPrefix("data:") else { return nil }
-    return line.hasPrefix("data: ")
-        ? String(line.dropFirst(6))
-        : String(line.dropFirst(5))
+struct SSEEvent: Equatable {
+    let event: String?
+    let data: String
+    let id: String?
+    let retry: Int?
+}
+
+struct SSEEventParser {
+    private var event: String?
+    private var dataLines: [String] = []
+    private var id: String?
+    private var retry: Int?
+    private var hasData = false
+
+    mutating func appendLine(_ line: String) -> SSEEvent? {
+        guard !line.isEmpty else {
+            return flush()
+        }
+        guard !line.hasPrefix(":") else {
+            return nil
+        }
+
+        let field: String
+        let value: String
+        if let colon = line.firstIndex(of: ":") {
+            field = String(line[..<colon])
+            var remainder = String(line[line.index(after: colon)...])
+            if remainder.first == " " {
+                remainder.removeFirst()
+            }
+            value = remainder
+        } else {
+            field = line
+            value = ""
+        }
+
+        switch field {
+        case "event":
+            event = value
+        case "data":
+            dataLines.append(value)
+            hasData = true
+        case "id":
+            id = value
+        case "retry":
+            retry = Int(value)
+        default:
+            break
+        }
+        return nil
+    }
+
+    mutating func finish() -> SSEEvent? {
+        flush()
+    }
+
+    private mutating func flush() -> SSEEvent? {
+        defer {
+            event = nil
+            dataLines.removeAll(keepingCapacity: true)
+            id = nil
+            retry = nil
+            hasData = false
+        }
+        guard hasData else { return nil }
+        return SSEEvent(event: event, data: dataLines.joined(separator: "\n"), id: id, retry: retry)
+    }
 }
 
 func buildJSONPostRequest(
@@ -29,7 +91,7 @@ func buildJSONPostRequest(
 func processSSEStream<S: AsyncSequence & Sendable>(
     bytes: S,
     stallTimeout: Duration?,
-    handler: @escaping @Sendable (String) async throws -> Bool
+    handler: @escaping @Sendable (SSEEvent) async throws -> Bool
 ) async throws where S.Element == UInt8 {
     if let stallTimeout {
         try await withThrowingTaskGroup(of: Void.self) { group in
@@ -47,9 +109,16 @@ func processSSEStream<S: AsyncSequence & Sendable>(
             }
 
             group.addTask {
+                var parser = SSEEventParser()
                 for try await line in UnboundedLines(source: bytes) {
                     await watchdog.recordActivity()
-                    if try await handler(line) { return }
+                    if let event = parser.appendLine(line),
+                       try await handler(event) {
+                        return
+                    }
+                }
+                if let event = parser.finish() {
+                    _ = try await handler(event)
                 }
             }
 
@@ -57,8 +126,13 @@ func processSSEStream<S: AsyncSequence & Sendable>(
             group.cancelAll()
         }
     } else {
+        var parser = SSEEventParser()
         for try await line in UnboundedLines(source: bytes) {
-            guard try await !handler(line) else { return }
+            guard let event = parser.appendLine(line) else { continue }
+            guard try await !handler(event) else { return }
+        }
+        if let event = parser.finish() {
+            _ = try await handler(event)
         }
     }
 }

@@ -164,9 +164,9 @@ public struct VertexAnthropicClient: LLMClient, Sendable {
         try await processSSEStream(
             bytes: bytes,
             stallTimeout: retryPolicy.streamStallTimeout
-        ) { line in
-            try await anthropic.handleSSELine(
-                line, state: state, continuation: continuation
+        ) { event in
+            try await anthropic.handleSSEEvent(
+                event, state: state, continuation: continuation
             )
         }
         continuation.finish()
@@ -199,8 +199,8 @@ public struct VertexAnthropicClient: LLMClient, Sendable {
         try await processSSEStream(
             bytes: bytes,
             stallTimeout: retryPolicy.streamStallTimeout
-        ) { line in
-            try await anthropic.handleSSELine(line, state: state) { delta in
+        ) { event in
+            try await anthropic.handleSSEEvent(event, state: state) { delta in
                 continuation.yield(.delta(delta))
             }
         }

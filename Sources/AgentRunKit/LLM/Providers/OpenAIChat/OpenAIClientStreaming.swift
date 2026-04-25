@@ -25,18 +25,23 @@ extension OpenAIClient {
         try await processSSEStream(
             bytes: bytes,
             stallTimeout: retryPolicy.streamStallTimeout
-        ) { [self] line in
-            try handleSSELine(line, continuation: continuation)
+        ) { [self] event in
+            try handleSSEEvent(event, continuation: continuation)
         }
         continuation.finish()
     }
 
-    private func handleSSELine(
-        _ line: String,
+    private func handleSSEEvent(
+        _ event: SSEEvent,
         continuation: AsyncThrowingStream<StreamDelta, Error>.Continuation
     ) throws -> Bool {
-        try Task.checkCancellation()
-        guard let payload = extractSSEPayload(from: line) else { return false }
+        try handleSSEPayload(event.data, continuation: continuation)
+    }
+
+    private func handleSSEPayload(
+        _ payload: String,
+        continuation: AsyncThrowingStream<StreamDelta, Error>.Continuation
+    ) throws -> Bool {
         if payload == "[DONE]" {
             return true
         }

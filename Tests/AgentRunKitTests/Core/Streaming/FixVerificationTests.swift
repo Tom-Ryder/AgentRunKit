@@ -459,44 +459,75 @@ struct ConflictingAssistantContinuityTests {
     }
 }
 
-struct SSEPayloadExtractionTests {
+struct SSEEventParserVerificationTests {
     @Test
-    func extractsPayloadWithSpace() {
-        let payload = extractSSEPayload(from: "data: {\"content\":\"hello\"}")
-        #expect(payload == "{\"content\":\"hello\"}")
+    func emitsPayloadWithSpace() throws {
+        var parser = SSEEventParser()
+        #expect(parser.appendLine("data: {\"content\":\"hello\"}") == nil)
+        let parsed = parser.appendLine("")
+        let event = try #require(parsed)
+        #expect(event.data == "{\"content\":\"hello\"}")
     }
 
     @Test
-    func extractsPayloadWithoutSpace() {
-        let payload = extractSSEPayload(from: "data:{\"content\":\"hello\"}")
-        #expect(payload == "{\"content\":\"hello\"}")
+    func emitsPayloadWithoutSpace() throws {
+        var parser = SSEEventParser()
+        #expect(parser.appendLine("data:{\"content\":\"hello\"}") == nil)
+        let parsed = parser.appendLine("")
+        let event = try #require(parsed)
+        #expect(event.data == "{\"content\":\"hello\"}")
     }
 
     @Test
-    func extractsDoneMarkerWithSpace() {
-        let payload = extractSSEPayload(from: "data: [DONE]")
-        #expect(payload == "[DONE]")
+    func preservesDoneMarkerWithSpace() throws {
+        var parser = SSEEventParser()
+        #expect(parser.appendLine("data: [DONE]") == nil)
+        let parsed = parser.appendLine("")
+        let event = try #require(parsed)
+        #expect(event.data == "[DONE]")
     }
 
     @Test
-    func extractsDoneMarkerWithoutSpace() {
-        let payload = extractSSEPayload(from: "data:[DONE]")
-        #expect(payload == "[DONE]")
+    func preservesDoneMarkerWithoutSpace() throws {
+        var parser = SSEEventParser()
+        #expect(parser.appendLine("data:[DONE]") == nil)
+        let parsed = parser.appendLine("")
+        let event = try #require(parsed)
+        #expect(event.data == "[DONE]")
     }
 
     @Test
-    func returnsNilForNonDataLines() {
-        #expect(extractSSEPayload(from: ": comment") == nil)
-        #expect(extractSSEPayload(from: "event: message") == nil)
-        #expect(extractSSEPayload(from: "") == nil)
-        #expect(extractSSEPayload(from: "id: 123") == nil)
+    func ignoresNonDataEventWithoutDispatch() {
+        var parser = SSEEventParser()
+        #expect(parser.appendLine(": comment") == nil)
+        #expect(parser.appendLine("event: message") == nil)
+        #expect(parser.appendLine("") == nil)
+        #expect(parser.appendLine("id: 123") == nil)
+        #expect(parser.finish() == nil)
     }
 
     @Test
-    func handlesEmptyPayload() {
-        let withSpace = extractSSEPayload(from: "data: ")
-        let withoutSpace = extractSSEPayload(from: "data:")
-        #expect(withSpace == "")
-        #expect(withoutSpace == "")
+    func emitsEmptyPayload() throws {
+        var parser = SSEEventParser()
+        #expect(parser.appendLine("data:") == nil)
+        let parsed = parser.appendLine("")
+        let event = try #require(parsed)
+        #expect(event.data == "")
+    }
+
+    @Test
+    func combinesMultilinePayloadAndMetadata() throws {
+        var parser = SSEEventParser()
+        #expect(parser.appendLine("event: message") == nil)
+        #expect(parser.appendLine("id: 123") == nil)
+        #expect(parser.appendLine("retry: 250") == nil)
+        #expect(parser.appendLine("data: first") == nil)
+        #expect(parser.appendLine("data: second") == nil)
+        let parsed = parser.appendLine("")
+        let event = try #require(parsed)
+        #expect(event.event == "message")
+        #expect(event.id == "123")
+        #expect(event.retry == 250)
+        #expect(event.data == "first\nsecond")
     }
 }

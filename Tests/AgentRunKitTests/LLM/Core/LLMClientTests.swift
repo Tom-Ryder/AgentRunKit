@@ -799,14 +799,53 @@ struct StreamStallDetectionTests {
         try await processSSEStream(
             bytes: controlled,
             stallTimeout: .seconds(5)
-        ) { line in
-            if extractSSEPayload(from: line) != nil {
-                await counter.increment()
-            }
-            return extractSSEPayload(from: line) == "[DONE]"
+        ) { event in
+            await counter.increment()
+            return event.data == "[DONE]"
         }
 
         let total = await counter.count
         #expect(total >= 2)
+    }
+}
+
+struct SSEParserTests {
+    @Test
+    func aggregatesMultilineDataWithEventMetadata() {
+        var parser = SSEEventParser()
+        #expect(parser.appendLine("event: message") == nil)
+        #expect(parser.appendLine("id: 42") == nil)
+        #expect(parser.appendLine("retry: 1000") == nil)
+        #expect(parser.appendLine("data: first") == nil)
+        #expect(parser.appendLine(": ignored") == nil)
+        #expect(parser.appendLine("data: second") == nil)
+        let event = parser.appendLine("")
+
+        #expect(event == SSEEvent(event: "message", data: "first\nsecond", id: "42", retry: 1000))
+    }
+
+    @Test
+    func flushesFinalEventAtEOF() {
+        var parser = SSEEventParser()
+        #expect(parser.appendLine("data: [DONE]") == nil)
+        #expect(parser.finish()?.data == "[DONE]")
+    }
+
+    @Test
+    func ignoresCommentOnlyEventsAndMalformedRetry() {
+        var parser = SSEEventParser()
+        #expect(parser.appendLine(": comment") == nil)
+        #expect(parser.appendLine("retry: nope") == nil)
+        #expect(parser.appendLine("") == nil)
+
+        #expect(parser.appendLine("data: payload") == nil)
+        #expect(parser.appendLine("") == SSEEvent(event: nil, data: "payload", id: nil, retry: nil))
+    }
+
+    @Test
+    func preservesEmptyDataEvents() {
+        var parser = SSEEventParser()
+        #expect(parser.appendLine("data:") == nil)
+        #expect(parser.appendLine("") == SSEEvent(event: nil, data: "", id: nil, retry: nil))
     }
 }

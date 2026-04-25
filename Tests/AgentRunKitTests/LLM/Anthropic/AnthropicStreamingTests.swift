@@ -15,7 +15,7 @@ struct AnthropicStreamingTests {
         client: AnthropicClient,
         lines: [String]
     ) async throws -> [StreamDelta] {
-        let allBytes = lines.joined(separator: "\n").appending("\n")
+        let allBytes = lines.joined(separator: "\n\n").appending("\n\n")
         let (byteStream, byteContinuation) = AsyncStream<UInt8>.makeStream()
         for byte in Array(allBytes.utf8) {
             byteContinuation.yield(byte)
@@ -53,6 +53,23 @@ struct AnthropicStreamingTests {
         #expect(contentDeltas.count == 2)
         #expect(contentDeltas[0] == .content("Hello"))
         #expect(contentDeltas[1] == .content(" world"))
+    }
+
+    @Test
+    func multilineSSEDataYieldsContent() async throws {
+        let lines = [
+            sseLine(#"{"type":"content_block_start","index":0,"content_block":{"type":"text"}}"#),
+            """
+            event: content_block_delta
+            data: {"type":"content_block_delta","index":0,
+            data: "delta":{"type":"text_delta","text":"Hello"}}
+            """,
+            sseLine(#"{"type":"content_block_stop","index":0}"#),
+            sseLine(#"{"type":"message_stop"}"#),
+        ]
+        let deltas = try await collectStreamDeltas(client: makeClient(), lines: lines)
+
+        #expect(deltas.contains(.content("Hello")))
     }
 
     @Test
@@ -301,7 +318,7 @@ struct AnthropicStreamingInputUsageTests {
         client: AnthropicClient,
         lines: [String]
     ) async throws -> [StreamDelta] {
-        let allBytes = lines.joined(separator: "\n").appending("\n")
+        let allBytes = lines.joined(separator: "\n\n").appending("\n\n")
         let (byteStream, byteContinuation) = AsyncStream<UInt8>.makeStream()
         for byte in Array(allBytes.utf8) {
             byteContinuation.yield(byte)
@@ -413,7 +430,7 @@ struct AnthropicStreamingContinuityTests {
         client: AnthropicClient,
         lines: [String]
     ) async throws -> AnthropicStreamState {
-        let allBytes = lines.joined(separator: "\n").appending("\n")
+        let allBytes = lines.joined(separator: "\n\n").appending("\n\n")
         let (byteStream, byteContinuation) = AsyncStream<UInt8>.makeStream()
         for byte in Array(allBytes.utf8) {
             byteContinuation.yield(byte)
@@ -581,9 +598,9 @@ extension AnthropicClient {
         try await processSSEStream(
             bytes: byteStream,
             stallTimeout: nil
-        ) { line in
-            try await self.handleSSELine(
-                line, state: state, continuation: continuation
+        ) { event in
+            try await self.handleSSEEvent(
+                event, state: state, continuation: continuation
             )
         }
         continuation.finish()
@@ -597,9 +614,9 @@ extension AnthropicClient {
         try await processSSEStream(
             bytes: byteStream,
             stallTimeout: nil
-        ) { line in
-            try await self.handleSSELine(
-                line, state: state, continuation: continuation
+        ) { event in
+            try await self.handleSSEEvent(
+                event, state: state, continuation: continuation
             )
         }
         continuation.finish()

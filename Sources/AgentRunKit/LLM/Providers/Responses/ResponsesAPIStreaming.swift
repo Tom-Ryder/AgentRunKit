@@ -43,9 +43,9 @@ extension ResponsesAPIClient {
     ) async throws where S.Element == UInt8 {
         let completionState = ResponsesStreamCompletionState()
         let semanticState = ResponsesStreamState()
-        try await processSSEStream(bytes: bytes, stallTimeout: stallTimeout) { [self] line in
-            let didComplete = try await handleSSELine(
-                line,
+        try await processSSEStream(bytes: bytes, stallTimeout: stallTimeout) { [self] event in
+            let didComplete = try await handleSSEEvent(
+                event,
                 messagesCount: messagesCount,
                 semanticState: semanticState,
                 continuation: continuation
@@ -61,23 +61,32 @@ extension ResponsesAPIClient {
         continuation.finish()
     }
 
-    private func handleSSELine(
-        _ line: String,
+    private func handleSSEEvent(
+        _ event: SSEEvent,
         messagesCount: Int,
         semanticState: ResponsesStreamState,
         continuation: AsyncThrowingStream<RunStreamElement, Error>.Continuation
     ) async throws -> Bool {
-        try Task.checkCancellation()
-        guard let payload = extractSSEPayload(from: line)
-        else { return false }
+        try await handleSSEPayload(
+            event.data,
+            messagesCount: messagesCount,
+            semanticState: semanticState,
+            continuation: continuation
+        )
+    }
 
+    private func handleSSEPayload(
+        _ payload: String,
+        messagesCount: Int,
+        semanticState: ResponsesStreamState,
+        continuation: AsyncThrowingStream<RunStreamElement, Error>.Continuation
+    ) async throws -> Bool {
         let data = Data(payload.utf8)
-        guard let eventType = try? Self.sseDecoder.decode(
-            EventTypeOnly.self, from: data
-        ) else { return false }
+        let eventType = try Self.sseDecoder.decode(EventTypeOnly.self, from: data).type
 
         return try await dispatchSSEEvent(
-            eventType.type, data: data,
+            eventType,
+            data: data,
             messagesCount: messagesCount,
             semanticState: semanticState,
             continuation: continuation
