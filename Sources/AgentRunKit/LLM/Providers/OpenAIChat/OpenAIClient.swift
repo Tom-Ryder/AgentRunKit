@@ -6,6 +6,7 @@ public struct OpenAIClient: LLMClient, Sendable {
     public let maxTokens: Int
     public let contextWindowSize: Int?
     public let profile: OpenAIChatProfile
+    public let providerIdentifier: ProviderIdentifier
     let apiKey: String?
     let baseURL: URL
     let chatCompletionPath: String
@@ -27,6 +28,7 @@ public struct OpenAIClient: LLMClient, Sendable {
         retryPolicy: RetryPolicy = .default,
         reasoningConfig: ReasoningConfig? = nil,
         profile: OpenAIChatProfile = .compatible,
+        providerIdentifier: ProviderIdentifier? = nil,
         assistantReplayProfile: OpenAIChatAssistantReplayProfile = .conservative
     ) {
         self.apiKey = apiKey
@@ -40,6 +42,7 @@ public struct OpenAIClient: LLMClient, Sendable {
         self.retryPolicy = retryPolicy
         self.reasoningConfig = reasoningConfig
         self.profile = profile
+        self.providerIdentifier = providerIdentifier ?? profile.providerIdentifier
         self.assistantReplayProfile = assistantReplayProfile
     }
 

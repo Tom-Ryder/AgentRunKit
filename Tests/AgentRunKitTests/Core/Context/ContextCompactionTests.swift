@@ -5,6 +5,7 @@ import Testing
 // MARK: - Mock
 
 actor CompactionMockLLMClient: LLMClient {
+    nonisolated let providerIdentifier: ProviderIdentifier = .custom("CompactionMockLLMClient")
     let contextWindowSize: Int?
     private let responses: [AssistantMessage]
     private var callIndex: Int = 0
@@ -49,6 +50,7 @@ actor CompactionMockLLMClient: LLMClient {
 }
 
 private actor CompactionStreamingMockLLMClient: LLMClient {
+    nonisolated let providerIdentifier: ProviderIdentifier = .custom("CompactionStreamingMockLLMClient")
     let contextWindowSize: Int?
     private let streamSequences: [[StreamDelta]]
     private var streamIndex = 0

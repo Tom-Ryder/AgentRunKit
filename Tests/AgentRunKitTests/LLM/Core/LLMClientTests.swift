@@ -3,6 +3,7 @@ import Foundation
 import Testing
 
 actor MockLLMClient: LLMClient {
+    nonisolated let providerIdentifier: ProviderIdentifier = .custom("MockLLMClient")
     private let responses: [AssistantMessage]
     private var callIndex: Int = 0
 
@@ -33,6 +34,7 @@ actor MockLLMClient: LLMClient {
 }
 
 private actor FallbackRequestModeMockLLMClient: LLMClient {
+    nonisolated let providerIdentifier: ProviderIdentifier = .custom("FallbackRequestModeMockLLMClient")
     private let response: AssistantMessage
     private(set) var generateCallCount = 0
 
@@ -769,18 +771,52 @@ struct StreamStallDetectionTests {
 
         let controlled = ControlledByteStream(stream: byteStream)
 
+        let started = ContinuousClock.now
         do {
             try await processSSEStream(
                 bytes: controlled,
-                stallTimeout: .milliseconds(100)
-            ) { _ in false }
-            Issue.record("Expected streamStalled error")
+                stallTimeout: .milliseconds(500)
+            ) { _, _ in false }
+            Issue.record("Expected idle timeout error")
         } catch let error as AgentError {
+            let elapsed = ContinuousClock.now - started
             guard case let .llmError(transport) = error else {
                 Issue.record("Expected llmError, got \(error)")
                 return
             }
-            #expect(transport == .streamStalled)
+            guard case let .streamFailed(.idleTimeout(diagnostics)) = transport else {
+                Issue.record("Expected idle timeout, got \(transport)")
+                return
+            }
+            #expect(diagnostics.eventsObserved == 1)
+            #expect(elapsed >= .milliseconds(450))
+            #expect(elapsed < .seconds(2))
+            #expect(diagnostics.elapsed >= .milliseconds(450))
+            #expect(diagnostics.elapsed < .seconds(2))
+        }
+    }
+
+    @Test
+    func cancelledSSEStreamPropagatesCancellation() async throws {
+        let (byteStream, byteContinuation) = AsyncStream<UInt8>.makeStream()
+        let controlled = ControlledByteStream(stream: byteStream)
+        let task = Task {
+            try await processSSEStream(
+                bytes: controlled,
+                stallTimeout: .seconds(5)
+            ) { _, _ in false }
+        }
+
+        try await Task.sleep(for: .milliseconds(20))
+        task.cancel()
+        byteContinuation.finish()
+
+        do {
+            _ = try await task.value
+            Issue.record("Expected cancellation")
+        } catch is CancellationError {
+        } catch {
+            Issue.record("Expected CancellationError, got \(error)")
         }
     }
 
@@ -799,7 +835,7 @@ struct StreamStallDetectionTests {
         try await processSSEStream(
             bytes: controlled,
             stallTimeout: .seconds(5)
-        ) { event in
+        ) { event, _ in
             await counter.increment()
             return event.data == "[DONE]"
         }
@@ -809,7 +845,7 @@ struct StreamStallDetectionTests {
     }
 
     @Test
-    func streamEndingBeforeHandlerCompletionReturnsFalse() async throws {
+    func streamEndingBeforeHandlerCompletionThrowsProviderTerminationMissing() async throws {
         let (byteStream, byteContinuation) = AsyncStream<UInt8>.makeStream()
 
         for byte in sseChunk(minimalChunkJSON) {
@@ -819,15 +855,23 @@ struct StreamStallDetectionTests {
 
         let controlled = ControlledByteStream(stream: byteStream)
 
-        let completed = try await processSSEStream(
-            bytes: controlled,
-            stallTimeout: nil
-        ) { _ in false }
-        #expect(!completed)
+        do {
+            try await processSSEStream(
+                bytes: controlled,
+                stallTimeout: nil
+            ) { _, _ in false }
+            Issue.record("Expected provider termination missing")
+        } catch let error as AgentError {
+            guard case let .llmError(.streamFailed(.providerTerminationMissing(diagnostics))) = error else {
+                Issue.record("Expected provider termination missing, got \(error)")
+                return
+            }
+            #expect(diagnostics.eventsObserved == 1)
+        }
     }
 
     @Test
-    func streamEndingBeforeHandlerCompletionReturnsFalseWithStallDetection() async throws {
+    func streamEndingBeforeHandlerCompletionThrowsProviderTerminationMissingWithStallDetection() async throws {
         let (byteStream, byteContinuation) = AsyncStream<UInt8>.makeStream()
 
         for byte in sseChunk(minimalChunkJSON) {
@@ -837,11 +881,19 @@ struct StreamStallDetectionTests {
 
         let controlled = ControlledByteStream(stream: byteStream)
 
-        let completed = try await processSSEStream(
-            bytes: controlled,
-            stallTimeout: .seconds(5)
-        ) { _ in false }
-        #expect(!completed)
+        do {
+            try await processSSEStream(
+                bytes: controlled,
+                stallTimeout: .seconds(5)
+            ) { _, _ in false }
+            Issue.record("Expected provider termination missing")
+        } catch let error as AgentError {
+            guard case let .llmError(.streamFailed(.providerTerminationMissing(diagnostics))) = error else {
+                Issue.record("Expected provider termination missing, got \(error)")
+                return
+            }
+            #expect(diagnostics.eventsObserved == 1)
+        }
     }
 }
 

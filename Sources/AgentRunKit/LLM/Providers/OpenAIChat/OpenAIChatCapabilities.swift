@@ -16,6 +16,17 @@ public enum OpenAIChatProfile: Sendable, Equatable, CaseIterable, CustomStringCo
             "compatible"
         }
     }
+
+    var providerIdentifier: ProviderIdentifier {
+        switch self {
+        case .firstParty:
+            .openAI
+        case .openRouter:
+            .openRouter
+        case .compatible:
+            .openAICompatible
+        }
+    }
 }
 
 /// Capabilities that vary by `OpenAIChatProfile`.

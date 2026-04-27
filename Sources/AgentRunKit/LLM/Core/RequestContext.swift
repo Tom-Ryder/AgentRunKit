@@ -104,6 +104,10 @@ public struct ResponsesRequestOptions: Sendable, Equatable {
 public struct RequestContext: Sendable {
     public let extraFields: [String: JSONValue]
     public let onResponse: (@Sendable (HTTPURLResponse) -> Void)?
+    /// Invoked synchronously for each live stream event; replayed events bypass it.
+    public let onStreamEvent: (@Sendable (StreamEvent) -> Void)?
+    /// Invoked at most once for each underlying LLM stream call.
+    public let onStreamComplete: (@Sendable (StreamCompletion) -> Void)?
     public let openAIChat: OpenAIChatRequestOptions?
     public let anthropic: AnthropicRequestOptions?
     public let gemini: GeminiRequestOptions?
@@ -112,6 +116,8 @@ public struct RequestContext: Sendable {
     public init(
         extraFields: [String: JSONValue] = [:],
         onResponse: (@Sendable (HTTPURLResponse) -> Void)? = nil,
+        onStreamEvent: (@Sendable (StreamEvent) -> Void)? = nil,
+        onStreamComplete: (@Sendable (StreamCompletion) -> Void)? = nil,
         openAIChat: OpenAIChatRequestOptions? = nil,
         anthropic: AnthropicRequestOptions? = nil,
         gemini: GeminiRequestOptions? = nil,
@@ -119,6 +125,8 @@ public struct RequestContext: Sendable {
     ) {
         self.extraFields = extraFields
         self.onResponse = onResponse
+        self.onStreamEvent = onStreamEvent
+        self.onStreamComplete = onStreamComplete
         self.openAIChat = openAIChat
         self.anthropic = anthropic
         self.gemini = gemini

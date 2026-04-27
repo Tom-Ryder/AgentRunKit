@@ -22,14 +22,11 @@ extension OpenAIClient {
             urlRequest: urlRequest, session: session, retryPolicy: retryPolicy
         )
         onResponse?(httpResponse)
-        let completed = try await processSSEStream(
+        try await processSSEStream(
             bytes: bytes,
             stallTimeout: retryPolicy.streamStallTimeout
-        ) { [self] event in
+        ) { [self] event, _ in
             try handleSSEEvent(event, continuation: continuation)
-        }
-        guard completed else {
-            throw AgentError.llmError(.streamStalled)
         }
         continuation.finish()
     }

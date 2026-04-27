@@ -575,7 +575,12 @@ struct ResponsesStreamingFailureSafetyTests {
 
         #expect(result.elements.count == 1)
         let error = try #require(result.error)
-        #expect(error as? AgentError == .malformedStream(.finalizedSemanticStateDiverged))
+        guard case let .llmError(.streamFailed(.malformedStream(reason, diagnostics))) = error as? AgentError else {
+            Issue.record("Expected malformed stream, got \(error)")
+            return
+        }
+        #expect(reason == .finalizedSemanticStateDiverged)
+        #expect(diagnostics.eventsObserved == 2)
         #expect(await client.lastResponseId == "resp_prev")
         #expect(await client.lastMessageCount == 7)
     }
@@ -598,7 +603,11 @@ struct ResponsesStreamingFailureSafetyTests {
         }
         #expect(delta == .content("Hello"))
         let error = try #require(result.error as? AgentError)
-        #expect(error == .malformedStream(.responsesStreamIncomplete))
+        guard case let .llmError(.streamFailed(.providerTerminationMissing(diagnostics))) = error else {
+            Issue.record("Expected provider termination missing, got \(error)")
+            return
+        }
+        #expect(diagnostics.eventsObserved == 1)
         #expect(await client.lastResponseId == "resp_prev")
         #expect(await client.lastMessageCount == 7)
     }
@@ -754,10 +763,12 @@ struct ResponsesStreamingFailureSafetyTests {
                 Issue.record("Expected llmError, got \(error)")
                 return
             }
-            if case let .other(message) = transport {
+            if case let .streamFailed(.providerError(provider, code, message)) = transport {
+                #expect(provider == .openAIResponses)
+                #expect(code == "rate_limit")
                 #expect(message.contains("Rate limit"))
             } else {
-                Issue.record("Expected .other, got \(transport)")
+                Issue.record("Expected providerError, got \(transport)")
             }
         }
     }

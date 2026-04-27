@@ -18,13 +18,10 @@ struct GeminiStreamingTests {
         let streamPair = AsyncThrowingStream<StreamDelta, Error>.makeStream()
         let byteStream = makeByteStream(from: sseLines)
 
-        let completed = try await processSSEStream(bytes: byteStream, stallTimeout: nil) { event in
+        try await processSSEStream(bytes: byteStream, stallTimeout: nil) { event, _ in
             try await geminiClient.handleSSEEvent(
                 event, state: state, continuation: streamPair.continuation
             )
-        }
-        guard completed else {
-            throw AgentError.llmError(.streamStalled)
         }
         streamPair.continuation.finish()
 
@@ -76,7 +73,7 @@ struct GeminiStreamingTests {
     func multilineSSEDataYieldsContent() async throws {
         let bytes = Array("""
         data: {"candidates":[{"content":{"role":"model",
-        data: "parts":[{"text":"Hello"}]}}]}
+        data: "parts":[{"text":"Hello"}]},"finishReason":"STOP"}]}
 
         """.utf8)
         let (byteStream, byteContinuation) = AsyncStream<UInt8>.makeStream()
@@ -89,7 +86,7 @@ struct GeminiStreamingTests {
         let state = GeminiStreamState()
         let streamPair = AsyncThrowingStream<StreamDelta, Error>.makeStream()
 
-        try await processSSEStream(bytes: ControlledByteStream(stream: byteStream), stallTimeout: nil) { event in
+        try await processSSEStream(bytes: ControlledByteStream(stream: byteStream), stallTimeout: nil) { event, _ in
             try await client.handleSSEEvent(event, state: state, continuation: streamPair.continuation)
         }
         streamPair.continuation.finish()
@@ -120,7 +117,7 @@ struct GeminiStreamingTests {
         let result = await collectStreamResult(client.stream(messages: [.user("Hi")], tools: [], requestContext: nil))
 
         #expect(result.deltas == [.content("partial")])
-        assertStreamStalled(result.error)
+        assertProviderTerminationMissing(result.error)
     }
 
     @Test
@@ -376,19 +373,20 @@ struct GeminiStreamingTests {
         let continuation = AsyncThrowingStream<StreamDelta, Error>.makeStream()
 
         do {
-            try await processSSEStream(bytes: makeByteStream(from: lines), stallTimeout: nil) { event in
+            try await processSSEStream(bytes: makeByteStream(from: lines), stallTimeout: nil) { event, _ in
                 try await client.handleSSEEvent(event, state: state, continuation: continuation.continuation)
             }
             Issue.record("Expected error")
         } catch let error as AgentError {
             guard case let .llmError(transport) = error,
-                  case let .other(msg) = transport
+                  case let .streamFailed(.providerError(provider, code, message)) = transport
             else {
-                Issue.record("Expected .other, got \(error)")
+                Issue.record("Expected provider error, got \(error)")
                 return
             }
-            #expect(msg.contains("RESOURCE_EXHAUSTED"))
-            #expect(msg.contains("Rate limit exceeded"))
+            #expect(provider == .gemini)
+            #expect(code == "RESOURCE_EXHAUSTED")
+            #expect(message == "Rate limit exceeded")
         }
     }
 }

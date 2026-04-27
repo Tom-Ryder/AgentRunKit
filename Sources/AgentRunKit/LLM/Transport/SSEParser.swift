@@ -92,62 +92,105 @@ func buildJSONPostRequest(
 func processSSEStream<S: AsyncSequence & Sendable>(
     bytes: S,
     stallTimeout: Duration?,
-    handler: @escaping @Sendable (SSEEvent) async throws -> Bool
-) async throws -> Bool where S.Element == UInt8 {
+    handler: @escaping @Sendable (SSEEvent, StreamFailureDiagnostics) async throws -> Bool
+) async throws -> StreamFailureDiagnostics where S.Element == UInt8 {
+    let progress = StreamProgress()
+    let started = ContinuousClock.now
+
     if let stallTimeout {
-        return try await withThrowingTaskGroup(of: Bool.self) { group in
-            let watchdog = StallWatchdog()
-
+        return try await withThrowingTaskGroup(of: StreamFailureDiagnostics.self) { group in
+            defer { group.cancelAll() }
             group.addTask {
-                while !Task.isCancelled {
-                    let snapshot = await watchdog.lastActivity
-                    try await Task.sleep(for: stallTimeout)
-                    let current = await watchdog.lastActivity
-                    if current == snapshot {
-                        throw AgentError.llmError(.streamStalled)
+                while true {
+                    try Task.checkCancellation()
+                    let lastActivity = await progress.lastActivity
+                    let elapsed = ContinuousClock.now - lastActivity
+                    if elapsed >= stallTimeout {
+                        let diagnostics = await progress.snapshot(elapsed: ContinuousClock.now - started)
+                        throw AgentError.llmError(.streamFailed(.idleTimeout(
+                            diagnostics: diagnostics
+                        )))
                     }
+                    try await Task.sleep(for: stallTimeout - elapsed)
                 }
-                return false
             }
 
             group.addTask {
-                var parser = SSEEventParser()
-                for try await line in UnboundedLines(source: bytes) {
-                    await watchdog.recordActivity()
-                    if let event = parser.appendLine(line),
-                       try await handler(event) {
-                        return true
-                    }
-                }
-                if let event = parser.finish() {
-                    return try await handler(event)
-                }
-                return false
+                try await runSSEParser(bytes: bytes, progress: progress, started: started, handler: handler)
             }
 
-            let completed = try await group.next() ?? false
-            group.cancelAll()
-            return completed
+            guard let result = try await group.next() else {
+                let diagnostics = await progress.snapshot(elapsed: ContinuousClock.now - started)
+                throw AgentError.llmError(.streamFailed(.providerTerminationMissing(
+                    diagnostics: diagnostics
+                )))
+            }
+            return result
         }
     }
-    var parser = SSEEventParser()
-    for try await line in UnboundedLines(source: bytes) {
-        guard let event = parser.appendLine(line) else { continue }
-        guard try await !handler(event) else {
-            return true
-        }
-    }
-    if let event = parser.finish() {
-        return try await handler(event)
-    }
-    return false
+
+    return try await runSSEParser(bytes: bytes, progress: progress, started: started, handler: handler)
 }
 
-actor StallWatchdog {
+private func runSSEParser<S: AsyncSequence & Sendable>(
+    bytes: S,
+    progress: StreamProgress,
+    started: ContinuousClock.Instant,
+    handler: @Sendable (SSEEvent, StreamFailureDiagnostics) async throws -> Bool
+) async throws -> StreamFailureDiagnostics where S.Element == UInt8 {
+    var parser = SSEEventParser()
+    do {
+        for try await line in UnboundedLines(source: bytes) {
+            await progress.recordActivity()
+            guard let event = parser.appendLine(line) else { continue }
+            await progress.recordEvent(eventName: event.event)
+            let diagnostics = await progress.snapshot(elapsed: ContinuousClock.now - started)
+            if try await handler(event, diagnostics) {
+                return diagnostics
+            }
+        }
+        if let event = parser.finish() {
+            await progress.recordEvent(eventName: event.event)
+            let diagnostics = await progress.snapshot(elapsed: ContinuousClock.now - started)
+            if try await handler(event, diagnostics) {
+                return diagnostics
+            }
+        }
+        try Task.checkCancellation()
+        let diagnostics = await progress.snapshot(elapsed: ContinuousClock.now - started)
+        throw AgentError.llmError(.streamFailed(.providerTerminationMissing(
+            diagnostics: diagnostics
+        )))
+    } catch is CancellationError {
+        throw CancellationError()
+    } catch let urlError as URLError {
+        let diagnostics = await progress.snapshot(elapsed: ContinuousClock.now - started)
+        throw AgentError.llmError(.streamFailed(.midStreamTransportFailure(
+            code: urlError.code,
+            diagnostics: diagnostics
+        )))
+    }
+}
+
+actor StreamProgress {
     private(set) var lastActivity: ContinuousClock.Instant = .now
+    private var eventsObserved: Int = 0
+    private var lastEvent: String?
 
     func recordActivity() {
         lastActivity = .now
+    }
+
+    func recordEvent(eventName: String?) {
+        lastActivity = .now
+        eventsObserved += 1
+        if let eventName, !eventName.isEmpty {
+            lastEvent = eventName
+        }
+    }
+
+    func snapshot(elapsed: Duration) -> StreamFailureDiagnostics {
+        StreamFailureDiagnostics(elapsed: elapsed, eventsObserved: eventsObserved, lastEvent: lastEvent)
     }
 }
 

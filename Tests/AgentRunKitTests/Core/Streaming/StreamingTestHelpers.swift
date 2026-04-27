@@ -2,6 +2,7 @@
 import Foundation
 
 actor StreamingMockLLMClient: LLMClient {
+    nonisolated let providerIdentifier: ProviderIdentifier = .custom("StreamingMockLLMClient")
     let contextWindowSize: Int?
     private let generateResponses: [AssistantMessage]
     private let streamSequences: [[StreamDelta]]
@@ -60,6 +61,7 @@ actor StreamingMockLLMClient: LLMClient {
 }
 
 actor ContentOnlyTerminatingMockLLMClient: LLMClient, ContentOnlyTerminatingClient {
+    nonisolated let providerIdentifier: ProviderIdentifier = .custom("ContentOnlyTerminatingMockLLMClient")
     private let inner: StreamingMockLLMClient
     private(set) var invocationCount = 0
 
@@ -114,6 +116,7 @@ actor ContentOnlyTerminatingMockLLMClient: LLMClient, ContentOnlyTerminatingClie
 }
 
 actor GenerateOnlyMockLLMClient: LLMClient {
+    nonisolated let providerIdentifier: ProviderIdentifier = .custom("GenerateOnlyMockLLMClient")
     private let responses: [AssistantMessage]
     private var callIndex = 0
 
@@ -144,6 +147,7 @@ actor GenerateOnlyMockLLMClient: LLMClient {
 }
 
 actor CapturingStreamingMockLLMClient: LLMClient {
+    nonisolated let providerIdentifier: ProviderIdentifier = .custom("CapturingStreamingMockLLMClient")
     private let streamSequences: [[StreamDelta]]
     private var streamIndex = 0
     private(set) var allCapturedMessages: [[ChatMessage]] = []
@@ -195,6 +199,7 @@ actor CapturingStreamingMockLLMClient: LLMClient {
 }
 
 actor ContinuityStreamingMockLLMClient: LLMClient, HistoryRewriteAwareClient {
+    nonisolated let providerIdentifier: ProviderIdentifier = .custom("ContinuityStreamingMockLLMClient")
     private let streamSequences: [[RunStreamElement]]
     private let streamErrors: [(any Error)?]
     private var streamIndex = 0
@@ -269,6 +274,7 @@ actor ContinuityStreamingMockLLMClient: LLMClient, HistoryRewriteAwareClient {
 }
 
 actor RequestModeCapturingMockLLMClient: LLMClient, HistoryRewriteAwareClient {
+    nonisolated let providerIdentifier: ProviderIdentifier = .custom("RequestModeCapturingMockLLMClient")
     private let streamSequences: [[StreamDelta]]
     private var streamIndex = 0
     private(set) var capturedRequestModes: [RunRequestMode] = []
@@ -344,6 +350,7 @@ actor StreamingEventCollector {
 }
 
 actor ControllableStreamingMockLLMClient: LLMClient {
+    nonisolated let providerIdentifier: ProviderIdentifier = .custom("ControllableStreamingMockLLMClient")
     private var deltasContinuation: AsyncStream<StreamDelta>.Continuation?
     private var onStreamStarted: (() -> Void)?
 

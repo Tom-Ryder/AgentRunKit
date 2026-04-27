@@ -420,7 +420,7 @@ extension Agent {
             compactor: &compactor,
             historyWasRewrittenLocally: &state.historyWasRewrittenLocally,
             continuation: continuation,
-            requestContext: iterationContext.options.requestContext
+            options: iterationContext.options
         )
         state.messages.append(.assistant(iteration.toAssistantMessage()))
         yieldIterationCompletedIfPossible(

@@ -11,6 +11,7 @@ private func makeNoopTool() throws -> Tool<NoopParams, NoopOutput, EmptyContext>
 }
 
 private actor ExtractionMockLLMClient: LLMClient {
+    nonisolated let providerIdentifier: ProviderIdentifier = .custom("ExtractionMockLLMClient")
     let contextWindowSize: Int?
     private let responses: [AssistantMessage]
     private var callIndex = 0

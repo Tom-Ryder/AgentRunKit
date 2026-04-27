@@ -129,7 +129,7 @@ struct VertexGoogleStreamingCompletionTests {
         let result = await collectStreamResult(client.stream(messages: [.user("Hi")], tools: [], requestContext: nil))
 
         #expect(result.deltas == [.content("partial")])
-        assertStreamStalled(result.error)
+        assertProviderTerminationMissing(result.error)
     }
 }
 

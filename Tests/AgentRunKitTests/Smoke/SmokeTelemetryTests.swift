@@ -22,6 +22,47 @@ struct SmokeTelemetryTests {
         #expect(classification.bodyExcerpt?.contains("invalid_request_error") == true)
     }
 
+    @Test func classifierPreservesStreamFailureTaxonomy() {
+        let cases: [(TransportError, SmokeFailureKind)] = [
+            (.streamFailed(.idleTimeout(diagnostics: .empty)), .idleTimeout),
+            (.streamFailed(.providerTerminationMissing(diagnostics: .empty)), .providerTerminationMissing),
+            (.streamFailed(.finishedDeltaMissing(diagnostics: .empty)), .finishedDeltaMissing),
+            (
+                .streamFailed(.midStreamTransportFailure(code: .timedOut, diagnostics: .empty)),
+                .midStreamTransportFailure
+            ),
+            (
+                .streamFailed(.providerError(provider: .anthropic, code: nil, message: "overloaded")),
+                .providerError
+            ),
+            (
+                .streamFailed(.malformedStream(
+                    reason: .finalizedSemanticStateDiverged,
+                    diagnostics: .empty
+                )),
+                .malformedStream
+            ),
+        ]
+
+        for (error, expectedKind) in cases {
+            let classification = classifySmokeFailure(AgentError.llmError(error))
+            #expect(classification.kind == expectedKind)
+        }
+
+        let providerError = classifySmokeFailure(AgentError.llmError(.streamFailed(.providerError(
+            provider: .anthropic,
+            code: "overloaded_error",
+            message: "overloaded"
+        ))))
+        #expect(providerError.bodyExcerpt?.contains("overloaded") == true)
+
+        let malformed = classifySmokeFailure(AgentError.llmError(.streamFailed(.malformedStream(
+            reason: .finalizedSemanticStateDiverged,
+            diagnostics: .empty
+        ))))
+        #expect(malformed.bodyExcerpt?.contains("Finalized semantic state") == true)
+    }
+
     @Test func classifierCapturesStructuredOutputRawText() {
         let classification = classifySmokeFailure(
             SmokeStructuredOutputFailure(

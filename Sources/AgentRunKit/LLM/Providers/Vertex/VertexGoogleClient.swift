@@ -4,6 +4,7 @@ import Foundation
 public struct VertexGoogleClient: LLMClient, Sendable {
     public let modelIdentifier: String?
     public let contextWindowSize: Int?
+    public let providerIdentifier: ProviderIdentifier = .vertexGoogle
 
     let gemini: GeminiClient
     private let projectID: String
@@ -150,16 +151,13 @@ public struct VertexGoogleClient: LLMClient, Sendable {
 
         let state = GeminiStreamState()
 
-        let completed = try await processSSEStream(
+        try await processSSEStream(
             bytes: bytes,
             stallTimeout: retryPolicy.streamStallTimeout
-        ) { event in
+        ) { event, _ in
             try await gemini.handleSSEEvent(
-                event, state: state, continuation: continuation
+                event, state: state, providerIdentifier: providerIdentifier, continuation: continuation
             )
-        }
-        guard completed else {
-            throw AgentError.llmError(.streamStalled)
         }
         continuation.finish()
     }

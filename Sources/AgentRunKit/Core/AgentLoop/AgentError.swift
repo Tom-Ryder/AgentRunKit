@@ -21,7 +21,7 @@ public enum MalformedHistoryReason: Sendable, Equatable, CustomStringConvertible
     }
 }
 
-/// Describes how an SSE stream was malformed.
+/// Describes how a streamed LLM response was malformed.
 public enum MalformedStreamReason: Sendable, Equatable, CustomStringConvertible {
     case toolCallDeltaWithoutStart(index: Int)
     case missingToolCallId(index: Int)
@@ -29,7 +29,6 @@ public enum MalformedStreamReason: Sendable, Equatable, CustomStringConvertible 
     case orphanedToolCallArguments(indices: [Int])
     case conflictingAssistantContinuity
     case finalizedSemanticStateDiverged
-    case responsesStreamIncomplete
 
     public var description: String {
         switch self {
@@ -45,8 +44,6 @@ public enum MalformedStreamReason: Sendable, Equatable, CustomStringConvertible 
             "Conflicting assistant continuity payloads received for one streamed turn"
         case .finalizedSemanticStateDiverged:
             "Finalized semantic state contradicted previously emitted semantic deltas"
-        case .responsesStreamIncomplete:
-            "Responses stream ended before completed response"
         }
     }
 }
@@ -62,7 +59,6 @@ public enum AgentError: Error, Sendable, Equatable, LocalizedError {
     case toolExecutionFailed(tool: String, message: String)
     case llmError(TransportError)
     case malformedHistory(MalformedHistoryReason)
-    case malformedStream(MalformedStreamReason)
     case schemaInferenceFailed(type: String, message: String)
     case maxDepthExceeded(depth: Int)
     case contextBudgetWindowSizeUnavailable
@@ -87,8 +83,6 @@ public enum AgentError: Error, Sendable, Equatable, LocalizedError {
             "LLM request failed: \(transportError)"
         case let .malformedHistory(reason):
             "Malformed history: \(reason)"
-        case let .malformedStream(reason):
-            "Malformed stream: \(reason)"
         case let .schemaInferenceFailed(type, message):
             "Schema inference failed for '\(type)': \(message)"
         case let .maxDepthExceeded(depth):
@@ -109,7 +103,6 @@ public enum AgentError: Error, Sendable, Equatable, LocalizedError {
         case let .structuredOutputDecodingFailed(message): "Error: Failed to decode structured output: \(message)"
         case let .llmError(transportError): "Error: LLM request failed: \(transportError)"
         case let .malformedHistory(reason): "Error: Malformed history: \(reason)"
-        case let .malformedStream(reason): "Error: Malformed stream: \(reason)"
         case let .schemaInferenceFailed(type, message): "Error: Schema inference failed for '\(type)': \(message)"
         case let .maxDepthExceeded(depth): "Error: Sub-agent max depth exceeded (current depth: \(depth))."
         case .contextBudgetWindowSizeUnavailable:

@@ -367,6 +367,7 @@ private struct EchoOutput: Codable {
 }
 
 private actor AllCallsCapturingMockLLMClient: LLMClient {
+    nonisolated let providerIdentifier: ProviderIdentifier = .custom("AllCallsCapturingMockLLMClient")
     private let responses: [AssistantMessage]
     private var callIndex: Int = 0
     private(set) var allCapturedMessages: [[ChatMessage]] = []

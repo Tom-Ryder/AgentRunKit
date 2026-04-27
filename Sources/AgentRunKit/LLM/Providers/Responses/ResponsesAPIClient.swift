@@ -5,6 +5,7 @@ public actor ResponsesAPIClient: LLMClient, HistoryRewriteAwareClient {
     public nonisolated let modelIdentifier: String?
     public nonisolated let maxOutputTokens: Int?
     public nonisolated let contextWindowSize: Int?
+    public nonisolated let providerIdentifier: ProviderIdentifier = .openAIResponses
     nonisolated let apiKey: String?
     nonisolated let baseURL: URL
     nonisolated let responsesPath: String

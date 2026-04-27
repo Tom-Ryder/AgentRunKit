@@ -84,6 +84,7 @@ private struct AudioAccumulator {
 
 private struct StreamAccumulation {
     let eventFactory: StreamEventFactory
+    let started: ContinuousClock.Instant = .now
     var content = ""
     var reasoning = ""
     var reasoningDetails = ReasoningDetailAccumulator()
@@ -93,17 +94,25 @@ private struct StreamAccumulation {
     var usage: TokenUsage?
     var continuity: AssistantContinuity?
     var yieldedEvent = false
+    var eventsObserved = 0
     var sawFinished = false
 
     mutating func apply(
         _ input: RunStreamElement,
         policy: StreamPolicy,
         totalUsage: inout TokenUsage,
-        continuation: AsyncThrowingStream<StreamEvent, Error>.Continuation
+        continuation: AsyncThrowingStream<StreamEvent, Error>.Continuation,
+        eventObserver: (@Sendable (StreamEvent) -> Void)?
     ) throws {
         switch input {
         case let .delta(delta):
-            apply(delta, policy: policy, totalUsage: &totalUsage, continuation: continuation)
+            apply(
+                delta,
+                policy: policy,
+                totalUsage: &totalUsage,
+                continuation: continuation,
+                eventObserver: eventObserver
+            )
         case let .finalizedContinuity(continuity):
             try setFinalizedContinuity(continuity)
         }
@@ -113,21 +122,23 @@ private struct StreamAccumulation {
         _ delta: StreamDelta,
         policy: StreamPolicy,
         totalUsage: inout TokenUsage,
-        continuation: AsyncThrowingStream<StreamEvent, Error>.Continuation
+        continuation: AsyncThrowingStream<StreamEvent, Error>.Continuation,
+        eventObserver: (@Sendable (StreamEvent) -> Void)?
     ) {
         switch delta {
         case let .content(text):
             content += text
-            yieldedEvent = true
-            continuation.yield(eventFactory.make(.delta(text)))
+            yield(.delta(text), continuation: continuation, eventObserver: eventObserver)
         case let .reasoning(text):
             reasoning += text
-            yieldedEvent = true
-            continuation.yield(eventFactory.make(.reasoningDelta(text)))
+            yield(.reasoningDelta(text), continuation: continuation, eventObserver: eventObserver)
         case let .reasoningDetails(details):
             reasoningDetails.append(details)
         case let .toolCallStart(index, id, name, kind):
-            startToolCall(index: index, id: id, name: name, kind: kind, policy: policy, continuation: continuation)
+            startToolCall(
+                index: index, id: id, name: name, kind: kind, policy: policy,
+                continuation: continuation, eventObserver: eventObserver
+            )
         case let .toolCallDelta(index, arguments):
             appendToolCallDelta(index: index, arguments: arguments)
         case let .audioStarted(id, expiresAt):
@@ -135,12 +146,10 @@ private struct StreamAccumulation {
             audio.expiresAt = expiresAt
         case let .audioData(data):
             audio.data.append(data)
-            yieldedEvent = true
-            continuation.yield(eventFactory.make(.audioData(data)))
+            yield(.audioData(data), continuation: continuation, eventObserver: eventObserver)
         case let .audioTranscript(text):
             audio.transcript += text
-            yieldedEvent = true
-            continuation.yield(eventFactory.make(.audioTranscript(text)))
+            yield(.audioTranscript(text), continuation: continuation, eventObserver: eventObserver)
         case let .finished(iterationUsage):
             sawFinished = true
             guard let iterationUsage else { return }
@@ -151,16 +160,20 @@ private struct StreamAccumulation {
 
     private mutating func setFinalizedContinuity(_ newValue: AssistantContinuity) throws {
         guard continuity == nil else {
-            throw AgentError.malformedStream(.conflictingAssistantContinuity)
+            throw streamFailure(reason: .conflictingAssistantContinuity)
         }
         continuity = newValue
     }
 
-    func finishAudio(
-        continuation: AsyncThrowingStream<StreamEvent, Error>.Continuation
+    mutating func finishAudio(
+        continuation: AsyncThrowingStream<StreamEvent, Error>.Continuation,
+        eventObserver: (@Sendable (StreamEvent) -> Void)?
     ) {
         if let event = audio.finishedEvent(eventFactory: eventFactory) {
+            yieldedEvent = true
+            eventsObserved += 1
             continuation.yield(event)
+            eventObserver?(event)
         }
     }
 
@@ -185,7 +198,8 @@ private struct StreamAccumulation {
         name: String,
         kind: ToolCallKind,
         policy: StreamPolicy,
-        continuation: AsyncThrowingStream<StreamEvent, Error>.Continuation
+        continuation: AsyncThrowingStream<StreamEvent, Error>.Continuation,
+        eventObserver: (@Sendable (StreamEvent) -> Void)?
     ) {
         guard toolCalls[index] == nil else { return }
         var accumulator = ToolCallAccumulator(id: id, name: name, kind: kind)
@@ -194,8 +208,7 @@ private struct StreamAccumulation {
         }
         toolCalls[index] = accumulator
         if policy.shouldEmitToolStart(name: name) {
-            yieldedEvent = true
-            continuation.yield(eventFactory.make(.toolCallStarted(name: name, id: id)))
+            yield(.toolCallStarted(name: name, id: id), continuation: continuation, eventObserver: eventObserver)
         }
     }
 
@@ -205,6 +218,34 @@ private struct StreamAccumulation {
         } else {
             pendingArguments[index, default: ""] += arguments
         }
+    }
+
+    var diagnostics: StreamFailureDiagnostics {
+        StreamFailureDiagnostics(
+            elapsed: ContinuousClock.now - started,
+            eventsObserved: eventsObserved,
+            lastEvent: nil
+        )
+    }
+
+    var completionDiagnostics: StreamCompletionDiagnostics {
+        StreamCompletionDiagnostics(elapsed: ContinuousClock.now - started, eventsObserved: eventsObserved)
+    }
+
+    func streamFailure(reason: MalformedStreamReason) -> AgentError {
+        AgentError.llmError(.streamFailed(.malformedStream(reason: reason, diagnostics: diagnostics)))
+    }
+
+    private mutating func yield(
+        _ kind: StreamEvent.Kind,
+        continuation: AsyncThrowingStream<StreamEvent, Error>.Continuation,
+        eventObserver: (@Sendable (StreamEvent) -> Void)?
+    ) {
+        yieldedEvent = true
+        eventsObserved += 1
+        let event = eventFactory.make(kind)
+        continuation.yield(event)
+        eventObserver?(event)
     }
 }
 
@@ -241,6 +282,8 @@ struct StreamProcessor {
         requestMode: RunRequestMode = .auto
     ) async throws -> StreamIteration {
         var state = StreamAccumulation(eventFactory: eventFactory)
+        let eventObserver = requestContext?.onStreamEvent
+        let completionObserver = requestContext?.onStreamComplete
 
         do {
             for try await input in client.streamForRun(
@@ -250,24 +293,52 @@ struct StreamProcessor {
                 requestMode: requestMode
             ) {
                 try Task.checkCancellation()
-                try state.apply(input, policy: policy, totalUsage: &totalUsage, continuation: continuation)
+                try state.apply(
+                    input,
+                    policy: policy,
+                    totalUsage: &totalUsage,
+                    continuation: continuation,
+                    eventObserver: eventObserver
+                )
             }
+        } catch is CancellationError {
+            emittedOutput = state.yieldedEvent
+            completionObserver?(.cancelled)
+            throw CancellationError()
+        } catch let AgentError.llmError(.streamFailed(failure)) {
+            emittedOutput = state.yieldedEvent
+            completionObserver?(.failed(failure))
+            throw AgentError.llmError(.streamFailed(failure))
         } catch {
             emittedOutput = state.yieldedEvent
             throw error
         }
 
+        if Task.isCancelled {
+            emittedOutput = state.yieldedEvent
+            completionObserver?(.cancelled)
+            throw CancellationError()
+        }
+
         guard state.pendingArguments.isEmpty else {
             emittedOutput = state.yieldedEvent
-            throw AgentError.malformedStream(.orphanedToolCallArguments(indices: state.pendingArguments.keys.sorted()))
+            let failure = StreamFailure.malformedStream(
+                reason: .orphanedToolCallArguments(indices: state.pendingArguments.keys.sorted()),
+                diagnostics: state.diagnostics
+            )
+            completionObserver?(.failed(failure))
+            throw AgentError.llmError(.streamFailed(failure))
         }
         guard state.sawFinished else {
             emittedOutput = state.yieldedEvent
-            throw AgentError.llmError(.streamStalled)
+            let failure = StreamFailure.finishedDeltaMissing(diagnostics: state.diagnostics)
+            completionObserver?(.failed(failure))
+            throw AgentError.llmError(.streamFailed(failure))
         }
 
         emittedOutput = true
-        state.finishAudio(continuation: continuation)
+        state.finishAudio(continuation: continuation, eventObserver: eventObserver)
+        completionObserver?(.success(diagnostics: state.completionDiagnostics))
         return state.iteration
     }
 }

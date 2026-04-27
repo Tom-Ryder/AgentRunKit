@@ -41,22 +41,15 @@ extension ResponsesAPIClient {
         stallTimeout: Duration?,
         continuation: AsyncThrowingStream<RunStreamElement, Error>.Continuation
     ) async throws where S.Element == UInt8 {
-        let completionState = ResponsesStreamCompletionState()
         let semanticState = ResponsesStreamState()
-        try await processSSEStream(bytes: bytes, stallTimeout: stallTimeout) { [self] event in
-            let didComplete = try await handleSSEEvent(
+        try await processSSEStream(bytes: bytes, stallTimeout: stallTimeout) { [self] event, diagnostics in
+            try await handleSSEEvent(
                 event,
                 messagesCount: messagesCount,
                 semanticState: semanticState,
+                diagnostics: diagnostics,
                 continuation: continuation
             )
-            if didComplete {
-                await completionState.markCompleted()
-            }
-            return didComplete
-        }
-        guard await completionState.isCompleted else {
-            throw AgentError.malformedStream(.responsesStreamIncomplete)
         }
         continuation.finish()
     }
@@ -65,12 +58,14 @@ extension ResponsesAPIClient {
         _ event: SSEEvent,
         messagesCount: Int,
         semanticState: ResponsesStreamState,
+        diagnostics: StreamFailureDiagnostics,
         continuation: AsyncThrowingStream<RunStreamElement, Error>.Continuation
     ) async throws -> Bool {
         try await handleSSEPayload(
             event.data,
             messagesCount: messagesCount,
             semanticState: semanticState,
+            diagnostics: diagnostics,
             continuation: continuation
         )
     }
@@ -79,6 +74,7 @@ extension ResponsesAPIClient {
         _ payload: String,
         messagesCount: Int,
         semanticState: ResponsesStreamState,
+        diagnostics: StreamFailureDiagnostics,
         continuation: AsyncThrowingStream<RunStreamElement, Error>.Continuation
     ) async throws -> Bool {
         let data = Data(payload.utf8)
@@ -89,6 +85,7 @@ extension ResponsesAPIClient {
             data: data,
             messagesCount: messagesCount,
             semanticState: semanticState,
+            diagnostics: diagnostics,
             continuation: continuation
         )
     }
@@ -98,6 +95,7 @@ extension ResponsesAPIClient {
         data: Data,
         messagesCount: Int,
         semanticState: ResponsesStreamState,
+        diagnostics: StreamFailureDiagnostics,
         continuation: AsyncThrowingStream<RunStreamElement, Error>.Continuation
     ) async throws -> Bool {
         switch type {
@@ -137,6 +135,7 @@ extension ResponsesAPIClient {
                 data: data,
                 messagesCount: messagesCount,
                 semanticState: semanticState,
+                diagnostics: diagnostics,
                 continuation: continuation
             )
         case "response.failed":
@@ -253,6 +252,7 @@ extension ResponsesAPIClient {
         data: Data,
         messagesCount: Int,
         semanticState: ResponsesStreamState,
+        diagnostics: StreamFailureDiagnostics,
         continuation: AsyncThrowingStream<RunStreamElement, Error>.Continuation
     ) async throws -> Bool {
         let event: CompletedEvent
@@ -268,7 +268,8 @@ extension ResponsesAPIClient {
         let projection = projectResponse(resp)
         let reconciliationDeltas = try await semanticState.reconciliationDeltas(
             response: resp,
-            projection: projection
+            projection: projection,
+            diagnostics: diagnostics
         )
         for delta in reconciliationDeltas {
             continuation.yield(.delta(delta))
@@ -291,9 +292,11 @@ extension ResponsesAPIClient {
         guard let error = event.response.error else {
             throw AgentError.llmError(.other("Response failed"))
         }
-        throw AgentError.llmError(
-            .other("\(error.code): \(error.message)")
-        )
+        throw AgentError.llmError(.streamFailed(.providerError(
+            provider: .openAIResponses,
+            code: error.code,
+            message: error.message
+        )))
     }
 }
 

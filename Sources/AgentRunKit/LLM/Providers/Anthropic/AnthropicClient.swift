@@ -5,6 +5,7 @@ public struct AnthropicClient: LLMClient, Sendable {
     public let modelIdentifier: String?
     public let maxTokens: Int
     public let contextWindowSize: Int?
+    public let providerIdentifier: ProviderIdentifier = .anthropic
     let apiKey: String
     let baseURL: URL
     let additionalHeaders: @Sendable () -> [String: String]

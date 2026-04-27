@@ -80,7 +80,7 @@ extension Agent {
         compactor: inout ContextCompactor,
         historyWasRewrittenLocally: inout Bool,
         continuation: AsyncThrowingStream<StreamEvent, Error>.Continuation,
-        requestContext: RequestContext?
+        options: InvocationOptions
     ) async throws -> StreamIteration {
         var attemptedReactiveRecovery = false
 
@@ -92,7 +92,7 @@ extension Agent {
                     totalUsage: &totalUsage,
                     emittedOutput: &emittedOutput,
                     continuation: continuation,
-                    requestContext: requestContext,
+                    requestContext: options.requestContext,
                     requestMode: requestMode(for: historyWasRewrittenLocally)
                 )
                 historyWasRewrittenLocally = false

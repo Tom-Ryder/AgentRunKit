@@ -356,7 +356,7 @@ struct OrphanedStreamDeltaTests {
             for try await _ in agent.stream(userMessage: "Hi", context: EmptyContext()) {}
             Issue.record("Expected malformedStream error for orphaned deltas")
         } catch let error as AgentError {
-            guard case let .malformedStream(reason) = error else {
+            guard case let .llmError(.streamFailed(.malformedStream(reason, _))) = error else {
                 Issue.record("Expected malformedStream, got \(error)")
                 return
             }
@@ -383,7 +383,7 @@ struct OrphanedStreamDeltaTests {
             for try await _ in agent.stream(userMessage: "Hi", context: EmptyContext()) {}
             Issue.record("Expected malformedStream error")
         } catch let error as AgentError {
-            guard case let .malformedStream(reason) = error else {
+            guard case let .llmError(.streamFailed(.malformedStream(reason, _))) = error else {
                 Issue.record("Expected malformedStream, got \(error)")
                 return
             }
@@ -416,7 +416,7 @@ struct OrphanedStreamDeltaTests {
             for try await _ in agent.stream(userMessage: "Hi", context: EmptyContext()) {}
             Issue.record("Expected malformedStream error")
         } catch let error as AgentError {
-            guard case let .malformedStream(reason) = error else {
+            guard case let .llmError(.streamFailed(.malformedStream(reason, _))) = error else {
                 Issue.record("Expected malformedStream, got \(error)")
                 return
             }
@@ -450,7 +450,7 @@ struct ConflictingAssistantContinuityTests {
             for try await _ in agent.stream(userMessage: "Hi", context: EmptyContext()) {}
             Issue.record("Expected malformedStream error")
         } catch let error as AgentError {
-            guard case let .malformedStream(reason) = error else {
+            guard case let .llmError(.streamFailed(.malformedStream(reason, _))) = error else {
                 Issue.record("Expected malformedStream, got \(error)")
                 return
             }

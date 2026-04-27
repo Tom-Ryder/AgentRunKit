@@ -8,6 +8,7 @@
     @available(macOS 26, iOS 26, *)
     public struct FoundationModelsClient<C: ToolContext>: LLMClient, Sendable {
         public let contextWindowSize: Int? = nil
+        public let providerIdentifier: ProviderIdentifier = .foundationModels
 
         private let tools: [any AnyTool<C>]
         private let context: C

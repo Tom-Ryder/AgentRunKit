@@ -247,7 +247,7 @@ private extension Chat {
                     totalUsage: &totalUsage,
                     emittedOutput: &emittedOutput,
                     continuation: continuation,
-                    requestContext: requestContext
+                    requestContext: requestContext,
                 )
             } catch let AgentError.llmError(transport) where transport.isPromptTooLong {
                 guard !emittedOutput, reactivelyTruncate(&truncatedMessages) else {
@@ -257,7 +257,7 @@ private extension Chat {
                     messages: truncatedMessages,
                     totalUsage: &totalUsage,
                     continuation: continuation,
-                    requestContext: requestContext
+                    requestContext: requestContext,
                 )
                 messages = truncatedMessages
             }

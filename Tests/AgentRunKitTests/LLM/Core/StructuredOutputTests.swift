@@ -110,6 +110,7 @@ struct ChatCompletionRequestResponseFormatTests {
 }
 
 actor StructuredOutputMockLLMClient: LLMClient {
+    nonisolated let providerIdentifier: ProviderIdentifier = .custom("StructuredOutputMockLLMClient")
     private let jsonContent: String
 
     init(jsonContent: String) {

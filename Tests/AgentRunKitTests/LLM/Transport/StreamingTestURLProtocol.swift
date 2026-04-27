@@ -102,11 +102,14 @@ func collectStreamResult(
     }
 }
 
-func assertStreamStalled(_ error: (any Error)?) {
+func assertProviderTerminationMissing(_ error: (any Error)?) {
     guard let agentError = error as? AgentError,
           case let .llmError(transport) = agentError else {
-        Issue.record("Expected streamStalled, got \(String(describing: error))")
+        Issue.record("Expected providerTerminationMissing, got \(String(describing: error))")
         return
     }
-    #expect(transport == .streamStalled)
+    guard case .streamFailed(.providerTerminationMissing) = transport else {
+        Issue.record("Expected providerTerminationMissing, got \(transport)")
+        return
+    }
 }

@@ -467,6 +467,7 @@ struct ChatTests {
 }
 
 private actor ChatCapturingMockLLMClient: LLMClient {
+    nonisolated let providerIdentifier: ProviderIdentifier = .custom("ChatCapturingMockLLMClient")
     private let responses: [AssistantMessage]
     private var callIndex = 0
     private(set) var capturedMessages: [ChatMessage] = []

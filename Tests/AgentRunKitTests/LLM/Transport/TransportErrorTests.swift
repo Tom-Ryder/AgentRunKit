@@ -1,4 +1,5 @@
 @testable import AgentRunKit
+import Foundation
 import Testing
 
 struct TransportErrorTests {
@@ -6,12 +7,29 @@ struct TransportErrorTests {
     func errorsAreEquatable() {
         #expect(TransportError.invalidResponse == TransportError.invalidResponse)
         #expect(TransportError.noChoices == TransportError.noChoices)
-        #expect(TransportError.streamStalled == TransportError.streamStalled)
-        #expect(TransportError.streamStalled != TransportError.invalidResponse)
+        let failure = TransportError.streamFailed(.providerTerminationMissing(diagnostics: .empty))
+        #expect(failure == failure)
+        #expect(failure != TransportError.invalidResponse)
         let err400 = TransportError.httpError(statusCode: 400, body: "bad")
         let err401 = TransportError.httpError(statusCode: 401, body: "bad")
         #expect(err400 == err400)
         #expect(err400 != err401)
+    }
+
+    @Test
+    func networkErrorFactorySanitizesUnderlyingErrorDescription() {
+        let error = URLError(
+            .cannotFindHost,
+            userInfo: [
+                NSURLErrorFailingURLErrorKey: URL(string: "https://api.example.test?api_key=secret-token") as Any,
+                NSLocalizedDescriptionKey: "api_key=secret-token"
+            ]
+        )
+
+        let transportError = TransportError.networkError(error)
+        #expect(transportError == .networkError(code: .cannotFindHost, description: "URL request failed"))
+        #expect(!transportError.description.contains("secret-token"))
+        #expect(!String(reflecting: transportError).contains("secret-token"))
     }
 
     @Test
@@ -130,6 +148,17 @@ struct TransportErrorTests {
         for error in providerErrors {
             #expect(error.isPromptTooLong)
         }
+    }
+
+    @Test
+    func promptTooLongClassificationMatchesStreamProviderErrors() {
+        let error = TransportError.streamFailed(.providerError(
+            provider: .anthropic,
+            code: "invalid_request_error",
+            message: "prompt is too long: 200001 tokens > 200000 maximum"
+        ))
+
+        #expect(error.isPromptTooLong)
     }
 
     @Test

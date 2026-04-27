@@ -130,6 +130,8 @@ struct RequestContextTests {
         let context = RequestContext()
         #expect(context.extraFields.isEmpty)
         #expect(context.onResponse == nil)
+        #expect(context.onStreamEvent == nil)
+        #expect(context.onStreamComplete == nil)
     }
 
     @Test
@@ -142,6 +144,13 @@ struct RequestContextTests {
     func initializesWithOnResponse() {
         let context = RequestContext(onResponse: { _ in })
         #expect(context.onResponse != nil)
+    }
+
+    @Test
+    func initializesWithStreamObservers() {
+        let context = RequestContext(onStreamEvent: { _ in }, onStreamComplete: { _ in })
+        #expect(context.onStreamEvent != nil)
+        #expect(context.onStreamComplete != nil)
     }
 
     @Test
@@ -387,6 +396,7 @@ struct ReasoningConfigEncodingTests {
 }
 
 private actor CapturingRequestContextMockLLMClient: LLMClient {
+    nonisolated let providerIdentifier: ProviderIdentifier = .custom("CapturingRequestContextMockLLMClient")
     private(set) var lastGenerateRequestContext: RequestContext?
     private(set) var lastStreamRequestContext: RequestContext?
     private let generateResponse: AssistantMessage

@@ -22,16 +22,14 @@ extension AnthropicClient {
 
         let state = AnthropicStreamState()
 
-        let completed = try await processSSEStream(
+        try await processSSEStream(
             bytes: bytes,
             stallTimeout: retryPolicy.streamStallTimeout
-        ) { event in
+        ) { event, diagnostics in
             try await self.handleSSEEvent(
-                event, state: state, continuation: continuation
+                event, state: state, providerIdentifier: self.providerIdentifier,
+                diagnostics: diagnostics, continuation: continuation
             )
-        }
-        guard completed else {
-            throw AgentError.llmError(.streamStalled)
         }
         continuation.finish()
     }
@@ -57,16 +55,15 @@ extension AnthropicClient {
 
         let state = AnthropicStreamState()
 
-        let completed = try await processSSEStream(
+        try await processSSEStream(
             bytes: bytes,
             stallTimeout: retryPolicy.streamStallTimeout
-        ) { event in
-            try await self.handleSSEEvent(event, state: state) { delta in
+        ) { event, diagnostics in
+            try await self.handleSSEEvent(
+                event, state: state, providerIdentifier: self.providerIdentifier, diagnostics: diagnostics
+            ) { delta in
                 continuation.yield(.delta(delta))
             }
-        }
-        guard completed else {
-            throw AgentError.llmError(.streamStalled)
         }
 
         if await state.isCompleted {
@@ -82,9 +79,13 @@ extension AnthropicClient {
     func handleSSEEvent(
         _ event: SSEEvent,
         state: AnthropicStreamState,
+        providerIdentifier: ProviderIdentifier = .anthropic,
+        diagnostics: StreamFailureDiagnostics,
         continuation: AsyncThrowingStream<StreamDelta, Error>.Continuation
     ) async throws -> Bool {
-        try await handleSSEEvent(event, state: state) { delta in
+        try await handleSSEEvent(
+            event, state: state, providerIdentifier: providerIdentifier, diagnostics: diagnostics
+        ) { delta in
             continuation.yield(delta)
         }
     }
@@ -92,14 +93,24 @@ extension AnthropicClient {
     func handleSSEEvent(
         _ event: SSEEvent,
         state: AnthropicStreamState,
+        providerIdentifier: ProviderIdentifier = .anthropic,
+        diagnostics: StreamFailureDiagnostics,
         yield: @Sendable (StreamDelta) -> Void
     ) async throws -> Bool {
-        try await handleSSEPayload(event.data, state: state, yield: yield)
+        try await handleSSEPayload(
+            event.data,
+            state: state,
+            providerIdentifier: providerIdentifier,
+            diagnostics: diagnostics,
+            yield: yield
+        )
     }
 
     private func handleSSEPayload(
         _ payload: String,
         state: AnthropicStreamState,
+        providerIdentifier: ProviderIdentifier,
+        diagnostics: StreamFailureDiagnostics,
         yield: @Sendable (StreamDelta) -> Void
     ) async throws -> Bool {
         let event = try decodeEvent(AnthropicEventTypeOnly.self, from: Data(payload.utf8))
@@ -107,7 +118,7 @@ extension AnthropicClient {
 
         return try await dispatchEvent(
             eventType, data: Data(payload.utf8),
-            state: state, yield: yield
+            state: state, providerIdentifier: providerIdentifier, diagnostics: diagnostics, yield: yield
         )
     }
 
@@ -115,6 +126,8 @@ extension AnthropicClient {
         _ type: AnthropicSSEEvent,
         data: Data,
         state: AnthropicStreamState,
+        providerIdentifier: ProviderIdentifier,
+        diagnostics: StreamFailureDiagnostics,
         yield: @Sendable (StreamDelta) -> Void
     ) async throws -> Bool {
         switch type {
@@ -128,7 +141,7 @@ extension AnthropicClient {
             )
         case .contentBlockDelta:
             try await handleBlockDelta(
-                data: data, state: state, yield: yield
+                data: data, state: state, diagnostics: diagnostics, yield: yield
             )
         case .contentBlockStop:
             try await handleBlockStop(
@@ -141,7 +154,7 @@ extension AnthropicClient {
             await yield(.finished(usage: state.finalUsage()))
             return true
         case .error:
-            try handleError(data: data)
+            try handleError(data: data, providerIdentifier: providerIdentifier)
         }
         return false
     }
@@ -179,6 +192,7 @@ extension AnthropicClient {
     private func handleBlockDelta(
         data: Data,
         state: AnthropicStreamState,
+        diagnostics: StreamFailureDiagnostics,
         yield: @Sendable (StreamDelta) -> Void
     ) async throws {
         let event = try decodeEvent(AnthropicBlockDeltaEvent.self, from: data)
@@ -204,7 +218,10 @@ extension AnthropicClient {
         case .inputJsonDelta:
             if let json = delta.partialJson, !json.isEmpty {
                 guard let toolIndex = await state.toolCallIndex(for: event.index) else {
-                    throw AgentError.malformedStream(.toolCallDeltaWithoutStart(index: event.index))
+                    throw AgentError.llmError(.streamFailed(.malformedStream(
+                        reason: .toolCallDeltaWithoutStart(index: event.index),
+                        diagnostics: diagnostics
+                    )))
                 }
                 await state.appendToolInput(event.index, json)
                 yield(.toolCallDelta(
@@ -257,11 +274,13 @@ extension AnthropicClient {
         await state.setOutputTokens(event.usage?.outputTokens ?? 0)
     }
 
-    private func handleError(data: Data) throws {
+    private func handleError(data: Data, providerIdentifier: ProviderIdentifier) throws {
         let event = try decodeEvent(AnthropicStreamErrorEvent.self, from: data)
-        throw AgentError.llmError(
-            .other("\(event.error.type): \(event.error.message)")
-        )
+        throw AgentError.llmError(.streamFailed(.providerError(
+            provider: providerIdentifier,
+            code: event.error.type,
+            message: event.error.message
+        )))
     }
 
     private func decodeEvent<T: Decodable>(_ type: T.Type, from data: Data) throws -> T {

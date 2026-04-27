@@ -160,7 +160,7 @@ struct VertexAnthropicStreamingCompletionTests {
         let result = await collectStreamResult(client.stream(messages: [.user("Hi")], tools: [], requestContext: nil))
 
         #expect(result.deltas == [.content("partial")])
-        assertStreamStalled(result.error)
+        assertProviderTerminationMissing(result.error)
     }
 }
 
@@ -409,15 +409,19 @@ struct VertexAnthropicStreamingContinuityTests {
         let state = AnthropicStreamState()
         let runPair = AsyncThrowingStream<RunStreamElement, Error>.makeStream()
 
-        let completed = try await processSSEStream(
+        try await processSSEStream(
             bytes: controlled,
             stallTimeout: nil
-        ) { event in
-            try await vertexClient.anthropic.handleSSEEvent(event, state: state) { delta in
+        ) { event, diagnostics in
+            try await vertexClient.anthropic.handleSSEEvent(
+                event,
+                state: state,
+                providerIdentifier: vertexClient.providerIdentifier,
+                diagnostics: diagnostics
+            ) { delta in
                 _ = runPair.continuation.yield(.delta(delta))
             }
         }
-        #expect(completed)
 
         let blocks = try await state.finalizedBlocks()
         #expect(!blocks.isEmpty)
@@ -436,6 +440,44 @@ struct VertexAnthropicStreamingContinuityTests {
         """
         let blockingMsg = try vertexClient.anthropic.parseResponse(Data(blockingJSON.utf8))
         #expect(continuity == blockingMsg.continuity)
+    }
+
+    @Test
+    func vertexAnthropicStreamErrorUsesVertexProviderIdentifier() async throws {
+        let vertexClient = try VertexAnthropicClient(
+            projectID: "p", location: "l", model: "claude-sonnet-4-6",
+            tokenProvider: { "tok" }
+        )
+        let line = sseLine(#"{"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}"#)
+        let (byteStream, byteContinuation) = AsyncStream<UInt8>.makeStream()
+        for byte in Array(line.appending("\n\n").utf8) {
+            byteContinuation.yield(byte)
+        }
+        byteContinuation.finish()
+
+        let state = AnthropicStreamState()
+        do {
+            try await processSSEStream(
+                bytes: ControlledByteStream(stream: byteStream),
+                stallTimeout: nil
+            ) { event, diagnostics in
+                try await vertexClient.anthropic.handleSSEEvent(
+                    event,
+                    state: state,
+                    providerIdentifier: vertexClient.providerIdentifier,
+                    diagnostics: diagnostics
+                ) { _ in }
+            }
+            Issue.record("Expected provider error")
+        } catch let error as AgentError {
+            guard case let .llmError(.streamFailed(.providerError(provider, code, message))) = error else {
+                Issue.record("Expected provider error, got \(error)")
+                return
+            }
+            #expect(provider == .vertexAnthropic)
+            #expect(code == "overloaded_error")
+            #expect(message == "Overloaded")
+        }
     }
 }
 

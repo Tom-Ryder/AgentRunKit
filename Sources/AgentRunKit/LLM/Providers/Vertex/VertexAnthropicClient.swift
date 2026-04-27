@@ -4,6 +4,7 @@ import Foundation
 public struct VertexAnthropicClient: LLMClient, Sendable {
     public let modelIdentifier: String?
     public let contextWindowSize: Int?
+    public let providerIdentifier: ProviderIdentifier = .vertexAnthropic
 
     let anthropic: AnthropicClient
     private let projectID: String
@@ -161,16 +162,14 @@ public struct VertexAnthropicClient: LLMClient, Sendable {
 
         let state = AnthropicStreamState()
 
-        let completed = try await processSSEStream(
+        try await processSSEStream(
             bytes: bytes,
             stallTimeout: retryPolicy.streamStallTimeout
-        ) { event in
+        ) { event, diagnostics in
             try await anthropic.handleSSEEvent(
-                event, state: state, continuation: continuation
+                event, state: state, providerIdentifier: providerIdentifier,
+                diagnostics: diagnostics, continuation: continuation
             )
-        }
-        guard completed else {
-            throw AgentError.llmError(.streamStalled)
         }
         continuation.finish()
     }
@@ -199,16 +198,15 @@ public struct VertexAnthropicClient: LLMClient, Sendable {
 
         let state = AnthropicStreamState()
 
-        let completed = try await processSSEStream(
+        try await processSSEStream(
             bytes: bytes,
             stallTimeout: retryPolicy.streamStallTimeout
-        ) { event in
-            try await anthropic.handleSSEEvent(event, state: state) { delta in
+        ) { event, diagnostics in
+            try await anthropic.handleSSEEvent(
+                event, state: state, providerIdentifier: providerIdentifier, diagnostics: diagnostics
+            ) { delta in
                 continuation.yield(.delta(delta))
             }
-        }
-        guard completed else {
-            throw AgentError.llmError(.streamStalled)
         }
 
         if await state.isCompleted {

@@ -2,6 +2,7 @@
 import Testing
 
 private actor SummaryMockLLMClient: LLMClient {
+    nonisolated let providerIdentifier: ProviderIdentifier = .custom("SummaryMockLLMClient")
     let contextWindowSize: Int?
     private let responses: [AssistantMessage]
     private var callIndex = 0

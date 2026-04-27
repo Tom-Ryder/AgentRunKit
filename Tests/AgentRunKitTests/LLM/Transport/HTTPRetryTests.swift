@@ -159,3 +159,251 @@ struct HandleErrorStatusTests {
         }
     }
 }
+
+private extension NSLock {
+    func withLock<T>(_ body: () throws -> T) rethrows -> T {
+        lock()
+        defer { unlock() }
+        return try body()
+    }
+}
+
+/// @unchecked Sendable justification: URLProtocol callbacks cross concurrency domains and
+/// NSLock guards the shared route used by this test transport.
+private final class FailingErrorBodyURLProtocolState: @unchecked Sendable {
+    private let lock = NSLock()
+    private var failure: URLError?
+
+    func setFailure(_ failure: URLError?) {
+        lock.withLock {
+            self.failure = failure
+        }
+    }
+
+    func currentFailure() -> URLError? {
+        lock.withLock { failure }
+    }
+}
+
+/// @unchecked Sendable justification: URLProtocol is Foundation infrastructure and all
+/// shared mutable state lives in FailingErrorBodyURLProtocolState.
+private final class FailingErrorBodyURLProtocol: URLProtocol, @unchecked Sendable {
+    private static let state = FailingErrorBodyURLProtocolState()
+
+    static func session() -> URLSession {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [FailingErrorBodyURLProtocol.self]
+        return URLSession(configuration: configuration)
+    }
+
+    static func setFailure(_ failure: URLError?) {
+        state.setFailure(failure)
+    }
+
+    override static func canInit(with request: URLRequest) -> Bool {
+        request.url != nil
+    }
+
+    override static func canonicalRequest(for request: URLRequest) -> URLRequest {
+        request
+    }
+
+    override func startLoading() {
+        guard let url = request.url,
+              let response = HTTPURLResponse(
+                  url: url,
+                  statusCode: 500,
+                  httpVersion: nil,
+                  headerFields: ["Content-Type": "text/plain"]
+              )
+        else {
+            client?.urlProtocol(self, didFailWithError: URLError(.badURL))
+            return
+        }
+        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+        client?.urlProtocol(self, didFailWithError: Self.state.currentFailure() ?? URLError(.timedOut))
+    }
+
+    override func stopLoading() {}
+}
+
+private enum SecretURLLoadingMode {
+    case failBeforeResponse(URLError)
+    case failAfterBody(Data, URLError)
+}
+
+/// @unchecked Sendable justification: URLProtocol callbacks cross concurrency domains and
+/// NSLock guards the configured loading mode.
+private final class SecretURLLoadingProtocolState: @unchecked Sendable {
+    private let lock = NSLock()
+    private var mode: SecretURLLoadingMode?
+
+    func setMode(_ mode: SecretURLLoadingMode?) {
+        lock.withLock {
+            self.mode = mode
+        }
+    }
+
+    func currentMode() -> SecretURLLoadingMode? {
+        lock.withLock { mode }
+    }
+}
+
+/// @unchecked Sendable justification: URLProtocol is Foundation infrastructure and all
+/// shared mutable state lives in SecretURLLoadingProtocolState.
+private final class SecretURLLoadingProtocol: URLProtocol, @unchecked Sendable {
+    private static let state = SecretURLLoadingProtocolState()
+
+    static func session() -> URLSession {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [SecretURLLoadingProtocol.self]
+        return URLSession(configuration: configuration)
+    }
+
+    static func setMode(_ mode: SecretURLLoadingMode?) {
+        state.setMode(mode)
+    }
+
+    override static func canInit(with request: URLRequest) -> Bool {
+        request.url != nil
+    }
+
+    override static func canonicalRequest(for request: URLRequest) -> URLRequest {
+        request
+    }
+
+    override func startLoading() {
+        guard let mode = Self.state.currentMode() else {
+            client?.urlProtocol(self, didFailWithError: URLError(.unknown))
+            return
+        }
+        switch mode {
+        case let .failBeforeResponse(error):
+            client?.urlProtocol(self, didFailWithError: error)
+        case let .failAfterBody(body, error):
+            guard let url = request.url,
+                  let response = HTTPURLResponse(
+                      url: url,
+                      statusCode: 200,
+                      httpVersion: nil,
+                      headerFields: ["Content-Type": "text/event-stream"]
+                  )
+            else {
+                client?.urlProtocol(self, didFailWithError: URLError(.badURL))
+                return
+            }
+            client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+            client?.urlProtocol(self, didLoad: body)
+            client?.urlProtocol(self, didFailWithError: error)
+        }
+    }
+
+    override func stopLoading() {}
+}
+
+struct HTTPRetryStreamBodySanitizationTests {
+    private func secretFailure() throws -> URLError {
+        let secretURL = try #require(URL(string: "https://example.test?key=AIzaSyTEST&authorization=BearerSecret"))
+        return URLError(
+            .timedOut,
+            userInfo: [
+                NSURLErrorFailingURLStringErrorKey: secretURL.absoluteString,
+                NSURLErrorFailingURLErrorKey: secretURL as Any,
+                NSLocalizedDescriptionKey: "BearerSecret key=AIzaSyTEST"
+            ]
+        )
+    }
+
+    private func assertSanitized(_ error: any Error) {
+        let described = String(describing: error)
+        let reflected = String(reflecting: error)
+        for text in [described, reflected] {
+            #expect(!text.contains("key="))
+            #expect(!text.contains("AIza"))
+            #expect(!text.contains("Bearer"))
+        }
+    }
+
+    @Test
+    func streamErrorBodyReadFailureDoesNotExposeUnderlyingURL() async throws {
+        let failure = try secretFailure()
+        FailingErrorBodyURLProtocol.setFailure(failure)
+        defer { FailingErrorBodyURLProtocol.setFailure(nil) }
+        let request = try URLRequest(url: #require(URL(string: "https://transport.test/stream")))
+
+        do {
+            _ = try await HTTPRetry.performStream(
+                urlRequest: request,
+                session: FailingErrorBodyURLProtocol.session(),
+                retryPolicy: RetryPolicy(maxAttempts: 1)
+            )
+            Issue.record("Expected HTTP error")
+        } catch {
+            assertSanitized(error)
+        }
+    }
+
+    @Test
+    func preStreamURLSessionFailuresDoNotExposeUnderlyingURL() async throws {
+        let failure = try secretFailure()
+        SecretURLLoadingProtocol.setMode(.failBeforeResponse(failure))
+        defer { SecretURLLoadingProtocol.setMode(nil) }
+        let request = try URLRequest(url: #require(URL(string: "https://transport.test/preflight")))
+        let session = SecretURLLoadingProtocol.session()
+
+        do {
+            _ = try await HTTPRetry.performData(
+                urlRequest: request,
+                session: session,
+                retryPolicy: RetryPolicy(maxAttempts: 1)
+            )
+            Issue.record("Expected data request failure")
+        } catch {
+            assertSanitized(error)
+        }
+
+        do {
+            let (bytes, _) = try await HTTPRetry.performStream(
+                urlRequest: request,
+                session: session,
+                retryPolicy: RetryPolicy(maxAttempts: 1)
+            )
+            do {
+                try await processSSEStream(bytes: bytes, stallTimeout: nil) { _, _ in false }
+                Issue.record("Expected stream request failure")
+            } catch {
+                assertSanitized(error)
+            }
+        } catch {
+            assertSanitized(error)
+        }
+    }
+
+    @Test
+    func midStreamURLSessionFailureDoesNotExposeUnderlyingURL() async throws {
+        let failure = try secretFailure()
+        let body = Data("data: {\"choices\":[{\"delta\":{\"content\":\"hi\"},\"index\":0}]}\n\n".utf8)
+        SecretURLLoadingProtocol.setMode(.failAfterBody(body, failure))
+        defer { SecretURLLoadingProtocol.setMode(nil) }
+        let request = try URLRequest(url: #require(URL(string: "https://transport.test/stream")))
+        do {
+            let (bytes, _) = try await HTTPRetry.performStream(
+                urlRequest: request,
+                session: SecretURLLoadingProtocol.session(),
+                retryPolicy: RetryPolicy(maxAttempts: 1)
+            )
+            try await processSSEStream(bytes: bytes, stallTimeout: nil) { _, _ in false }
+            Issue.record("Expected mid-stream failure")
+        } catch {
+            assertSanitized(error)
+            switch error {
+            case let AgentError.llmError(.streamFailed(.midStreamTransportFailure(code, _))):
+                #expect(code == .timedOut)
+            case let AgentError.llmError(.networkError(code, _)):
+                #expect(code == .timedOut)
+            default:
+                Issue.record("Expected sanitized stream transport failure, got \(error)")
+            }
+        }
+    }
+}

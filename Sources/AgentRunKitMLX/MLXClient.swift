@@ -6,6 +6,7 @@ public struct MLXClient: LLMClient, Sendable {
     public let container: ModelContainer
     public let modelIdentifier: String?
     public let contextWindowSize: Int?
+    public let providerIdentifier: ProviderIdentifier = .mlx
     public let generateParameters: GenerateParameters
 
     public init(

@@ -5,6 +5,7 @@ import Testing
 // MARK: - Mock
 
 private actor BudgetMockLLMClient: LLMClient {
+    nonisolated let providerIdentifier: ProviderIdentifier = .custom("BudgetMockLLMClient")
     let contextWindowSize: Int?
     private let responses: [AssistantMessage]
     private var callIndex = 0
@@ -37,6 +38,7 @@ private actor BudgetMockLLMClient: LLMClient {
 }
 
 private actor BudgetStreamingMockLLMClient: LLMClient {
+    nonisolated let providerIdentifier: ProviderIdentifier = .custom("BudgetStreamingMockLLMClient")
     let contextWindowSize: Int?
     private let streamSequences: [[StreamDelta]]
     private var streamIndex = 0

@@ -10,7 +10,12 @@ enum SmokeFailureKind: String, Codable {
     case encodingFailed
     case decodingFailed
     case noChoices
-    case streamStalled
+    case idleTimeout
+    case providerTerminationMissing
+    case finishedDeltaMissing
+    case midStreamTransportFailure
+    case providerError
+    case malformedStream
     case structuredOutputDecodingFailed
     case other
 }
@@ -220,7 +225,7 @@ private func classifySmokeTransportError(_ transportError: TransportError) -> Sm
         smokeFailureClassification(kind: .httpError, httpStatus: statusCode, bodyExcerpt: body)
     case .rateLimited:
         smokeFailureClassification(kind: .rateLimited, httpStatus: 429)
-    case let .networkError(description):
+    case let .networkError(_, description):
         smokeFailureClassification(kind: .networkError, bodyExcerpt: description)
     case .invalidResponse:
         smokeFailureClassification(kind: .invalidResponse)
@@ -230,14 +235,31 @@ private func classifySmokeTransportError(_ transportError: TransportError) -> Sm
         smokeFailureClassification(kind: .decodingFailed, bodyExcerpt: description)
     case .noChoices:
         smokeFailureClassification(kind: .noChoices)
-    case .streamStalled:
-        smokeFailureClassification(kind: .streamStalled)
+    case let .streamFailed(failure):
+        smokeFailureClassification(kind: smokeFailureKind(for: failure), bodyExcerpt: failure.description)
     case let .capabilityMismatch(model, requirement):
         smokeFailureClassification(kind: .other, bodyExcerpt: "capabilityMismatch(\(model)): \(requirement)")
     case let .featureUnsupported(provider, feature):
         smokeFailureClassification(kind: .other, bodyExcerpt: "featureUnsupported(\(provider)): \(feature)")
     case let .other(message):
         smokeFailureClassification(kind: .other, bodyExcerpt: message)
+    }
+}
+
+private func smokeFailureKind(for failure: StreamFailure) -> SmokeFailureKind {
+    switch failure {
+    case .idleTimeout:
+        .idleTimeout
+    case .providerTerminationMissing:
+        .providerTerminationMissing
+    case .finishedDeltaMissing:
+        .finishedDeltaMissing
+    case .midStreamTransportFailure:
+        .midStreamTransportFailure
+    case .providerError:
+        .providerError
+    case .malformedStream:
+        .malformedStream
     }
 }
 

@@ -487,6 +487,7 @@ private struct EchoOutput: Codable {
 }
 
 private actor FailingStreamMockLLMClient: LLMClient {
+    nonisolated let providerIdentifier: ProviderIdentifier = .custom("FailingStreamMockLLMClient")
     func generate(
         messages _: [ChatMessage],
         tools _: [ToolDefinition],

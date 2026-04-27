@@ -11,6 +11,7 @@ private enum GenerateStep {
 }
 
 private actor ChatRecoveryMockClient: LLMClient {
+    nonisolated let providerIdentifier: ProviderIdentifier = .custom("ChatRecoveryMockClient")
     private let generateSteps: [GenerateStep]
     private let streamSteps: [StreamStep]
     private var generateIndex = 0

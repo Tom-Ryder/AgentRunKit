@@ -26,16 +26,13 @@ extension GeminiClient {
 
         let state = GeminiStreamState()
 
-        let completed = try await processSSEStream(
+        try await processSSEStream(
             bytes: bytes,
             stallTimeout: retryPolicy.streamStallTimeout
-        ) { event in
+        ) { event, _ in
             try await self.handleSSEEvent(
-                event, state: state, continuation: continuation
+                event, state: state, providerIdentifier: self.providerIdentifier, continuation: continuation
             )
-        }
-        guard completed else {
-            throw AgentError.llmError(.streamStalled)
         }
         continuation.finish()
     }
@@ -43,21 +40,29 @@ extension GeminiClient {
     func handleSSEEvent(
         _ event: SSEEvent,
         state: GeminiStreamState,
+        providerIdentifier: ProviderIdentifier = .gemini,
         continuation: AsyncThrowingStream<StreamDelta, Error>.Continuation
     ) async throws -> Bool {
-        try await handleSSEPayload(event.data, state: state, continuation: continuation)
+        try await handleSSEPayload(
+            event.data, state: state, providerIdentifier: providerIdentifier, continuation: continuation
+        )
     }
 
     private func handleSSEPayload(
         _ payload: String,
         state: GeminiStreamState,
+        providerIdentifier: ProviderIdentifier,
         continuation: AsyncThrowingStream<StreamDelta, Error>.Continuation
     ) async throws -> Bool {
         let data = Data(payload.utf8)
 
         if let errorResponse = try? JSONDecoder().decode(GeminiErrorResponse.self, from: data) {
             throw AgentError.llmError(
-                .other("\(errorResponse.error.status): \(errorResponse.error.message)")
+                .streamFailed(.providerError(
+                    provider: providerIdentifier,
+                    code: errorResponse.error.status,
+                    message: errorResponse.error.message
+                ))
             )
         }
 

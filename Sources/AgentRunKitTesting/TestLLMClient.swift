@@ -13,6 +13,7 @@ public struct TestLLMClient: LLMClient, Sendable {
     public let callTools: CallToolsMode
     public let finishContent: String
     public let contextWindowSize: Int?
+    public let providerIdentifier: ProviderIdentifier = .custom("test")
     public let tokenUsage: TokenUsage
 
     public init(

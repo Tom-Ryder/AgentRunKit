@@ -142,14 +142,23 @@ struct AgentErrorTests {
         let error7 = AgentError.llmError(.other("rate limited"))
         #expect(error7.feedbackMessage.contains("rate limited"))
 
-        let error8 = AgentError.malformedStream(.toolCallDeltaWithoutStart(index: 3))
+        let error8 = AgentError.llmError(.streamFailed(.malformedStream(
+            reason: .toolCallDeltaWithoutStart(index: 3),
+            diagnostics: .empty
+        )))
         #expect(error8.feedbackMessage.contains("3"))
 
-        let error9 = AgentError.malformedStream(.missingToolCallId(index: 5))
+        let error9 = AgentError.llmError(.streamFailed(.malformedStream(
+            reason: .missingToolCallId(index: 5),
+            diagnostics: .empty
+        )))
         #expect(error9.feedbackMessage.contains("5"))
         #expect(error9.feedbackMessage.contains("ID"))
 
-        let error10 = AgentError.malformedStream(.missingToolCallName(index: 7))
+        let error10 = AgentError.llmError(.streamFailed(.malformedStream(
+            reason: .missingToolCallName(index: 7),
+            diagnostics: .empty
+        )))
         #expect(error10.feedbackMessage.contains("7"))
         #expect(error10.feedbackMessage.contains("name"))
 
@@ -183,6 +192,7 @@ private enum AgentErrorTestError: Error {
 }
 
 actor FailingMockLLMClient: LLMClient {
+    nonisolated let providerIdentifier: ProviderIdentifier = .custom("FailingMockLLMClient")
     func generate(
         messages _: [ChatMessage],
         tools _: [ToolDefinition],

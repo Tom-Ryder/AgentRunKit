@@ -42,6 +42,7 @@ struct ChatMultimodalTests {
 }
 
 private actor CapturingGenerateMockLLMClient: LLMClient {
+    nonisolated let providerIdentifier: ProviderIdentifier = .custom("CapturingGenerateMockLLMClient")
     private let responses: [AssistantMessage]
     private var callIndex = 0
     private(set) var capturedMessages: [ChatMessage] = []

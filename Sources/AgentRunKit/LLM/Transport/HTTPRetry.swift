@@ -177,7 +177,7 @@ enum HTTPRetry {
                         if lineCount >= 100 { break }
                     }
                 } catch {
-                    return body.isEmpty ? "(error reading body: \(error))" : body
+                    return body.isEmpty ? "(error reading body)" : body
                 }
                 return body
             }

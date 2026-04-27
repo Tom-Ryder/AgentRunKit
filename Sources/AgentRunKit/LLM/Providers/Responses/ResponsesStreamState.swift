@@ -1,12 +1,5 @@
 import Foundation
 
-actor ResponsesStreamCompletionState {
-    private(set) var isCompleted = false
-    func markCompleted() {
-        isCompleted = true
-    }
-}
-
 actor ResponsesStreamState {
     private var content = ""
     private var reasoning = ""
@@ -59,13 +52,14 @@ actor ResponsesStreamState {
 
     func reconciliationDeltas(
         response: ResponsesAPIResponse,
-        projection: ResponsesAPIClient.ResponsesTurnProjection
+        projection: ResponsesAPIClient.ResponsesTurnProjection,
+        diagnostics: StreamFailureDiagnostics
     ) throws -> [StreamDelta] {
         let target = try ResponsesCompletedSemanticTarget(response: response, projection: projection)
         var deltas: [StreamDelta] = []
 
         guard let reasoningSuffix = utf8Suffix(of: target.reasoning, afterPrefix: reasoning) else {
-            throw AgentError.malformedStream(.finalizedSemanticStateDiverged)
+            throw finalizedSemanticStateDiverged(diagnostics: diagnostics)
         }
         if !reasoningSuffix.isEmpty {
             reasoning += reasoningSuffix
@@ -75,7 +69,7 @@ actor ResponsesStreamState {
         guard target.reasoningDetails.count >= reasoningDetails.count,
               Array(target.reasoningDetails.prefix(reasoningDetails.count)) == reasoningDetails
         else {
-            throw AgentError.malformedStream(.finalizedSemanticStateDiverged)
+            throw finalizedSemanticStateDiverged(diagnostics: diagnostics)
         }
         let reasoningDetailSuffix = Array(target.reasoningDetails.dropFirst(reasoningDetails.count))
         if !reasoningDetailSuffix.isEmpty {
@@ -84,7 +78,7 @@ actor ResponsesStreamState {
         }
 
         guard let contentSuffix = utf8Suffix(of: target.content, afterPrefix: content) else {
-            throw AgentError.malformedStream(.finalizedSemanticStateDiverged)
+            throw finalizedSemanticStateDiverged(diagnostics: diagnostics)
         }
         if !contentSuffix.isEmpty {
             content += contentSuffix
@@ -93,7 +87,7 @@ actor ResponsesStreamState {
 
         let targetIndices = Set(target.toolCalls.keys)
         guard Set(toolCalls.keys).isSubset(of: targetIndices) else {
-            throw AgentError.malformedStream(.finalizedSemanticStateDiverged)
+            throw finalizedSemanticStateDiverged(diagnostics: diagnostics)
         }
 
         for (index, targetCall) in target.toolCalls.sorted(by: { $0.key < $1.key }) {
@@ -105,7 +99,7 @@ actor ResponsesStreamState {
                           afterPrefix: existing.arguments
                       )
                 else {
-                    throw AgentError.malformedStream(.finalizedSemanticStateDiverged)
+                    throw finalizedSemanticStateDiverged(diagnostics: diagnostics)
                 }
                 if existing.id == nil, let id = targetCall.id, let name = targetCall.name {
                     deltas.append(.toolCallStart(index: index, id: id, name: name, kind: targetCall.kind))
@@ -129,6 +123,13 @@ actor ResponsesStreamState {
         }
 
         return deltas
+    }
+
+    private func finalizedSemanticStateDiverged(diagnostics: StreamFailureDiagnostics) -> AgentError {
+        AgentError.llmError(.streamFailed(.malformedStream(
+            reason: .finalizedSemanticStateDiverged,
+            diagnostics: diagnostics
+        )))
     }
 }
 

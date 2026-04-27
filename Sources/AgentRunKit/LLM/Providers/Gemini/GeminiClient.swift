@@ -5,6 +5,7 @@ public struct GeminiClient: LLMClient, Sendable {
     public let modelIdentifier: String?
     public let maxOutputTokens: Int
     public let contextWindowSize: Int?
+    public let providerIdentifier: ProviderIdentifier = .gemini
     let apiKey: String
     let baseURL: URL
     let apiVersion: String

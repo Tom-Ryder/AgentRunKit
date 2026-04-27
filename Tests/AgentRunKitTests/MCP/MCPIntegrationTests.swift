@@ -301,6 +301,7 @@ struct MCPIntegrationTests {
 }
 
 private actor IntegrationMockLLMClient: LLMClient {
+    nonisolated let providerIdentifier: ProviderIdentifier = .custom("IntegrationMockLLMClient")
     private let responses: [AssistantMessage]
     private var callIndex: Int = 0
 
@@ -331,6 +332,7 @@ private actor IntegrationMockLLMClient: LLMClient {
 }
 
 private actor IntegrationCapturingMockLLMClient: LLMClient {
+    nonisolated let providerIdentifier: ProviderIdentifier = .custom("IntegrationCapturingMockLLMClient")
     private let responses: [AssistantMessage]
     private var callIndex: Int = 0
     private(set) var capturedMessages: [ChatMessage] = []

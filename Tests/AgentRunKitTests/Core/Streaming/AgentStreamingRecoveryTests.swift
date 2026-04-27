@@ -12,6 +12,7 @@ private enum StreamStep {
 }
 
 private actor ErrorInjectingStreamClient: LLMClient {
+    nonisolated let providerIdentifier: ProviderIdentifier = .custom("ErrorInjectingStreamClient")
     let contextWindowSize: Int?
     private let steps: [StreamStep]
     private let generateResponses: [AssistantMessage]

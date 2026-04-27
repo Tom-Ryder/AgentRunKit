@@ -172,13 +172,22 @@ struct AnthropicStreamingTests {
         let state = AnthropicStreamState()
         let streamPair = AsyncThrowingStream<StreamDelta, Error>.makeStream()
 
-        let completed = try await processSSEStream(
-            bytes: controlled,
-            stallTimeout: nil
-        ) { event in
-            try await client.handleSSEEvent(event, state: state, continuation: streamPair.continuation)
+        do {
+            try await processSSEStream(
+                bytes: controlled,
+                stallTimeout: nil
+            ) { event, diagnostics in
+                try await client.handleSSEEvent(
+                    event, state: state, diagnostics: diagnostics, continuation: streamPair.continuation
+                )
+            }
+            Issue.record("Expected provider termination missing")
+        } catch let error as AgentError {
+            guard case .llmError(.streamFailed(.providerTerminationMissing)) = error else {
+                Issue.record("Expected provider termination missing, got \(error)")
+                return
+            }
         }
-        #expect(!completed)
         streamPair.continuation.finish()
 
         var deltas: [StreamDelta] = []
@@ -213,7 +222,7 @@ struct AnthropicStreamingTests {
         let result = await collectStreamResult(client.stream(messages: [.user("Hi")], tools: [], requestContext: nil))
 
         #expect(result.deltas == [.content("partial")])
-        assertStreamStalled(result.error)
+        assertProviderTerminationMissing(result.error)
     }
 
     @Test
@@ -242,12 +251,35 @@ struct AnthropicStreamingTests {
             Issue.record("Expected error")
         } catch let error as AgentError {
             guard case let .llmError(transport) = error,
-                  case let .other(msg) = transport
+                  case let .streamFailed(.providerError(provider, code, message)) = transport
             else {
-                Issue.record("Expected .other, got \(error)")
+                Issue.record("Expected providerError, got \(error)")
                 return
             }
-            #expect(msg.contains("overloaded_error"))
+            #expect(provider == .anthropic)
+            #expect(code == "overloaded_error")
+            #expect(message == "Overloaded")
+        }
+    }
+
+    @Test
+    func malformedToolDeltaCarriesSSEDiagnostics() async throws {
+        let toolDelta = #"{"type":"content_block_delta","index":4,"delta":"#
+            + #"{"type":"input_json_delta","partial_json":"{}"}}"#
+        let lines = [
+            sseLine(toolDelta)
+        ]
+
+        do {
+            _ = try await collectStreamDeltas(client: makeClient(), lines: lines)
+            Issue.record("Expected malformed stream")
+        } catch let error as AgentError {
+            guard case let .llmError(.streamFailed(.malformedStream(reason, diagnostics))) = error else {
+                Issue.record("Expected malformed stream, got \(error)")
+                return
+            }
+            #expect(reason == .toolCallDeltaWithoutStart(index: 4))
+            #expect(diagnostics.eventsObserved == 1)
         }
     }
 
@@ -659,16 +691,13 @@ extension AnthropicClient {
         continuation: AsyncThrowingStream<StreamDelta, Error>.Continuation
     ) async throws {
         let state = AnthropicStreamState()
-        let completed = try await processSSEStream(
+        try await processSSEStream(
             bytes: byteStream,
             stallTimeout: nil
-        ) { event in
+        ) { event, diagnostics in
             try await self.handleSSEEvent(
-                event, state: state, continuation: continuation
+                event, state: state, diagnostics: diagnostics, continuation: continuation
             )
-        }
-        guard completed else {
-            throw AgentError.llmError(.streamStalled)
         }
         continuation.finish()
     }
@@ -678,16 +707,13 @@ extension AnthropicClient {
         continuation: AsyncThrowingStream<StreamDelta, Error>.Continuation
     ) async throws -> AnthropicStreamState {
         let state = AnthropicStreamState()
-        let completed = try await processSSEStream(
+        try await processSSEStream(
             bytes: byteStream,
             stallTimeout: nil
-        ) { event in
+        ) { event, diagnostics in
             try await self.handleSSEEvent(
-                event, state: state, continuation: continuation
+                event, state: state, diagnostics: diagnostics, continuation: continuation
             )
-        }
-        guard completed else {
-            throw AgentError.llmError(.streamStalled)
         }
         continuation.finish()
         return state

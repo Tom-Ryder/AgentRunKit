@@ -5,6 +5,7 @@ import Foundation
 /// For provider-specific setup, see <doc:LLMProviders>.
 public protocol LLMClient: Sendable {
     var contextWindowSize: Int? { get }
+    var providerIdentifier: ProviderIdentifier { get }
 
     func generate(
         messages: [ChatMessage],

@@ -888,6 +888,7 @@ private let promptTooLongError = TransportError.httpError(
 )
 
 actor CapturingMockLLMClient: LLMClient {
+    nonisolated let providerIdentifier: ProviderIdentifier = .custom("CapturingMockLLMClient")
     private let responses: [AssistantMessage]
     private var callIndex: Int = 0
     private(set) var capturedMessages: [ChatMessage] = []
@@ -925,6 +926,7 @@ private enum RunAwareStep {
 }
 
 private actor RunAwareMockLLMClient: LLMClient, HistoryRewriteAwareClient {
+    nonisolated let providerIdentifier: ProviderIdentifier = .custom("RunAwareMockLLMClient")
     let contextWindowSize: Int?
     private let steps: [RunAwareStep]
     private var stepIndex = 0

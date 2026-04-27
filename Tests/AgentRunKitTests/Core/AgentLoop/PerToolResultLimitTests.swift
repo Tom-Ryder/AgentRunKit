@@ -22,6 +22,7 @@ private struct LimitedTool: AnyTool {
 }
 
 private actor MockClient: LLMClient {
+    nonisolated let providerIdentifier: ProviderIdentifier = .custom("PerToolResultLimitMockClient")
     let contextWindowSize: Int? = nil
     private let responses: [AssistantMessage]
     private var callIndex = 0

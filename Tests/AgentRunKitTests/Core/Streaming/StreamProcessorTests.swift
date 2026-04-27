@@ -8,6 +8,7 @@ private let promptTooLongError = AgentError.llmError(
 private let testFactory = StreamEventFactory(sessionID: nil, runID: nil, origin: .live)
 
 private struct ScriptedStreamClient: LLMClient {
+    let providerIdentifier: ProviderIdentifier = .custom("ScriptedStreamClient")
     let deltas: [StreamDelta]
     let error: (any Error)?
 
@@ -133,7 +134,7 @@ struct StreamProcessorEmittedOutputTests {
 
 struct StreamProcessorCompletionTests {
     @Test
-    func streamEndingWithoutFinishedDeltaThrowsStreamStalled() async {
+    func streamEndingWithoutFinishedDeltaThrowsFinishedDeltaMissing() async {
         let client = ScriptedStreamClient(
             deltas: [.content("partial")],
             error: nil
@@ -150,13 +151,17 @@ struct StreamProcessorCompletionTests {
                 emittedOutput: &emittedOutput,
                 continuation: eventContinuation
             )
-            Issue.record("Expected streamStalled error")
+            Issue.record("Expected finishedDeltaMissing error")
         } catch let error as AgentError {
             guard case let .llmError(transport) = error else {
                 Issue.record("Expected llmError, got \(error)")
                 return
             }
-            #expect(transport == .streamStalled)
+            guard case let .streamFailed(.finishedDeltaMissing(diagnostics)) = transport else {
+                Issue.record("Expected finishedDeltaMissing, got \(transport)")
+                return
+            }
+            #expect(diagnostics.eventsObserved == 1)
             #expect(emittedOutput)
         } catch {
             Issue.record("Expected AgentError, got \(error)")
@@ -259,12 +264,22 @@ struct StreamProcessorContinuityTests {
         let (_, eventContinuation) = AsyncThrowingStream<StreamEvent, Error>.makeStream()
         var totalUsage = TokenUsage()
 
-        await #expect(throws: AgentError.malformedStream(.conflictingAssistantContinuity)) {
+        do {
             _ = try await processor.process(
                 messages: [.user("Hi")],
                 totalUsage: &totalUsage,
                 continuation: eventContinuation
             )
+            Issue.record("Expected conflicting assistant continuity")
+        } catch let error as AgentError {
+            guard case let .llmError(.streamFailed(.malformedStream(reason, diagnostics))) = error else {
+                Issue.record("Expected malformed stream, got \(error)")
+                return
+            }
+            #expect(reason == .conflictingAssistantContinuity)
+            #expect(diagnostics.eventsObserved == 0)
+        } catch {
+            Issue.record("Expected AgentError, got \(error)")
         }
     }
 
