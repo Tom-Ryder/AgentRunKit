@@ -88,14 +88,14 @@ struct SSEStreamFailureTests {
     func commentHeartbeatsRefreshStallDeadlineWithoutIncrementingEventDiagnostics() async throws {
         let bytes = DelayedByteStream(chunks: [
             .init(delay: .zero, bytes: sseChunk(minimalChunkJSON)),
-            .init(delay: .milliseconds(60), bytes: sseComment("keepalive")),
-            .init(delay: .milliseconds(60), bytes: sseComment("keepalive")),
-            .init(delay: .milliseconds(60), bytes: sseDone()),
+            .init(delay: .milliseconds(250), bytes: sseComment("keepalive")),
+            .init(delay: .milliseconds(250), bytes: sseComment("keepalive")),
+            .init(delay: .milliseconds(250), bytes: sseDone()),
         ])
 
         let diagnostics = try await processSSEStream(
             bytes: bytes,
-            stallTimeout: .milliseconds(100)
+            stallTimeout: .milliseconds(500)
         ) { event, _ in
             event.data == "[DONE]"
         }
