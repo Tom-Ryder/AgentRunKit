@@ -90,7 +90,7 @@ public struct TTSClient<P: TTSProvider>: Sendable {
     }
 
     private static func executeChunks(
-        _ chunks: [String],
+        _ chunks: [SentenceChunker.Chunk],
         voice: String,
         options: TTSOptions,
         provider: P,
@@ -108,11 +108,11 @@ public struct TTSClient<P: TTSProvider>: Sendable {
             while nextToYield < totalChunks {
                 while activeTasks < maxConcurrent, nextToSend < totalChunks {
                     let chunkIndex = nextToSend
-                    let chunkText = chunks[chunkIndex]
+                    let chunk = chunks[chunkIndex]
                     group.addTask {
                         do {
                             let data = try await provider.generate(
-                                text: chunkText,
+                                text: chunk.text,
                                 voice: voice,
                                 options: options
                             )
@@ -121,12 +121,16 @@ public struct TTSClient<P: TTSProvider>: Sendable {
                             throw CancellationError()
                         } catch let error as TransportError {
                             throw TTSError.chunkFailed(
-                                index: chunkIndex, total: totalChunks, error
+                                index: chunkIndex,
+                                total: totalChunks,
+                                sourceRange: chunk.sourceRange,
+                                error
                             )
                         } catch {
                             throw TTSError.chunkFailed(
                                 index: chunkIndex,
                                 total: totalChunks,
+                                sourceRange: chunk.sourceRange,
                                 TransportError.other(String(describing: error))
                             )
                         }
@@ -140,9 +144,12 @@ public struct TTSClient<P: TTSProvider>: Sendable {
                 buffer[index] = data
 
                 while let audio = buffer.removeValue(forKey: nextToYield) {
+                    let chunk = chunks[nextToYield]
                     continuation.yield(TTSSegment(
                         index: nextToYield,
                         total: totalChunks,
+                        text: chunk.text,
+                        sourceRange: chunk.sourceRange,
                         audio: audio
                     ))
                     nextToYield += 1

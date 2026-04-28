@@ -125,7 +125,8 @@ let audio = try await tts.generate(text: "Hello, world.", voice: "nova")
 
 // Streaming segments
 for try await segment in tts.stream(text: longArticle) {
-    player.play(segment.audio)  // segment.index, segment.total available
+    player.play(segment.audio)
+    print("chunk \(segment.index + 1)/\(segment.total) bytes \(segment.sourceRange): \(segment.text)")
 }
 
 // Full concatenated output
@@ -142,6 +143,8 @@ let fullAudio = try await tts.generateAll(text: longArticle, options: TTSOptions
 ### How Chunking Works
 
 The chunker splits input text on sentence boundaries using `NLTokenizer`. Sentences are packed into chunks up to the provider's `maxChunkCharacters` limit. Oversized sentences fall back to word-level, then character-level splitting. ``TTSClient`` dispatches up to `maxConcurrent` chunk requests in parallel using a task group. Results are buffered and yielded in original order.
+
+Each ``TTSSegment`` carries the chunker's output `text` and a `sourceRange` of UTF-8 byte offsets into the original input. For force-split chunks, `text` normalizes whitespace to single spaces while `sourceRange` covers the discontiguous span of the words it contains, preserving left-to-right monotonicity for caller-side highlighting and forced alignment.
 
 For MP3 output, the concatenator strips ID3v2 headers, Xing/Info frames, and ID3v1 tails from interior segments for clean concatenation.
 
