@@ -39,6 +39,26 @@ for try await event in stream {
 
 Expected terminal states such as max-iterations and token-budget exhaustion arrive as `.finished` events with structural ``FinishReason`` payloads. Only genuine runtime failures throw. Cancelling the consuming task cancels the underlying LLM request and does not guarantee a terminal `.finished` event.
 
+Use ``RequestContext`` stream callbacks when telemetry needs the live events emitted by the LLM stream processor or the terminal state of each underlying LLM stream call:
+
+```swift
+let requestContext = RequestContext(
+    onStreamEvent: { event in
+        print(event.kind)
+    },
+    onStreamComplete: { completion in
+        print(completion)
+    }
+)
+let stream = agent.stream(
+    userMessage: "Summarize this paper.",
+    context: ctx,
+    requestContext: requestContext
+)
+```
+
+Stream callbacks are scoped per LLM stream call, not per user-visible `Agent.stream(...)` invocation. Reactive recovery can emit a failed completion followed by a successful completion for the retry. Replayed events from `Agent.resume(...)` do not fire callbacks. Non-stream errors propagate through the throwing stream without a completion callback, and callbacks must return synchronously without blocking I/O.
+
 ## StreamEvent Envelope
 
 ``StreamEvent`` is an envelope struct. The semantic event is carried by ``StreamEvent/kind`` as a ``StreamEvent/Kind`` value.
