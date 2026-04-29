@@ -22,7 +22,8 @@ public struct TTSClient<P: TTSProvider>: Sendable {
         guard !trimmed.isEmpty else {
             throw TTSError.emptyText
         }
-        let encoding = TTSAudioEncoding(options.responseFormat ?? provider.config.defaultFormat)
+        let format = options.responseFormat ?? provider.config.defaultFormat
+        let encoding = provider.resolvedEncoding(for: format, options: options)
         let leadingShift = SentenceChunker.trimByteOffset(in: text)
         let chunk = TTSChunk(
             index: 0,
@@ -64,7 +65,8 @@ public struct TTSClient<P: TTSProvider>: Sendable {
         }
 
         let publicChunks = Self.makePublicChunks(internalChunks)
-        let encoding = TTSAudioEncoding(options.responseFormat ?? provider.config.defaultFormat)
+        let format = options.responseFormat ?? provider.config.defaultFormat
+        let encoding = provider.resolvedEncoding(for: format, options: options)
         let provider = provider
         let maxConcurrent = maxConcurrent
 
@@ -108,33 +110,77 @@ public struct TTSClient<P: TTSProvider>: Sendable {
             segments.append(segment)
         }
 
-        let effectiveFormat = options.responseFormat ?? provider.config.defaultFormat
-        let audio: Data = if effectiveFormat == .mp3 {
-            MP3Concatenator.concatenate(segments.map(\.audio))
-        } else {
-            Self.appendingConcatenation(segments.map(\.audio))
+        guard let firstFormat = segments.first?.encoding.format else {
+            return TTSConcatenationResult(audio: Data(), manifest: [])
         }
+        precondition(
+            segments.allSatisfy { $0.encoding.format == firstFormat },
+            "TTSClient stream must yield segments with a single encoding format"
+        )
+
+        let audioSegments = segments.map(\.audio)
+        let (audio, byteRanges) = Self.concatenate(audioSegments, format: firstFormat)
+        precondition(
+            byteRanges.count == segments.count,
+            "Concatenation must produce one byte range per input segment"
+        )
 
         var manifest: [TTSManifestEntry] = []
         manifest.reserveCapacity(segments.count)
-        var pcmCursor = 0
-        for segment in segments {
-            let timing: TTSSegmentTiming
-            if effectiveFormat == .pcm {
-                let lower = pcmCursor
-                pcmCursor += segment.audio.count
-                timing = TTSSegmentTiming(byteRangeInConcatenatedAudio: lower ..< pcmCursor)
-            } else {
-                timing = .uncomputed
-            }
+        for (segment, range) in zip(segments, byteRanges) {
+            let duration = Self.durationSeconds(forSegment: segment)
             manifest.append(TTSManifestEntry(
                 chunk: segment.chunk,
                 encoding: segment.encoding,
-                timing: timing
+                timing: TTSSegmentTiming(
+                    byteRangeInConcatenatedAudio: range,
+                    durationSeconds: duration
+                )
             ))
         }
 
         return TTSConcatenationResult(audio: audio, manifest: manifest)
+    }
+
+    private static func durationSeconds(forSegment segment: TTSSegment) -> Double? {
+        guard segment.encoding.format == .pcm,
+              let sampleRate = segment.encoding.sampleRate,
+              let channels = segment.encoding.channels,
+              let bitsPerSample = segment.encoding.bitsPerSample,
+              sampleRate > 0, channels > 0,
+              bitsPerSample > 0, bitsPerSample.isMultiple(of: 8)
+        else { return nil }
+        let bytesPerSample = bitsPerSample / 8
+        let (channelBytes, channelOverflow) = sampleRate.multipliedReportingOverflow(by: channels)
+        guard !channelOverflow else { return nil }
+        let (bytesPerSecond, totalOverflow) = channelBytes.multipliedReportingOverflow(by: bytesPerSample)
+        guard !totalOverflow, bytesPerSecond > 0 else { return nil }
+        return Double(segment.audio.count) / Double(bytesPerSecond)
+    }
+
+    private static func concatenate(
+        _ audioSegments: [Data],
+        format: TTSAudioFormat
+    ) -> (audio: Data, byteRanges: [Range<Int>?]) {
+        switch format {
+        case .mp3:
+            let result = MP3Concatenator.concatenateWithRanges(audioSegments)
+            return (result.audio, result.ranges as [Range<Int>?])
+        case .pcm:
+            let audio = appendingConcatenation(audioSegments)
+            var ranges: [Range<Int>?] = []
+            ranges.reserveCapacity(audioSegments.count)
+            var cursor = 0
+            for segment in audioSegments {
+                let lower = cursor
+                cursor += segment.count
+                ranges.append(lower ..< cursor)
+            }
+            return (audio, ranges)
+        case .opus, .aac, .flac, .wav:
+            let audio = appendingConcatenation(audioSegments)
+            return (audio, Array(repeating: nil, count: audioSegments.count))
+        }
     }
 
     private static func appendingConcatenation(_ audioSegments: [Data]) -> Data {

@@ -122,6 +122,150 @@ struct MP3ConcatenatorTests {
     }
 
     @Test
+    func concatenateWithRangesEmptyArrayReturnsEmptyAudioAndRanges() {
+        let result = MP3Concatenator.concatenateWithRanges([])
+        #expect(result.audio.isEmpty)
+        #expect(result.ranges.isEmpty)
+    }
+
+    @Test
+    func concatenateWithRangesContiguousAndCoverFullAudio() {
+        let audio1 = Data([0x10, 0x11])
+        let audio2 = Data([0x20, 0x21, 0x22])
+        let audio3 = Data([0x30])
+
+        var seg1 = makeID3v2Header(contentSize: 0)
+        seg1.append(audio1)
+        seg1.append(makeID3v1Tag())
+
+        var seg2 = makeID3v2Header(contentSize: 0)
+        seg2.append(audio2)
+        seg2.append(makeID3v1Tag())
+
+        var seg3 = makeID3v2Header(contentSize: 0)
+        seg3.append(audio3)
+        seg3.append(makeID3v1Tag())
+
+        let result = MP3Concatenator.concatenateWithRanges([seg1, seg2, seg3])
+
+        #expect(result.ranges.count == 3)
+        var cursor = 0
+        for range in result.ranges {
+            #expect(range.lowerBound == cursor)
+            #expect(range.upperBound > range.lowerBound)
+            cursor = range.upperBound
+        }
+        #expect(cursor == result.audio.count)
+    }
+
+    @Test
+    func concatenateWithRangesAccountsForID3StrippingAcrossSegments() {
+        let audio1 = Data([0x10, 0x11])
+        let audio2 = Data([0x20, 0x21, 0x22])
+        let audio3 = Data([0x30])
+
+        var seg1 = makeID3v2Header(contentSize: 0)
+        seg1.append(audio1)
+        seg1.append(makeID3v1Tag())
+
+        var seg2 = makeID3v2Header(contentSize: 0)
+        seg2.append(audio2)
+        seg2.append(makeID3v1Tag())
+
+        var seg3 = makeID3v2Header(contentSize: 0)
+        seg3.append(audio3)
+        seg3.append(makeID3v1Tag())
+
+        let segments = [seg1, seg2, seg3]
+        let result = MP3Concatenator.concatenateWithRanges(segments)
+        #expect(result.ranges.count == 3)
+
+        let header = makeID3v2Header(contentSize: 0).count
+        let tail = makeID3v1Tag().count
+
+        let expectedFirst = segments[0].count - tail
+        let expectedMiddle = segments[1].count - header - tail
+        let expectedLast = segments[2].count - header
+
+        #expect(result.ranges[0].count == expectedFirst)
+        #expect(result.ranges[1].count == expectedMiddle)
+        #expect(result.ranges[2].count == expectedLast)
+    }
+
+    @Test
+    func concatenateWithRangesSingleSegmentDoesNotStripBoundaryMetadata() {
+        let audio = Data([0xAA, 0xBB, 0xCC])
+        var segment = makeID3v2Header(contentSize: 0)
+        segment.append(audio)
+        segment.append(makeID3v1Tag())
+
+        let result = MP3Concatenator.concatenateWithRanges([segment])
+        #expect(result.audio == segment)
+        #expect(result.ranges == [0 ..< segment.count])
+    }
+
+    @Test
+    func concatenateWithRangesAccountsForXingFrameStrippingAcrossSegments() {
+        let audio1 = Data([0x10, 0x11, 0x12])
+        let audio2 = Data([0x20, 0x21])
+        let audio3 = Data([0x30, 0x31, 0x32, 0x33])
+
+        let header = makeID3v2Header(contentSize: 0)
+        let xing = buildMPEG1StereoXingFrame()
+        let tail = makeID3v1Tag()
+
+        func wrap(_ payload: Data) -> Data {
+            var data = header
+            data.append(xing)
+            data.append(payload)
+            data.append(tail)
+            return data
+        }
+
+        let segments = [wrap(audio1), wrap(audio2), wrap(audio3)]
+        let result = MP3Concatenator.concatenateWithRanges(segments)
+
+        #expect(result.ranges.count == 3)
+        #expect(result.ranges[0].count == header.count + audio1.count)
+        #expect(result.ranges[1].count == audio2.count)
+        #expect(result.ranges[2].count == audio3.count + tail.count)
+
+        let expectedTotal = header.count + audio1.count + audio2.count + audio3.count + tail.count
+        #expect(result.audio.count == expectedTotal)
+    }
+
+    @Test
+    func concatenateWithRangesAccountsForInfoFrameStrippingAcrossSegments() {
+        let audio1 = Data([0xA0, 0xA1])
+        let audio2 = Data([0xB0])
+        let audio3 = Data([0xC0, 0xC1, 0xC2])
+
+        let header = makeID3v2Header(contentSize: 0)
+        var info = buildMPEG1StereoXingFrame()
+        info[36] = 0x49
+        info[37] = 0x6E
+        info[38] = 0x66
+        info[39] = 0x6F
+        let tail = makeID3v1Tag()
+
+        func wrap(_ payload: Data) -> Data {
+            var data = header
+            data.append(info)
+            data.append(payload)
+            data.append(tail)
+            return data
+        }
+
+        let segments = [wrap(audio1), wrap(audio2), wrap(audio3)]
+        let result = MP3Concatenator.concatenateWithRanges(segments)
+
+        #expect(result.ranges.count == 3)
+        #expect(result.ranges[0].count == header.count + audio1.count)
+        #expect(result.ranges[1].count == audio2.count)
+        #expect(result.ranges[2].count == audio3.count + tail.count)
+    }
+
+    @Test
     func dataWithoutID3OrXingPassesThroughUnchanged() {
         let audio = Data([0xFF, 0xFB, 0x90, 0x00, 0xAA, 0xBB, 0xCC, 0xDD])
         #expect(MP3Concatenator.stripID3v2Header(audio) == audio)

@@ -215,6 +215,43 @@ struct OpenAITTSProviderTests {
     }
 
     @Test
+    func resolvedEncodingForPCMReturnsDocumentedFormatValues() {
+        let encoding = provider.resolvedEncoding(for: .pcm, options: TTSOptions())
+        #expect(encoding.format == .pcm)
+        #expect(encoding.sampleRate == 24000)
+        #expect(encoding.bitsPerSample == 16)
+        #expect(encoding.mimeType == TTSAudioFormat.pcm.mimeType)
+        #expect(encoding.fileExtension == TTSAudioFormat.pcm.fileExtension)
+    }
+
+    @Test
+    func resolvedEncodingForPCMLeavesChannelsNilUntilSpeechEndpointDocumentsIt() {
+        let encoding = provider.resolvedEncoding(for: .pcm, options: TTSOptions())
+        #expect(encoding.channels == nil)
+    }
+
+    @Test
+    func resolvedEncodingForNonPCMFormatsLeavesPCMFieldsNil() {
+        for format in TTSAudioFormat.allCases where format != .pcm {
+            let encoding = provider.resolvedEncoding(for: format, options: TTSOptions())
+            #expect(encoding.format == format)
+            #expect(encoding.sampleRate == nil)
+            #expect(encoding.channels == nil)
+            #expect(encoding.bitsPerSample == nil)
+        }
+    }
+
+    @Test
+    func resolvedEncodingForPCMIgnoresOptionsSpeedAndResponseFormat() {
+        let opts = TTSOptions(speed: 2.5, responseFormat: .mp3)
+        let encoding = provider.resolvedEncoding(for: .pcm, options: opts)
+        #expect(encoding.format == .pcm)
+        #expect(encoding.sampleRate == 24000)
+        #expect(encoding.channels == nil)
+        #expect(encoding.bitsPerSample == 16)
+    }
+
+    @Test
     func speedAtBoundariesIsAccepted() throws {
         let lowRequest = try provider.buildURLRequest(
             text: "Hi",

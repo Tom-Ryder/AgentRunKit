@@ -145,10 +145,16 @@ actor ConcurrencyTracker: TTSProvider {
     }
 }
 
+let mp3WrapperHeader = Data([0x49, 0x44, 0x33, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00])
+let mp3WrapperTail: Data = {
+    var tail = Data([0x54, 0x41, 0x47])
+    tail.append(contentsOf: [UInt8](repeating: 0x00, count: 125))
+    return tail
+}()
+
 func wrapInMP3Metadata(_ text: String) -> Data {
-    var data = Data([0x49, 0x44, 0x33, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00])
+    var data = mp3WrapperHeader
     data.append(Data(text.utf8))
-    data.append(contentsOf: [0x54, 0x41, 0x47])
-    data.append(contentsOf: [UInt8](repeating: 0x00, count: 125))
+    data.append(mp3WrapperTail)
     return data
 }

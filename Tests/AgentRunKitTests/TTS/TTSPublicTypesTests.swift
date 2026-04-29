@@ -219,3 +219,48 @@ struct TTSConcatenationResultTests {
         #expect(result.manifest == [entry])
     }
 }
+
+private struct DefaultEncodingProvider: TTSProvider {
+    let config = TTSProviderConfig(
+        maxChunkCharacters: 100,
+        defaultVoice: "voice",
+        defaultFormat: .pcm
+    )
+
+    func generate(
+        text _: String,
+        voice _: String,
+        options _: TTSOptions,
+        context _: TTSChunkContext
+    ) async -> Data {
+        Data()
+    }
+}
+
+struct TTSProviderResolvedEncodingDefaultTests {
+    @Test
+    func defaultImplementationReturnsFormatBackedEncodingWithNilPCMFields() {
+        let provider = DefaultEncodingProvider()
+        for format in TTSAudioFormat.allCases {
+            let encoding = provider.resolvedEncoding(for: format, options: TTSOptions())
+            #expect(encoding.format == format)
+            #expect(encoding.mimeType == format.mimeType)
+            #expect(encoding.fileExtension == format.fileExtension)
+            #expect(encoding.sampleRate == nil)
+            #expect(encoding.channels == nil)
+            #expect(encoding.bitsPerSample == nil)
+        }
+    }
+
+    @Test
+    func defaultImplementationIgnoresOptionsValues() {
+        let provider = DefaultEncodingProvider()
+        let opts = TTSOptions(speed: 1.25, responseFormat: .mp3)
+        let viaPCM = provider.resolvedEncoding(for: .pcm, options: opts)
+        let viaMP3 = provider.resolvedEncoding(for: .mp3, options: opts)
+        #expect(viaPCM.format == .pcm)
+        #expect(viaMP3.format == .mp3)
+        #expect(viaPCM.sampleRate == nil)
+        #expect(viaMP3.sampleRate == nil)
+    }
+}

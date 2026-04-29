@@ -3,12 +3,27 @@ import Foundation
 /// A speech synthesis backend that converts text to audio.
 public protocol TTSProvider: Sendable {
     var config: TTSProviderConfig { get }
+
+    func resolvedEncoding(
+        for format: TTSAudioFormat,
+        options: TTSOptions
+    ) -> TTSAudioEncoding
+
     func generate(
         text: String,
         voice: String,
         options: TTSOptions,
         context: TTSChunkContext
     ) async throws -> Data
+}
+
+public extension TTSProvider {
+    func resolvedEncoding(
+        for format: TTSAudioFormat,
+        options _: TTSOptions
+    ) -> TTSAudioEncoding {
+        TTSAudioEncoding(format)
+    }
 }
 
 /// Configuration for a TTSProvider's chunking and default settings.

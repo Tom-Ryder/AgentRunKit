@@ -141,18 +141,36 @@ for entry in result.manifest {
     if let range = entry.timing.byteRangeInConcatenatedAudio {
         print("chunk \(entry.chunk.index): bytes \(range) of result.audio")
     }
+    if let duration = entry.timing.durationSeconds {
+        print("chunk \(entry.chunk.index): \(duration) seconds")
+    }
 }
 
 // Forecast the chunk plan without generating audio
 let plan = tts.chunks(for: longArticle)
 ```
 
-`generateWithManifest` populates ``TTSSegmentTiming/byteRangeInConcatenatedAudio`` for `pcm`
-output today. Other formats leave it `nil` until the framework can compute byte ranges defensibly.
 `generateAll` is implemented on top of the same path and returns `result.audio`.
 
 `stream` segments always carry ``TTSSegmentTiming/uncomputed`` timing. Per-segment audio is the
 raw chunk bytes, and final container offsets are only meaningful after concatenation.
+
+#### Supported Timing
+
+| Format | Byte range | Duration |
+|---|---:|---:|
+| `pcm`  | yes | yes, when the provider supplies sample rate, channels, and bits per sample |
+| `mp3`  | yes (accounts for ID3v2, Xing/Info, and ID3v1 stripping) | not supported |
+| `wav`, `flac`, `opus`, `aac` | not supported | not supported |
+
+Unsupported values are reported as `nil` rather than guessed. Duration for `pcm` is computed as
+`bytes / (sampleRate * channels * (bitsPerSample / 8))` when the provider's
+``TTSProvider/resolvedEncoding(for:options:)`` returns a fully populated ``TTSAudioEncoding``.
+Built-in providers override the hook only with values they have published documentation for.
+``OpenAITTSProvider`` populates `pcm` `sampleRate` and `bitsPerSample` from OpenAI's
+`/v1/audio/speech` documentation but leaves `channels` `nil` until the speech endpoint's channel
+count is documented separately, so OpenAI `pcm` `durationSeconds` remains `nil`. Custom providers
+using the protocol's default implementation report `nil` PCM fields and therefore `nil` duration.
 
 ### TTSOptions
 
@@ -188,11 +206,28 @@ For MP3 output, the concatenator strips ID3v2 headers, Xing/Info frames, and ID3
 
 ### Custom Providers
 
-Conform to ``TTSProvider`` to use any speech synthesis backend. ``TTSClient`` delivers a ``TTSChunkContext`` carrying the chunk plan and requested encoding alongside each call. Providers should treat `context.encoding` as the authoritative source for the format to produce, and can additionally use it for logging or request correlation:
+Conform to ``TTSProvider`` to use any speech synthesis backend. ``TTSClient`` delivers a
+``TTSChunkContext`` carrying the chunk plan and requested encoding alongside each call. Providers
+should treat `context.encoding` as the authoritative source for the format to produce, and can
+additionally use it for logging or request correlation.
+
+Override ``TTSProvider/resolvedEncoding(for:options:)`` to surface documented `pcm` sample rate,
+channel count, and bit depth so the framework can compute ``TTSSegmentTiming/durationSeconds`` for
+`pcm` segments. The default implementation returns ``TTSAudioEncoding`` with `nil` PCM fields, so
+providers without published encoding values can omit it.
 
 ```swift
 struct MyTTSProvider: TTSProvider {
     let config: TTSProviderConfig
+
+    func resolvedEncoding(for format: TTSAudioFormat, options: TTSOptions) -> TTSAudioEncoding {
+        switch format {
+        case .pcm:
+            TTSAudioEncoding(format, sampleRate: 24000, channels: 1, bitsPerSample: 16)
+        case .mp3, .opus, .aac, .flac, .wav:
+            TTSAudioEncoding(format)
+        }
+    }
 
     func generate(
         text: String,

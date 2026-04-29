@@ -31,6 +31,18 @@ public struct OpenAITTSProvider: TTSProvider, Sendable {
         )
     }
 
+    public func resolvedEncoding(
+        for format: TTSAudioFormat,
+        options _: TTSOptions
+    ) -> TTSAudioEncoding {
+        switch format {
+        case .pcm:
+            TTSAudioEncoding(format, sampleRate: 24000, bitsPerSample: 16)
+        case .mp3, .opus, .aac, .flac, .wav:
+            TTSAudioEncoding(format)
+        }
+    }
+
     public func generate(
         text: String,
         voice: String,

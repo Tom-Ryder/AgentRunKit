@@ -2,9 +2,15 @@ import Foundation
 
 enum MP3Concatenator {
     static func concatenate(_ segments: [Data]) -> Data {
-        guard !segments.isEmpty else { return Data() }
+        concatenateWithRanges(segments).audio
+    }
+
+    static func concatenateWithRanges(_ segments: [Data]) -> (audio: Data, ranges: [Range<Int>]) {
+        guard !segments.isEmpty else { return (Data(), []) }
 
         var result = Data()
+        var ranges: [Range<Int>] = []
+        ranges.reserveCapacity(segments.count)
         for (index, segment) in segments.enumerated() {
             var data = segment
             if index > 0 {
@@ -14,9 +20,11 @@ enum MP3Concatenator {
             if index < segments.count - 1 {
                 data = stripID3v1Tail(data)
             }
+            let lower = result.count
             result.append(data)
+            ranges.append(lower ..< result.count)
         }
-        return result
+        return (result, ranges)
     }
 
     static func stripID3v2Header(_ data: Data) -> Data {
