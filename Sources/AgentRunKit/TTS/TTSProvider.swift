@@ -4,6 +4,7 @@ import Foundation
 public protocol TTSProvider: Sendable {
     var config: TTSProviderConfig { get }
 
+    /// Returns the concrete audio encoding the provider will produce for a requested format.
     func resolvedEncoding(
         for format: TTSAudioFormat,
         options: TTSOptions
