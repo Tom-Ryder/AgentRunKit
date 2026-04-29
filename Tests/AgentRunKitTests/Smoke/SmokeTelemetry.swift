@@ -93,19 +93,18 @@ func smokeFail(
     throw SmokeAssertionFailure(fileID: String(describing: fileID), line: line, message: message)
 }
 
-func runSmoke<Client: LLMClient>(
+func runSmoke(
     target: String,
     test testName: String = #function,
     provider: String,
     model: String,
-    using client: Client,
-    _ body: (Client) async throws -> Void
+    _ body: () async throws -> Void
 ) async throws {
     let start = Date()
     let trimmedTestName = trimmedSmokeTestName(testName)
 
     do {
-        try await body(client)
+        try await body()
         printSmokeContext(
             suite: target,
             test: trimmedTestName,
@@ -154,6 +153,24 @@ func runSmoke<Client: LLMClient>(
     }
 }
 
+func runSmoke<Client: LLMClient>(
+    target: String,
+    test testName: String = #function,
+    provider: String,
+    model: String,
+    using client: Client,
+    _ body: (Client) async throws -> Void
+) async throws {
+    try await runSmoke(
+        target: target,
+        test: testName,
+        provider: provider,
+        model: model
+    ) {
+        try await body(client)
+    }
+}
+
 func classifySmokeFailure(_ error: Error) -> SmokeFailureClassification {
     if let failure = error as? SmokeTelemetryFailure {
         var classification = classifySmokeFailure(failure.underlying)
@@ -190,6 +207,10 @@ func classifySmokeFailure(_ error: Error) -> SmokeFailureClassification {
         )
     }
 
+    if let ttsError = error as? TTSError {
+        return classifySmokeTTSError(ttsError)
+    }
+
     guard let agentError = error as? AgentError else {
         return SmokeFailureClassification(
             kind: .other,
@@ -214,6 +235,20 @@ func classifySmokeFailure(_ error: Error) -> SmokeFailureClassification {
             kind: .other,
             httpStatus: nil,
             bodyExcerpt: smokeExcerpt(agentError.errorDescription ?? String(describing: agentError)),
+            assistantTextExcerpt: nil
+        )
+    }
+}
+
+private func classifySmokeTTSError(_ ttsError: TTSError) -> SmokeFailureClassification {
+    switch ttsError {
+    case let .chunkFailed(_, _, _, transportError):
+        classifySmokeTransportError(transportError)
+    default:
+        SmokeFailureClassification(
+            kind: .other,
+            httpStatus: nil,
+            bodyExcerpt: smokeExcerpt(ttsError.errorDescription ?? String(describing: ttsError)),
             assistantTextExcerpt: nil
         )
     }

@@ -22,6 +22,20 @@ struct SmokeTelemetryTests {
         #expect(classification.bodyExcerpt?.contains("invalid_request_error") == true)
     }
 
+    @Test func classifierUnwrapsTTSChunkTransportFailure() {
+        let classification = classifySmokeFailure(
+            TTSError.chunkFailed(
+                index: 0,
+                total: 1,
+                sourceRange: 0 ..< 4,
+                .rateLimited(retryAfter: .seconds(3))
+            )
+        )
+
+        #expect(classification.kind == .rateLimited)
+        #expect(classification.httpStatus == 429)
+    }
+
     @Test func classifierPreservesStreamFailureTaxonomy() {
         let cases: [(TransportError, SmokeFailureKind)] = [
             (.streamFailed(.idleTimeout(diagnostics: .empty)), .idleTimeout),

@@ -26,6 +26,9 @@ enum HTTPRetry {
             do {
                 (data, response) = try await session.data(for: urlRequest)
             } catch {
+                if isCancellation(error) {
+                    throw CancellationError()
+                }
                 lastError = TransportError.networkError(error)
                 continue
             }
@@ -79,6 +82,9 @@ enum HTTPRetry {
             do {
                 (bytes, response) = try await session.bytes(for: urlRequest)
             } catch {
+                if isCancellation(error) {
+                    throw CancellationError()
+                }
                 lastError = TransportError.networkError(error)
                 continue
             }
@@ -163,6 +169,13 @@ enum HTTPRetry {
             if let date = formatter.date(from: string) { return date }
         }
         return nil
+    }
+
+    static func isCancellation(_ error: any Error) -> Bool {
+        if error is CancellationError {
+            return true
+        }
+        return (error as? URLError)?.code == .cancelled
     }
 
     static func collectErrorBody(from bytes: URLSession.AsyncBytes) async -> String {

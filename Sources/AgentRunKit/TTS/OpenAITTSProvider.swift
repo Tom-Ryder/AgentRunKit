@@ -52,18 +52,12 @@ public struct OpenAITTSProvider: TTSProvider, Sendable {
             encoding: context.encoding
         )
 
-        do {
-            let (data, _) = try await HTTPRetry.performData(
-                urlRequest: urlRequest, session: session, retryPolicy: retryPolicy
-            )
-            return data
-        } catch is CancellationError {
-            throw CancellationError()
-        } catch let AgentError.llmError(transportError) {
-            throw transportError
-        } catch {
-            throw TransportError.other(String(describing: error))
-        }
+        let (data, _) = try await HTTPDataRetry.perform(
+            urlRequest: urlRequest,
+            session: session,
+            retryPolicy: retryPolicy
+        )
+        return data
     }
 
     func buildURLRequest(

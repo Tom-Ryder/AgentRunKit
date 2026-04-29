@@ -104,6 +104,7 @@ For a complete walkthrough, see <doc:GettingStarted>.
 - ``VertexGoogleClient``
 - ``ResponsesAPIClient``
 - ``RetryPolicy``
+- ``HTTPDataRetry``
 - ``GoogleAuthService``
 
 ### Provider Capabilities

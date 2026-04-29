@@ -118,6 +118,7 @@ These methods cover different use cases:
 | `generate(text:voice:options:)` | `Data` | Single request, no chunking |
 | `stream(text:voice:options:)` | `AsyncThrowingStream<TTSSegment, Error>` | Chunked, yields ordered ``TTSSegment`` values as they complete |
 | `generateAll(text:voice:options:)` | `Data` | Chunked, concatenates all segments into one `Data` |
+| `generateWithManifest(text:voice:options:)` | ``TTSConcatenationResult`` | Like `generateAll` but also returns a per-segment manifest of chunk, encoding, and timing |
 | `chunks(for:)` | `[TTSChunk]` | The chunk plan this client will use, without invoking the provider |
 
 ```swift
@@ -134,9 +135,24 @@ for try await segment in tts.stream(text: longArticle) {
 // Full concatenated output
 let fullAudio = try await tts.generateAll(text: longArticle, options: TTSOptions(speed: 1.25))
 
+// Concatenated audio plus a per-segment manifest
+let result = try await tts.generateWithManifest(text: longArticle, options: TTSOptions(responseFormat: .pcm))
+for entry in result.manifest {
+    if let range = entry.timing.byteRangeInConcatenatedAudio {
+        print("chunk \(entry.chunk.index): bytes \(range) of result.audio")
+    }
+}
+
 // Forecast the chunk plan without generating audio
 let plan = tts.chunks(for: longArticle)
 ```
+
+`generateWithManifest` populates ``TTSSegmentTiming/byteRangeInConcatenatedAudio`` for `pcm`
+output today. Other formats leave it `nil` until the framework can compute byte ranges defensibly.
+`generateAll` is implemented on top of the same path and returns `result.audio`.
+
+`stream` segments always carry ``TTSSegmentTiming/uncomputed`` timing. Per-segment audio is the
+raw chunk bytes, and final container offsets are only meaningful after concatenation.
 
 ### TTSOptions
 
@@ -147,13 +163,26 @@ let plan = tts.chunks(for: longArticle)
 
 ### How Chunking Works
 
-The chunker splits input text on sentence boundaries using `NLTokenizer`. Sentences are packed into chunks up to the provider's `maxChunkCharacters` limit. Oversized sentences fall back to word-level, then character-level splitting. ``TTSClient`` dispatches up to `maxConcurrent` chunk requests in parallel using a task group. Results are buffered and yielded in original order.
+The chunker splits input text on sentence boundaries using `NLTokenizer`. Sentences are packed up to
+the provider's `maxChunkCharacters` limit. Oversized sentences fall back to word-level, then
+character-level splitting.
 
-Each ``TTSSegment`` aggregates a ``TTSChunk`` (the unit of input text), a ``TTSAudioEncoding`` (the encoding ``TTSClient`` requested from the provider), a ``TTSSegmentTiming`` (audio-time metadata; both fields are `nil` until the framework computes them), and the audio bytes. The chunk, encoding, and timing are the canonical access path; flat computed properties on ``TTSSegment`` (`index`, `total`, `text`, `sourceRange`) forward to the chunk for log statements that need only those fields. For force-split chunks, `text` normalizes whitespace to single spaces while `sourceRange` covers the discontiguous span of the words it contains, preserving left-to-right monotonicity for caller-side highlighting and forced alignment.
+``TTSClient`` dispatches up to `maxConcurrent` chunk requests in parallel. Results are buffered and
+yielded in original order.
 
-``TTSClient/chunks(for:)`` returns the same ``TTSChunk`` values the stream will emit, without calling the provider. Use it to forecast chunk identity before generation or to drive offline planning.
+Each ``TTSSegment`` carries a ``TTSChunk``, a ``TTSAudioEncoding``, a ``TTSSegmentTiming``, and the
+audio bytes. The chunk, encoding, and timing fields are the canonical access path; flat properties
+on ``TTSSegment`` forward to the chunk for compact logging.
 
-``TTSConcatenationResult`` and ``TTSManifestEntry`` describe the shape of a manifest-aware concatenation that pairs the audio bytes with a per-segment manifest of chunk, encoding, and timing.
+For force-split chunks, `text` normalizes whitespace to single spaces while `sourceRange` covers the
+span of the words it contains. That keeps ranges monotonic for caller-side highlighting and forced
+alignment.
+
+``TTSClient/chunks(for:)`` returns the same ``TTSChunk`` values the stream will emit, without calling
+the provider. Use it to forecast chunk identity before generation or to drive offline planning.
+
+``TTSConcatenationResult`` and ``TTSManifestEntry`` pair concatenated audio bytes with a per-segment
+manifest of chunk, encoding, and timing.
 
 For MP3 output, the concatenator strips ID3v2 headers, Xing/Info frames, and ID3v1 tails from interior segments for clean concatenation.
 
@@ -185,6 +214,19 @@ let provider = MyTTSProvider(config: TTSProviderConfig(
 let tts = TTSClient(provider: provider)
 ```
 
+For HTTP-backed providers, ``HTTPDataRetry`` exposes the same retry primitive
+``OpenAITTSProvider`` uses: exponential backoff with jitter and `Retry-After`-aware handling of
+429 responses. Pass a ``RetryPolicy`` and receive `(Data, HTTPURLResponse)` on success or a
+``TransportError`` on failure; cancellation propagates through `CancellationError`.
+
+```swift
+let (data, response) = try await HTTPDataRetry.perform(
+    urlRequest: request,
+    session: .shared,
+    retryPolicy: .default
+)
+```
+
 ## See Also
 
 - <doc:AgentAndChat>
@@ -204,3 +246,4 @@ let tts = TTSClient(provider: provider)
 - ``TTSManifestEntry``
 - ``TTSConcatenationResult``
 - ``TTSOptions``
+- ``HTTPDataRetry``

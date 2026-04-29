@@ -94,19 +94,54 @@ public struct TTSClient<P: TTSProvider>: Sendable {
         voice: String? = nil,
         options: TTSOptions = TTSOptions()
     ) async throws -> Data {
+        try await generateWithManifest(text: text, voice: voice, options: options).audio
+    }
+
+    /// Synthesizes the input and returns concatenated audio plus a per-segment manifest; chunk failure throws.
+    public func generateWithManifest(
+        text: String,
+        voice: String? = nil,
+        options: TTSOptions = TTSOptions()
+    ) async throws -> TTSConcatenationResult {
         var segments: [TTSSegment] = []
         for try await segment in stream(text: text, voice: voice, options: options) {
             segments.append(segment)
         }
 
         let effectiveFormat = options.responseFormat ?? provider.config.defaultFormat
-        if effectiveFormat == .mp3 {
-            return MP3Concatenator.concatenate(segments.map(\.audio))
+        let audio: Data = if effectiveFormat == .mp3 {
+            MP3Concatenator.concatenate(segments.map(\.audio))
+        } else {
+            Self.appendingConcatenation(segments.map(\.audio))
         }
 
-        var result = Data()
+        var manifest: [TTSManifestEntry] = []
+        manifest.reserveCapacity(segments.count)
+        var pcmCursor = 0
         for segment in segments {
-            result.append(segment.audio)
+            let timing: TTSSegmentTiming
+            if effectiveFormat == .pcm {
+                let lower = pcmCursor
+                pcmCursor += segment.audio.count
+                timing = TTSSegmentTiming(byteRangeInConcatenatedAudio: lower ..< pcmCursor)
+            } else {
+                timing = .uncomputed
+            }
+            manifest.append(TTSManifestEntry(
+                chunk: segment.chunk,
+                encoding: segment.encoding,
+                timing: timing
+            ))
+        }
+
+        return TTSConcatenationResult(audio: audio, manifest: manifest)
+    }
+
+    private static func appendingConcatenation(_ audioSegments: [Data]) -> Data {
+        var result = Data()
+        result.reserveCapacity(audioSegments.reduce(0) { $0 + $1.count })
+        for audioSegment in audioSegments {
+            result.append(audioSegment)
         }
         return result
     }
