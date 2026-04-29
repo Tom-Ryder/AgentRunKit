@@ -2,6 +2,13 @@
 import Foundation
 import Testing
 
+private func makeContext(text: String = "Hi", format: TTSAudioFormat = .mp3) -> TTSChunkContext {
+    TTSChunkContext(
+        chunk: TTSChunk(index: 0, total: 1, text: text, sourceRange: 0 ..< text.utf8.count),
+        encoding: TTSAudioEncoding(format)
+    )
+}
+
 struct OpenAITTSProviderTests {
     private let provider = OpenAITTSProvider(
         apiKey: "test-key",
@@ -10,9 +17,14 @@ struct OpenAITTSProviderTests {
     )
 
     @Test
-    func requestBodyIsCorrectlyFormattedJSON() throws {
-        let options = TTSOptions(speed: 1.5, responseFormat: .opus)
-        let request = try provider.buildURLRequest(text: "Hello world", voice: "nova", options: options)
+    func requestBodyEncodesAllFields() throws {
+        let options = TTSOptions(speed: 1.5)
+        let request = try provider.buildURLRequest(
+            text: "Hello world",
+            voice: "nova",
+            options: options,
+            encoding: TTSAudioEncoding(.opus)
+        )
         let body = try #require(request.httpBody)
         let json = try JSONSerialization.jsonObject(with: body) as? [String: Any]
         let parsed = try #require(json)
@@ -25,26 +37,61 @@ struct OpenAITTSProviderTests {
     }
 
     @Test
+    func requestBodyUsesEncodingFormatNotOptionsResponseFormat() throws {
+        let options = TTSOptions(responseFormat: .opus)
+        let request = try provider.buildURLRequest(
+            text: "Hi",
+            voice: "alloy",
+            options: options,
+            encoding: TTSAudioEncoding(.flac)
+        )
+        let body = try #require(request.httpBody)
+        let json = try JSONSerialization.jsonObject(with: body) as? [String: Any]
+        let parsed = try #require(json)
+        #expect(parsed["response_format"] as? String == "flac")
+    }
+
+    @Test
     func authorizationHeaderIsSet() throws {
-        let request = try provider.buildURLRequest(text: "Hi", voice: "alloy", options: TTSOptions())
+        let request = try provider.buildURLRequest(
+            text: "Hi",
+            voice: "alloy",
+            options: TTSOptions(),
+            encoding: TTSAudioEncoding(.mp3)
+        )
         #expect(request.value(forHTTPHeaderField: "Authorization") == "Bearer test-key")
     }
 
     @Test
     func contentTypeIsJSON() throws {
-        let request = try provider.buildURLRequest(text: "Hi", voice: "alloy", options: TTSOptions())
+        let request = try provider.buildURLRequest(
+            text: "Hi",
+            voice: "alloy",
+            options: TTSOptions(),
+            encoding: TTSAudioEncoding(.mp3)
+        )
         #expect(request.value(forHTTPHeaderField: "Content-Type") == "application/json")
     }
 
     @Test
     func requestURLIsCorrect() throws {
-        let request = try provider.buildURLRequest(text: "Hi", voice: "alloy", options: TTSOptions())
+        let request = try provider.buildURLRequest(
+            text: "Hi",
+            voice: "alloy",
+            options: TTSOptions(),
+            encoding: TTSAudioEncoding(.mp3)
+        )
         #expect(request.url?.absoluteString == "https://api.openai.com/v1/audio/speech")
     }
 
     @Test
     func requestMethodIsPOST() throws {
-        let request = try provider.buildURLRequest(text: "Hi", voice: "alloy", options: TTSOptions())
+        let request = try provider.buildURLRequest(
+            text: "Hi",
+            voice: "alloy",
+            options: TTSOptions(),
+            encoding: TTSAudioEncoding(.mp3)
+        )
         #expect(request.httpMethod == "POST")
     }
 
@@ -53,7 +100,12 @@ struct OpenAITTSProviderTests {
         await #expect(throws: TTSError.invalidConfiguration(
             "OpenAI TTS speed must be between 0.25 and 4.0, got 0.1"
         )) {
-            try await provider.generate(text: "Hi", voice: "alloy", options: TTSOptions(speed: 0.1))
+            try await provider.generate(
+                text: "Hi",
+                voice: "alloy",
+                options: TTSOptions(speed: 0.1),
+                context: makeContext()
+            )
         }
     }
 
@@ -62,13 +114,23 @@ struct OpenAITTSProviderTests {
         await #expect(throws: TTSError.invalidConfiguration(
             "OpenAI TTS speed must be between 0.25 and 4.0, got 5.0"
         )) {
-            try await provider.generate(text: "Hi", voice: "alloy", options: TTSOptions(speed: 5.0))
+            try await provider.generate(
+                text: "Hi",
+                voice: "alloy",
+                options: TTSOptions(speed: 5.0),
+                context: makeContext()
+            )
         }
     }
 
     @Test
     func speedNilOmitsSpeedField() throws {
-        let request = try provider.buildURLRequest(text: "Hi", voice: "alloy", options: TTSOptions())
+        let request = try provider.buildURLRequest(
+            text: "Hi",
+            voice: "alloy",
+            options: TTSOptions(),
+            encoding: TTSAudioEncoding(.mp3)
+        )
         let body = try #require(request.httpBody)
         let json = try JSONSerialization.jsonObject(with: body) as? [String: Any]
         let parsed = try #require(json)
@@ -79,7 +141,12 @@ struct OpenAITTSProviderTests {
     @Test
     func speedWithinRangeIncludesSpeedField() throws {
         let options = TTSOptions(speed: 2.0)
-        let request = try provider.buildURLRequest(text: "Hi", voice: "alloy", options: options)
+        let request = try provider.buildURLRequest(
+            text: "Hi",
+            voice: "alloy",
+            options: options,
+            encoding: TTSAudioEncoding(.mp3)
+        )
         let body = try #require(request.httpBody)
         let json = try JSONSerialization.jsonObject(with: body) as? [String: Any]
         let parsed = try #require(json)
@@ -97,27 +164,6 @@ struct OpenAITTSProviderTests {
     }
 
     @Test
-    func defaultFormatUsedWhenOptionsFormatIsNil() throws {
-        let request = try provider.buildURLRequest(text: "Hi", voice: "alloy", options: TTSOptions())
-        let body = try #require(request.httpBody)
-        let json = try JSONSerialization.jsonObject(with: body) as? [String: Any]
-        let parsed = try #require(json)
-
-        #expect(parsed["response_format"] as? String == "mp3")
-    }
-
-    @Test
-    func optionsFormatOverridesDefault() throws {
-        let options = TTSOptions(responseFormat: .flac)
-        let request = try provider.buildURLRequest(text: "Hi", voice: "alloy", options: options)
-        let body = try #require(request.httpBody)
-        let json = try JSONSerialization.jsonObject(with: body) as? [String: Any]
-        let parsed = try #require(json)
-
-        #expect(parsed["response_format"] as? String == "flac")
-    }
-
-    @Test
     func networkErrorUnwrappedFromAgentError() async throws {
         let unreachableProvider = try OpenAITTSProvider(
             apiKey: "key",
@@ -126,7 +172,12 @@ struct OpenAITTSProviderTests {
             retryPolicy: RetryPolicy(maxAttempts: 1)
         )
         do {
-            _ = try await unreachableProvider.generate(text: "Hi", voice: "alloy", options: TTSOptions())
+            _ = try await unreachableProvider.generate(
+                text: "Hi",
+                voice: "alloy",
+                options: TTSOptions(),
+                context: makeContext()
+            )
             Issue.record("Expected TransportError")
         } catch let error as TransportError {
             if case .networkError = error {} else {
@@ -146,14 +197,18 @@ struct OpenAITTSProviderTests {
             retryPolicy: RetryPolicy(maxAttempts: 1)
         )
         let task = Task {
-            try await slowProvider.generate(text: "Hi", voice: "alloy", options: TTSOptions())
+            try await slowProvider.generate(
+                text: "Hi",
+                voice: "alloy",
+                options: TTSOptions(),
+                context: makeContext()
+            )
         }
         task.cancel()
         do {
             _ = try await task.value
             Issue.record("Expected CancellationError")
         } catch is CancellationError {
-            // expected
         } catch {
             Issue.record("Expected CancellationError, got \(type(of: error)): \(error)")
         }
@@ -162,14 +217,20 @@ struct OpenAITTSProviderTests {
     @Test
     func speedAtBoundariesIsAccepted() throws {
         let lowRequest = try provider.buildURLRequest(
-            text: "Hi", voice: "alloy", options: TTSOptions(speed: 0.25)
+            text: "Hi",
+            voice: "alloy",
+            options: TTSOptions(speed: 0.25),
+            encoding: TTSAudioEncoding(.mp3)
         )
         let lowBody = try #require(lowRequest.httpBody)
         let lowJSON = try #require(JSONSerialization.jsonObject(with: lowBody) as? [String: Any])
         #expect(lowJSON["speed"] as? Double == 0.25)
 
         let highRequest = try provider.buildURLRequest(
-            text: "Hi", voice: "alloy", options: TTSOptions(speed: 4.0)
+            text: "Hi",
+            voice: "alloy",
+            options: TTSOptions(speed: 4.0),
+            encoding: TTSAudioEncoding(.mp3)
         )
         let highBody = try #require(highRequest.httpBody)
         let highJSON = try #require(JSONSerialization.jsonObject(with: highBody) as? [String: Any])

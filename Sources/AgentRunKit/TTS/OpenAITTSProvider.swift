@@ -31,7 +31,12 @@ public struct OpenAITTSProvider: TTSProvider, Sendable {
         )
     }
 
-    public func generate(text: String, voice: String, options: TTSOptions) async throws -> Data {
+    public func generate(
+        text: String,
+        voice: String,
+        options: TTSOptions,
+        context: TTSChunkContext
+    ) async throws -> Data {
         if let speed = options.speed {
             guard (0.25 ... 4.0).contains(speed) else {
                 throw TTSError.invalidConfiguration(
@@ -40,7 +45,12 @@ public struct OpenAITTSProvider: TTSProvider, Sendable {
             }
         }
 
-        let urlRequest = try buildURLRequest(text: text, voice: voice, options: options)
+        let urlRequest = try buildURLRequest(
+            text: text,
+            voice: voice,
+            options: options,
+            encoding: context.encoding
+        )
 
         do {
             let (data, _) = try await HTTPRetry.performData(
@@ -56,7 +66,12 @@ public struct OpenAITTSProvider: TTSProvider, Sendable {
         }
     }
 
-    func buildURLRequest(text: String, voice: String, options: TTSOptions) throws -> URLRequest {
+    func buildURLRequest(
+        text: String,
+        voice: String,
+        options: TTSOptions,
+        encoding: TTSAudioEncoding
+    ) throws -> URLRequest {
         let url = baseURL.appendingPathComponent("audio/speech")
         var urlRequest = URLRequest(url: url)
         urlRequest.httpMethod = "POST"
@@ -67,7 +82,7 @@ public struct OpenAITTSProvider: TTSProvider, Sendable {
             model: model,
             input: text,
             voice: voice,
-            responseFormat: (options.responseFormat ?? config.defaultFormat).rawValue,
+            responseFormat: encoding.format.rawValue,
             speed: options.speed
         )
         urlRequest.httpBody = try JSONEncoder().encode(body)

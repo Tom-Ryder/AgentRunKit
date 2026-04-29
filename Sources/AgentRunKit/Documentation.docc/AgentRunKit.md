@@ -164,8 +164,14 @@ For a complete walkthrough, see <doc:GettingStarted>.
 - ``TTSProvider``
 - ``TTSProviderConfig``
 - ``TTSAudioFormat``
+- ``TTSAudioEncoding``
 - ``OpenAITTSProvider``
 - ``TTSSegment``
+- ``TTSSegmentTiming``
+- ``TTSChunk``
+- ``TTSChunkContext``
+- ``TTSManifestEntry``
+- ``TTSConcatenationResult``
 - ``TTSOptions``
 
 ### MCP Integration

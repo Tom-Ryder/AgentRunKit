@@ -1,14 +1,14 @@
 import Foundation
 
-/// Audio formats supported for TTS output.
-public enum TTSAudioFormat: String, Sendable, Codable, CaseIterable {
-    case mp3, opus, aac, flac, wav, pcm
-}
-
 /// A speech synthesis backend that converts text to audio.
 public protocol TTSProvider: Sendable {
     var config: TTSProviderConfig { get }
-    func generate(text: String, voice: String, options: TTSOptions) async throws -> Data
+    func generate(
+        text: String,
+        voice: String,
+        options: TTSOptions,
+        context: TTSChunkContext
+    ) async throws -> Data
 }
 
 /// Configuration for a TTSProvider's chunking and default settings.

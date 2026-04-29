@@ -2,11 +2,18 @@
 import Foundation
 import Testing
 
+struct MockProviderCall: Equatable {
+    let text: String
+    let voice: String
+    let options: TTSOptions
+    let context: TTSChunkContext
+}
+
 private actor MockTTSProvider: TTSProvider {
     let config: TTSProviderConfig
-    private var callCount = 0
+    private var totalCallCount = 0
     private var responses: [Int: Result<Data, any Error>]
-    private var receivedVoices: [String] = []
+    private var callsByChunk: [Int: MockProviderCall] = [:]
     private var generateDelay: Duration?
     private let dataFactory: @Sendable (String) -> Data
 
@@ -26,27 +33,45 @@ private actor MockTTSProvider: TTSProvider {
         self.dataFactory = dataFactory
     }
 
-    func generate(text: String, voice: String, options _: TTSOptions) async throws -> Data {
-        let index = callCount
-        callCount += 1
-        receivedVoices.append(voice)
+    func generate(
+        text: String,
+        voice: String,
+        options: TTSOptions,
+        context: TTSChunkContext
+    ) async throws -> Data {
+        totalCallCount += 1
+        let chunkIndex = context.chunk.index
+        callsByChunk[chunkIndex] = MockProviderCall(
+            text: text,
+            voice: voice,
+            options: options,
+            context: context
+        )
 
         if let delay = generateDelay {
             try await Task.sleep(for: delay)
         }
 
-        if let result = responses[index] {
+        if let result = responses[chunkIndex] {
             return try result.get()
         }
         return dataFactory(text)
     }
 
     func getCallCount() -> Int {
-        callCount
+        totalCallCount
     }
 
-    func getReceivedVoices() -> [String] {
-        receivedVoices
+    func getCall(forChunk index: Int) -> MockProviderCall? {
+        callsByChunk[index]
+    }
+
+    func getCalls() -> [Int: MockProviderCall] {
+        callsByChunk
+    }
+
+    func getVoicesInChunkOrder() -> [String] {
+        callsByChunk.keys.sorted().compactMap { callsByChunk[$0]?.voice }
     }
 }
 
@@ -70,7 +95,12 @@ private actor ReverseDelayProvider: TTSProvider {
         self.delayPerChunk = delayPerChunk
     }
 
-    func generate(text: String, voice _: String, options _: TTSOptions) async throws -> Data {
+    func generate(
+        text: String,
+        voice _: String,
+        options _: TTSOptions,
+        context _: TTSChunkContext
+    ) async throws -> Data {
         let index = callCount
         callCount += 1
         try await Task.sleep(for: delayPerChunk * (totalChunks - index))
@@ -89,13 +119,23 @@ private actor ConcurrencyTracker: TTSProvider {
         self.wrapped = wrapped
     }
 
-    func generate(text: String, voice: String, options: TTSOptions) async throws -> Data {
+    func generate(
+        text: String,
+        voice: String,
+        options: TTSOptions,
+        context: TTSChunkContext
+    ) async throws -> Data {
         currentConcurrent += 1
         if currentConcurrent > peakConcurrent {
             peakConcurrent = currentConcurrent
         }
 
-        let data = try await wrapped.generate(text: text, voice: voice, options: options)
+        let data = try await wrapped.generate(
+            text: text,
+            voice: voice,
+            options: options,
+            context: context
+        )
 
         currentConcurrent -= 1
         return data
@@ -350,7 +390,7 @@ struct TTSClientTests {
         let client = TTSClient(provider: provider)
         _ = try await client.generate(text: "Hello")
 
-        let voices = await provider.getReceivedVoices()
+        let voices = await provider.getVoicesInChunkOrder()
         #expect(voices == ["shimmer"])
     }
 
@@ -362,7 +402,7 @@ struct TTSClientTests {
         let client = TTSClient(provider: provider)
         _ = try await client.generate(text: "Hello", voice: "nova")
 
-        let voices = await provider.getReceivedVoices()
+        let voices = await provider.getVoicesInChunkOrder()
         #expect(voices == ["nova"])
     }
 
@@ -527,5 +567,283 @@ struct TTSClientTests {
             #expect(Data(segment.text.utf8) == segment.audio)
         }
         #expect(segments.map(\.index) == Array(0 ..< segments.count))
+    }
+}
+
+struct TTSClientChunkPlanningTests {
+    @Test
+    func segmentComputedPropertiesForwardToNestedChunk() async throws {
+        let provider = MockTTSProvider(
+            config: TTSProviderConfig(maxChunkCharacters: 20, defaultVoice: "alloy", defaultFormat: .wav)
+        )
+        let client = TTSClient(provider: provider)
+        let text = "First sentence. Second sentence."
+
+        var segments: [TTSSegment] = []
+        for try await segment in client.stream(text: text) {
+            segments.append(segment)
+        }
+
+        #expect(!segments.isEmpty)
+        for segment in segments {
+            #expect(segment.index == segment.chunk.index)
+            #expect(segment.total == segment.chunk.total)
+            #expect(segment.text == segment.chunk.text)
+            #expect(segment.sourceRange == segment.chunk.sourceRange)
+        }
+    }
+
+    @Test
+    func segmentEncodingResolvesFromProviderDefaultFormat() async throws {
+        let provider = MockTTSProvider(
+            config: TTSProviderConfig(maxChunkCharacters: 20, defaultVoice: "alloy", defaultFormat: .wav)
+        )
+        let client = TTSClient(provider: provider)
+
+        var segments: [TTSSegment] = []
+        for try await segment in client.stream(text: "First sentence. Second sentence.") {
+            segments.append(segment)
+        }
+
+        #expect(!segments.isEmpty)
+        for segment in segments {
+            #expect(segment.encoding.format == .wav)
+            #expect(segment.encoding.mimeType == "audio/wav")
+            #expect(segment.encoding.fileExtension == "wav")
+        }
+    }
+
+    @Test
+    func segmentEncodingResolvesFromOptionsResponseFormat() async throws {
+        let provider = MockTTSProvider(
+            config: TTSProviderConfig(maxChunkCharacters: 20, defaultVoice: "alloy", defaultFormat: .mp3)
+        )
+        let client = TTSClient(provider: provider)
+        let options = TTSOptions(responseFormat: .pcm)
+
+        var segments: [TTSSegment] = []
+        for try await segment in client.stream(text: "First sentence. Second sentence.", options: options) {
+            segments.append(segment)
+        }
+
+        #expect(!segments.isEmpty)
+        for segment in segments {
+            #expect(segment.encoding.format == .pcm)
+            #expect(segment.encoding.mimeType == "audio/L16")
+        }
+    }
+
+    @Test(arguments: TTSAudioFormat.allCases)
+    func segmentTimingDefaultsToUncomputed(format: TTSAudioFormat) async throws {
+        let provider = MockTTSProvider(
+            config: TTSProviderConfig(maxChunkCharacters: 20, defaultVoice: "alloy", defaultFormat: format)
+        )
+        let client = TTSClient(provider: provider)
+
+        var segments: [TTSSegment] = []
+        for try await segment in client.stream(text: "First sentence. Second sentence.") {
+            segments.append(segment)
+        }
+
+        #expect(!segments.isEmpty)
+        for segment in segments {
+            #expect(segment.timing == .uncomputed)
+            #expect(segment.timing.byteRangeInConcatenatedAudio == nil)
+            #expect(segment.timing.durationSeconds == nil)
+        }
+    }
+
+    @Test
+    func chunksForMatchesStreamSegmentChunks() async throws {
+        let provider = MockTTSProvider(
+            config: TTSProviderConfig(maxChunkCharacters: 13, defaultVoice: "alloy", defaultFormat: .wav)
+        )
+        let client = TTSClient(provider: provider)
+        let text = "First sentence. Second sentence. Third sentence."
+
+        let planned = client.chunks(for: text)
+        #expect(planned.allSatisfy { $0.text.count <= 13 || $0.text.split(separator: " ").count == 1 })
+
+        var streamed: [TTSChunk] = []
+        for try await segment in client.stream(text: text) {
+            streamed.append(segment.chunk)
+        }
+
+        #expect(planned == streamed)
+    }
+
+    @Test
+    func chunksForReturnsEmptyArrayForEmptyInput() {
+        let provider = MockTTSProvider()
+        let client = TTSClient(provider: provider)
+        #expect(client.chunks(for: "").isEmpty)
+        #expect(client.chunks(for: "   \n\t  ").isEmpty)
+    }
+
+    @Test
+    func chunksForReturnsSingleChunkForShortInput() async {
+        let provider = MockTTSProvider(
+            config: TTSProviderConfig(maxChunkCharacters: 1000, defaultVoice: "alloy", defaultFormat: .wav)
+        )
+        let client = TTSClient(provider: provider)
+
+        let planned = client.chunks(for: "Short.")
+        #expect(planned.count == 1)
+        #expect(planned.first?.index == 0)
+        #expect(planned.first?.total == 1)
+        #expect(planned.first?.text == "Short.")
+        #expect(planned.first?.sourceRange == 0 ..< 6)
+
+        let calls = await provider.getCallCount()
+        #expect(calls == 0)
+    }
+
+    @Test
+    func chunksForCanForecastWithoutInvokingProvider() async {
+        let provider = MockTTSProvider(
+            config: TTSProviderConfig(maxChunkCharacters: 20, defaultVoice: "alloy", defaultFormat: .wav)
+        )
+        let client = TTSClient(provider: provider)
+        let text = "First sentence. Second sentence. Third sentence."
+
+        let planned = client.chunks(for: text)
+        #expect(planned.count >= 2)
+        #expect(planned.allSatisfy { $0.total == planned.count })
+        #expect(planned.map(\.index) == Array(0 ..< planned.count))
+
+        let calls = await provider.getCallCount()
+        #expect(calls == 0)
+    }
+
+    @Test
+    func chunksForShiftsRangesPastLeadingWhitespace() {
+        let provider = MockTTSProvider(
+            config: TTSProviderConfig(maxChunkCharacters: 100, defaultVoice: "alloy", defaultFormat: .wav)
+        )
+        let client = TTSClient(provider: provider)
+        let planned = client.chunks(for: "   Hello world.  ")
+        #expect(planned.count == 1)
+        #expect(planned.first?.text == "Hello world.")
+        #expect(planned.first?.sourceRange == 3 ..< 15)
+    }
+
+    @Test
+    func chunksForOversizedSentenceSplitsAtWordBoundaries() {
+        let provider = MockTTSProvider(
+            config: TTSProviderConfig(maxChunkCharacters: 20, defaultVoice: "alloy", defaultFormat: .wav)
+        )
+        let client = TTSClient(provider: provider)
+        let planned = client.chunks(for: "This is a very long sentence that exceeds the character limit.")
+        #expect(planned.count >= 3)
+        #expect(planned.map(\.text) == [
+            "This is a very long",
+            "sentence that",
+            "exceeds the",
+            "character limit.",
+        ])
+        #expect(planned.allSatisfy { $0.total == planned.count })
+    }
+
+    @Test
+    func chunksForOversizedWordSplitsAtCharacterBoundaries() {
+        let provider = MockTTSProvider(
+            config: TTSProviderConfig(maxChunkCharacters: 10, defaultVoice: "alloy", defaultFormat: .wav)
+        )
+        let client = TTSClient(provider: provider)
+        let planned = client.chunks(for: "abcdefghijklmnopqrstuvwxyz")
+        #expect(planned.map(\.text) == ["abcdefghij", "klmnopqrst", "uvwxyz"])
+        #expect(planned.allSatisfy { $0.total == 3 })
+    }
+
+    @Test
+    func chunksForPreservesUTF8RangesAcrossEmojiAndCJK() throws {
+        let provider = MockTTSProvider(
+            config: TTSProviderConfig(maxChunkCharacters: 100, defaultVoice: "alloy", defaultFormat: .wav)
+        )
+        let client = TTSClient(provider: provider)
+        let text = "Great news! The price is \u{00A5}500. \u{1F600}\u{1F389}\u{1F680}"
+        let planned = client.chunks(for: text)
+        let utf8 = Array(text.utf8)
+        for chunk in planned {
+            let slice = Data(utf8[chunk.sourceRange])
+            let decoded = try #require(String(bytes: slice, encoding: .utf8))
+            #expect(decoded == chunk.text)
+        }
+        #expect(planned.last?.sourceRange.upperBound == utf8.count)
+    }
+
+    @Test
+    func streamedProviderContextCarriesPerCallCoupling() async throws {
+        let provider = MockTTSProvider(
+            config: TTSProviderConfig(maxChunkCharacters: 20, defaultVoice: "alloy", defaultFormat: .wav)
+        )
+        let client = TTSClient(provider: provider, maxConcurrent: 1)
+        let text = "First sentence. Second sentence. Third sentence."
+
+        for try await _ in client.stream(text: text) {}
+
+        let plan = client.chunks(for: text)
+        let calls = await provider.getCalls()
+        #expect(calls.count == plan.count)
+        for chunk in plan {
+            let call = try #require(calls[chunk.index])
+            #expect(call.context.chunk == chunk)
+            #expect(call.text == chunk.text)
+            #expect(call.context.encoding.format == .wav)
+        }
+    }
+
+    @Test
+    func streamedContextCouplingHoldsUnderConcurrentCompletion() async throws {
+        let inner = MockTTSProvider(
+            config: TTSProviderConfig(maxChunkCharacters: 15, defaultVoice: "alloy", defaultFormat: .wav),
+            generateDelay: .milliseconds(20)
+        )
+        let client = TTSClient(provider: inner, maxConcurrent: 4)
+        let text = "First sent. Second sent. Third sent. Fourth sent."
+
+        for try await _ in client.stream(text: text) {}
+
+        let plan = client.chunks(for: text)
+        let calls = await inner.getCalls()
+        #expect(calls.count == plan.count)
+        for chunk in plan {
+            let call = try #require(calls[chunk.index])
+            #expect(call.context.chunk == chunk)
+            #expect(call.text == chunk.text)
+        }
+    }
+
+    @Test
+    func singleShotProviderContextHasIndexZeroTotalOneAndOriginalInputRange() async throws {
+        let provider = MockTTSProvider(
+            config: TTSProviderConfig(maxChunkCharacters: 1000, defaultVoice: "alloy", defaultFormat: .mp3)
+        )
+        let client = TTSClient(provider: provider)
+        _ = try await client.generate(text: "  Hello world.  ")
+
+        let calls = await provider.getCalls()
+        #expect(calls.count == 1)
+        let call = try #require(calls[0])
+        #expect(call.context.chunk.index == 0)
+        #expect(call.context.chunk.total == 1)
+        #expect(call.context.chunk.text == "Hello world.")
+        #expect(call.context.chunk.sourceRange == 2 ..< 14)
+        #expect(call.text == "Hello world.")
+        #expect(call.context.encoding.format == .mp3)
+    }
+
+    @Test
+    func singleShotProviderContextHonorsOptionsResponseFormat() async throws {
+        let provider = MockTTSProvider(
+            config: TTSProviderConfig(maxChunkCharacters: 1000, defaultVoice: "alloy", defaultFormat: .mp3)
+        )
+        let client = TTSClient(provider: provider)
+        _ = try await client.generate(text: "Hi", options: TTSOptions(responseFormat: .opus))
+
+        let calls = await provider.getCalls()
+        let call = try #require(calls[0])
+        #expect(call.context.encoding.format == .opus)
+        #expect(call.context.encoding.mimeType == "audio/opus")
     }
 }

@@ -111,13 +111,14 @@ let tts = TTSClient(provider: provider, maxConcurrent: 4)
 
 ### Generating Audio
 
-Three methods cover different use cases:
+These methods cover different use cases:
 
 | Method | Returns | Behavior |
 |---|---|---|
 | `generate(text:voice:options:)` | `Data` | Single request, no chunking |
 | `stream(text:voice:options:)` | `AsyncThrowingStream<TTSSegment, Error>` | Chunked, yields ordered ``TTSSegment`` values as they complete |
 | `generateAll(text:voice:options:)` | `Data` | Chunked, concatenates all segments into one `Data` |
+| `chunks(for:)` | `[TTSChunk]` | The chunk plan this client will use, without invoking the provider |
 
 ```swift
 // Single generation
@@ -126,11 +127,15 @@ let audio = try await tts.generate(text: "Hello, world.", voice: "nova")
 // Streaming segments
 for try await segment in tts.stream(text: longArticle) {
     player.play(segment.audio)
-    print("chunk \(segment.index + 1)/\(segment.total) bytes \(segment.sourceRange): \(segment.text)")
+    let chunk = segment.chunk
+    print("chunk \(chunk.index + 1)/\(chunk.total) bytes \(chunk.sourceRange): \(chunk.text)")
 }
 
 // Full concatenated output
 let fullAudio = try await tts.generateAll(text: longArticle, options: TTSOptions(speed: 1.25))
+
+// Forecast the chunk plan without generating audio
+let plan = tts.chunks(for: longArticle)
 ```
 
 ### TTSOptions
@@ -144,19 +149,30 @@ let fullAudio = try await tts.generateAll(text: longArticle, options: TTSOptions
 
 The chunker splits input text on sentence boundaries using `NLTokenizer`. Sentences are packed into chunks up to the provider's `maxChunkCharacters` limit. Oversized sentences fall back to word-level, then character-level splitting. ``TTSClient`` dispatches up to `maxConcurrent` chunk requests in parallel using a task group. Results are buffered and yielded in original order.
 
-Each ``TTSSegment`` carries the chunker's output `text` and a `sourceRange` of UTF-8 byte offsets into the original input. For force-split chunks, `text` normalizes whitespace to single spaces while `sourceRange` covers the discontiguous span of the words it contains, preserving left-to-right monotonicity for caller-side highlighting and forced alignment.
+Each ``TTSSegment`` aggregates a ``TTSChunk`` (the unit of input text), a ``TTSAudioEncoding`` (the encoding ``TTSClient`` requested from the provider), a ``TTSSegmentTiming`` (audio-time metadata; both fields are `nil` until the framework computes them), and the audio bytes. The chunk, encoding, and timing are the canonical access path; flat computed properties on ``TTSSegment`` (`index`, `total`, `text`, `sourceRange`) forward to the chunk for log statements that need only those fields. For force-split chunks, `text` normalizes whitespace to single spaces while `sourceRange` covers the discontiguous span of the words it contains, preserving left-to-right monotonicity for caller-side highlighting and forced alignment.
+
+``TTSClient/chunks(for:)`` returns the same ``TTSChunk`` values the stream will emit, without calling the provider. Use it to forecast chunk identity before generation or to drive offline planning.
+
+``TTSConcatenationResult`` and ``TTSManifestEntry`` describe the shape of a manifest-aware concatenation that pairs the audio bytes with a per-segment manifest of chunk, encoding, and timing.
 
 For MP3 output, the concatenator strips ID3v2 headers, Xing/Info frames, and ID3v1 tails from interior segments for clean concatenation.
 
 ### Custom Providers
 
-Conform to ``TTSProvider`` to use any speech synthesis backend:
+Conform to ``TTSProvider`` to use any speech synthesis backend. ``TTSClient`` delivers a ``TTSChunkContext`` carrying the chunk plan and requested encoding alongside each call. Providers should treat `context.encoding` as the authoritative source for the format to produce, and can additionally use it for logging or request correlation:
 
 ```swift
 struct MyTTSProvider: TTSProvider {
     let config: TTSProviderConfig
 
-    func generate(text: String, voice: String, options: TTSOptions) async throws -> Data {
+    func generate(
+        text: String,
+        voice: String,
+        options: TTSOptions,
+        context: TTSChunkContext
+    ) async throws -> Data {
+        let chunkID = "\(context.chunk.index + 1)/\(context.chunk.total)"
+        log("synthesizing \(chunkID) as \(context.encoding.mimeType)")
         // Call your speech API and return audio bytes
     }
 }
@@ -181,4 +197,10 @@ let tts = TTSClient(provider: provider)
 - ``TTSProvider``
 - ``OpenAITTSProvider``
 - ``TTSSegment``
+- ``TTSSegmentTiming``
+- ``TTSChunk``
+- ``TTSChunkContext``
+- ``TTSAudioEncoding``
+- ``TTSManifestEntry``
+- ``TTSConcatenationResult``
 - ``TTSOptions``

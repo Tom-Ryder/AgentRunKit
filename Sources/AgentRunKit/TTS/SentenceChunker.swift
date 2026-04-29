@@ -147,7 +147,7 @@ enum SentenceChunker {
         return (lowerOffset + trimShift) ..< (upperOffset + trimShift)
     }
 
-    private static func trimByteOffset(in original: String) -> Int {
+    static func trimByteOffset(in original: String) -> Int {
         guard let firstNonWS = original.unicodeScalars.firstIndex(where: {
             !CharacterSet.whitespacesAndNewlines.contains($0)
         }) else { return 0 }

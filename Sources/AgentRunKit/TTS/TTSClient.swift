@@ -22,11 +22,30 @@ public struct TTSClient<P: TTSProvider>: Sendable {
         guard !trimmed.isEmpty else {
             throw TTSError.emptyText
         }
+        let encoding = TTSAudioEncoding(options.responseFormat ?? provider.config.defaultFormat)
+        let leadingShift = SentenceChunker.trimByteOffset(in: text)
+        let chunk = TTSChunk(
+            index: 0,
+            total: 1,
+            text: trimmed,
+            sourceRange: leadingShift ..< (leadingShift + trimmed.utf8.count)
+        )
+        let context = TTSChunkContext(chunk: chunk, encoding: encoding)
         return try await provider.generate(
             text: trimmed,
             voice: voice ?? provider.config.defaultVoice,
-            options: options
+            options: options,
+            context: context
         )
+    }
+
+    /// The chunk plan this client will use for a given input, without invoking the provider.
+    public func chunks(for text: String) -> [TTSChunk] {
+        let internalChunks = SentenceChunker.chunk(
+            text: text,
+            maxCharacters: provider.config.maxChunkCharacters
+        )
+        return Self.makePublicChunks(internalChunks)
     }
 
     public func stream(
@@ -35,15 +54,17 @@ public struct TTSClient<P: TTSProvider>: Sendable {
         options: TTSOptions = TTSOptions()
     ) -> AsyncThrowingStream<TTSSegment, Error> {
         let resolvedVoice = voice ?? provider.config.defaultVoice
-        let chunks = SentenceChunker.chunk(
+        let internalChunks = SentenceChunker.chunk(
             text: text,
             maxCharacters: provider.config.maxChunkCharacters
         )
 
-        guard !chunks.isEmpty else {
+        guard !internalChunks.isEmpty else {
             return AsyncThrowingStream { $0.finish(throwing: TTSError.emptyText) }
         }
 
+        let publicChunks = Self.makePublicChunks(internalChunks)
+        let encoding = TTSAudioEncoding(options.responseFormat ?? provider.config.defaultFormat)
         let provider = provider
         let maxConcurrent = maxConcurrent
 
@@ -51,9 +72,10 @@ public struct TTSClient<P: TTSProvider>: Sendable {
             let task = Task {
                 do {
                     try await Self.executeChunks(
-                        chunks,
+                        publicChunks,
                         voice: resolvedVoice,
                         options: options,
+                        encoding: encoding,
                         provider: provider,
                         maxConcurrent: maxConcurrent,
                         continuation: continuation
@@ -89,10 +111,18 @@ public struct TTSClient<P: TTSProvider>: Sendable {
         return result
     }
 
+    private static func makePublicChunks(_ internalChunks: [SentenceChunker.Chunk]) -> [TTSChunk] {
+        let total = internalChunks.count
+        return internalChunks.enumerated().map { index, chunk in
+            TTSChunk(index: index, total: total, text: chunk.text, sourceRange: chunk.sourceRange)
+        }
+    }
+
     private static func executeChunks(
-        _ chunks: [SentenceChunker.Chunk],
+        _ chunks: [TTSChunk],
         voice: String,
         options: TTSOptions,
+        encoding: TTSAudioEncoding,
         provider: P,
         maxConcurrent: Int,
         continuation: AsyncThrowingStream<TTSSegment, Error>.Continuation
@@ -107,28 +137,29 @@ public struct TTSClient<P: TTSProvider>: Sendable {
 
             while nextToYield < totalChunks {
                 while activeTasks < maxConcurrent, nextToSend < totalChunks {
-                    let chunkIndex = nextToSend
-                    let chunk = chunks[chunkIndex]
+                    let chunk = chunks[nextToSend]
+                    let context = TTSChunkContext(chunk: chunk, encoding: encoding)
                     group.addTask {
                         do {
                             let data = try await provider.generate(
                                 text: chunk.text,
                                 voice: voice,
-                                options: options
+                                options: options,
+                                context: context
                             )
-                            return (chunkIndex, data)
+                            return (chunk.index, data)
                         } catch is CancellationError {
                             throw CancellationError()
                         } catch let error as TransportError {
                             throw TTSError.chunkFailed(
-                                index: chunkIndex,
+                                index: chunk.index,
                                 total: totalChunks,
                                 sourceRange: chunk.sourceRange,
                                 error
                             )
                         } catch {
                             throw TTSError.chunkFailed(
-                                index: chunkIndex,
+                                index: chunk.index,
                                 total: totalChunks,
                                 sourceRange: chunk.sourceRange,
                                 TransportError.other(String(describing: error))
@@ -144,12 +175,10 @@ public struct TTSClient<P: TTSProvider>: Sendable {
                 buffer[index] = data
 
                 while let audio = buffer.removeValue(forKey: nextToYield) {
-                    let chunk = chunks[nextToYield]
                     continuation.yield(TTSSegment(
-                        index: nextToYield,
-                        total: totalChunks,
-                        text: chunk.text,
-                        sourceRange: chunk.sourceRange,
+                        chunk: chunks[nextToYield],
+                        encoding: encoding,
+                        timing: .uncomputed,
                         audio: audio
                     ))
                     nextToYield += 1
