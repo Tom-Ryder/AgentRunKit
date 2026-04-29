@@ -113,6 +113,30 @@ private let malformedToolHistory: [ChatMessage] = [
     )),
 ]
 
+/// @unchecked Sendable justification: URLProtocol is Foundation infrastructure and has no
+/// shared mutable state.
+private final class CancelledUploadURLProtocol: URLProtocol, @unchecked Sendable {
+    static func configuration() -> URLSessionConfiguration {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [CancelledUploadURLProtocol.self]
+        return configuration
+    }
+
+    override static func canInit(with request: URLRequest) -> Bool {
+        request.url != nil
+    }
+
+    override static func canonicalRequest(for request: URLRequest) -> URLRequest {
+        request
+    }
+
+    override func startLoading() {
+        client?.urlProtocol(self, didFailWithError: URLError(.cancelled))
+    }
+
+    override func stopLoading() {}
+}
+
 struct ProviderHistoryValidationTests {
     private func assertGenerateRejectsMalformedHistory(client: any LLMClient) async {
         await #expect(throws: AgentError.malformedHistory(.unfinishedToolCallBatch(ids: ["call_1"]))) {
@@ -598,6 +622,34 @@ struct OpenAIClientURLRequestTests {
         #expect(parts.count == 2)
         #expect(multipartPart(named: "model", parts: parts)?.body == "whisper-1")
         #expect(multipartPart(named: "file", parts: parts)?.body == "audio-data")
+    }
+
+    @Test
+    func transcribeFileUploadCancellationPropagatesCancellationError() async throws {
+        let session = URLSession(configuration: CancelledUploadURLProtocol.configuration())
+        defer { session.invalidateAndCancel() }
+        let client = try OpenAIClient(
+            apiKey: "test-key",
+            model: "test/model",
+            baseURL: #require(URL(string: "https://cancelled-upload.test/v1")),
+            session: session
+        )
+        let audioURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("swiftagent-cancelled-upload-\(UUID().uuidString).wav")
+        try Data("audio-data".utf8).write(to: audioURL)
+        defer { try? FileManager.default.removeItem(at: audioURL) }
+
+        do {
+            _ = try await client.transcribe(
+                audioFileURL: audioURL,
+                format: .wav,
+                model: "whisper-1"
+            )
+            Issue.record("Expected CancellationError")
+        } catch is CancellationError {
+        } catch {
+            Issue.record("Expected CancellationError, got \(type(of: error)): \(error)")
+        }
     }
 }
 

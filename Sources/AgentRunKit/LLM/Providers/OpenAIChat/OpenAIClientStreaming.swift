@@ -77,6 +77,9 @@ extension OpenAIClient {
             do {
                 (data, response) = try await session.upload(for: urlRequest, fromFile: bodyFileURL)
             } catch {
+                if HTTPRetry.isCancellation(error) {
+                    throw CancellationError()
+                }
                 lastError = TransportError.networkError(error)
                 continue
             }
