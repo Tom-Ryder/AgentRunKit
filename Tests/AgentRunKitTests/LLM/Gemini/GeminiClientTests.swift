@@ -284,13 +284,13 @@ struct GeminiRequestSerializationTests {
         let client = makeClient()
         let request = try client.buildRequest(
             messages: [.user("Hi")], tools: [],
-            extraFields: ["bad_field": .string("nope")]
+            extraFields: ["z_bad_field": .string("nope"), "bad_field": .string("nope")]
         )
         do {
             _ = try JSONEncoder().encode(request)
             Issue.record("Expected EncodingError")
         } catch let EncodingError.invalidValue(_, context) {
-            #expect(context.debugDescription.contains("bad_field"))
+            #expect(context.debugDescription == "Invalid extraFields for Gemini API: bad_field, z_bad_field")
         } catch {
             Issue.record("Expected EncodingError.invalidValue, got \(error)")
         }

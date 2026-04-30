@@ -175,7 +175,7 @@ extension AnthropicClient {
     static let anthropicAPIVersion = "2023-06-01"
     static let interleavedThinkingBeta = "interleaved-thinking-2025-05-14"
 
-    public static let anthropicBaseURL = URL(string: "https://api.anthropic.com/v1")!
+    public static let anthropicBaseURL = URL(validStaticString: "https://api.anthropic.com/v1")
 
     func buildRequest(
         messages: [ChatMessage],

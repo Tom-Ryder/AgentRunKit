@@ -362,7 +362,5 @@ extension ResponsesAPIClient {
 
 public extension ResponsesAPIClient {
     nonisolated static let openAIBaseURL =
-        URL(string: "https://api.openai.com/v1")!
-    nonisolated static let chatGPTBaseURL =
-        URL(string: "https://chatgpt.com/backend-api/codex")!
+        URL(validStaticString: "https://api.openai.com/v1")
 }

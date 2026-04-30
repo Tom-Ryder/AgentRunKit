@@ -28,17 +28,12 @@ struct GeminiRequest: Encodable {
         try container.encodeIfPresent(toolConfig, forKey: .toolConfig)
 
         if !extraFields.isEmpty {
-            let invalidKeys = extraFields.keys.filter { !Self.validExtraFields.contains($0) }
-            if !invalidKeys.isEmpty {
-                throw EncodingError.invalidValue(
-                    extraFields,
-                    EncodingError.Context(
-                        codingPath: encoder.codingPath,
-                        debugDescription: "Invalid extraFields for Gemini API: "
-                            + invalidKeys.sorted().joined(separator: ", ")
-                    )
-                )
-            }
+            try ProviderExtraFields.validateAllowedKeys(
+                extraFields,
+                allowedKeys: Self.validExtraFields,
+                debugDescriptionPrefix: "Invalid extraFields for Gemini API: ",
+                codingPath: encoder.codingPath
+            )
 
             let generationExtraFields = extraFields.filter { key, _ in
                 Self.generationConfigExtraFields.contains(key)
@@ -60,10 +55,7 @@ struct GeminiRequest: Encodable {
             }()
             try container.encodeIfPresent(mergedGenerationConfig, forKey: .generationConfig)
 
-            var dynamicContainer = encoder.container(keyedBy: DynamicCodingKey.self)
-            for (key, value) in rootExtraFields {
-                try dynamicContainer.encode(value, forKey: DynamicCodingKey(key))
-            }
+            try ProviderExtraFields.encode(rootExtraFields, to: encoder)
             return
         }
 

@@ -4,28 +4,39 @@ import Testing
 
 struct OpenAIChatExtraFieldsCollisionTests {
     @Test
-    func reservedToolChoiceKey_throws() throws {
+    func reservedToolChoiceKeyThrowsWithExactProviderMessage() throws {
         let client = OpenAIClient.openAI(apiKey: "k", model: "gpt-5.4")
         let request = try client.buildRequest(
             messages: [.user("Hi")],
             tools: [],
-            extraFields: ["tool_choice": .string("required")]
+            extraFields: ["tool_choice": .string("required"), "model": .string("override")]
         )
-        #expect(throws: EncodingError.self) {
+
+        do {
             _ = try JSONEncoder().encode(request)
+            Issue.record("Expected EncodingError")
+        } catch let EncodingError.invalidValue(_, context) {
+            #expect(context.debugDescription == "Reserved extraFields keys for OpenAI Chat: model, tool_choice")
+        } catch {
+            Issue.record("Expected EncodingError.invalidValue, got \(error)")
         }
     }
 
     @Test
-    func reservedMaxTokensKey_throws() throws {
+    func reservedMaxTokensKeyThrowsWithExactProviderMessage() throws {
         let client = OpenAIClient.openAI(apiKey: "k", model: "gpt-5.4")
         let request = try client.buildRequest(
             messages: [.user("Hi")],
             tools: [],
             extraFields: ["max_completion_tokens": .int(100)]
         )
-        #expect(throws: EncodingError.self) {
+        do {
             _ = try JSONEncoder().encode(request)
+            Issue.record("Expected EncodingError")
+        } catch let EncodingError.invalidValue(_, context) {
+            #expect(context.debugDescription == "Reserved extraFields keys for OpenAI Chat: max_completion_tokens")
+        } catch {
+            Issue.record("Expected EncodingError.invalidValue, got \(error)")
         }
     }
 

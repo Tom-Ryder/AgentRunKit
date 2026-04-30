@@ -13,7 +13,7 @@ struct OpenAITTSProviderTests {
     private let provider = OpenAITTSProvider(
         apiKey: "test-key",
         model: "tts-1",
-        baseURL: URL(string: "https://api.openai.com/v1")!
+        baseURL: URL(validStaticString: "https://api.openai.com/v1")
     )
 
     @Test

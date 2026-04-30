@@ -375,11 +375,11 @@ extension OpenAIClient {
 }
 
 public extension OpenAIClient {
-    static let openAIBaseURL = URL(string: "https://api.openai.com/v1")!
-    static let openRouterBaseURL = URL(string: "https://openrouter.ai/api/v1")!
-    static let groqBaseURL = URL(string: "https://api.groq.com/openai/v1")!
-    static let togetherBaseURL = URL(string: "https://api.together.xyz/v1")!
-    static let ollamaBaseURL = URL(string: "http://localhost:11434/v1")!
+    static let openAIBaseURL = URL(validStaticString: "https://api.openai.com/v1")
+    static let openRouterBaseURL = URL(validStaticString: "https://openrouter.ai/api/v1")
+    static let groqBaseURL = URL(validStaticString: "https://api.groq.com/openai/v1")
+    static let togetherBaseURL = URL(validStaticString: "https://api.together.xyz/v1")
+    static let ollamaBaseURL = URL(validStaticString: "http://localhost:11434/v1")
 
     static func proxy(
         baseURL: URL,

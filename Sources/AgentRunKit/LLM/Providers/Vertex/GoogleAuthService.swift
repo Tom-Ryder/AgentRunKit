@@ -63,7 +63,7 @@ public actor GoogleAuthService {
 
     private let refreshMargin: TimeInterval = 300
 
-    private static let tokenEndpoint = URL(string: "https://oauth2.googleapis.com/token")!
+    private static let tokenEndpoint = URL(validStaticString: "https://oauth2.googleapis.com/token")
 
     public init(session: URLSession = .shared) throws {
         try self.init(credentialsPath: Self.defaultCredentialsPath(), session: session)

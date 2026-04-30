@@ -35,23 +35,13 @@ struct AnthropicRequest: Encodable {
         try container.encodeIfPresent(thinking, forKey: .thinking)
         try container.encodeIfPresent(outputConfig, forKey: .outputConfig)
 
-        if !extraFields.isEmpty {
-            let invalidKeys = extraFields.keys.filter { !Self.validExtraFields.contains($0) }
-            if !invalidKeys.isEmpty {
-                throw EncodingError.invalidValue(
-                    extraFields,
-                    EncodingError.Context(
-                        codingPath: encoder.codingPath,
-                        debugDescription: "Invalid extraFields for Anthropic API: "
-                            + invalidKeys.sorted().joined(separator: ", ")
-                    )
-                )
-            }
-            var dynamicContainer = encoder.container(keyedBy: DynamicCodingKey.self)
-            for (key, value) in extraFields {
-                try dynamicContainer.encode(value, forKey: DynamicCodingKey(key))
-            }
-        }
+        try ProviderExtraFields.validateAllowedKeys(
+            extraFields,
+            allowedKeys: Self.validExtraFields,
+            debugDescriptionPrefix: "Invalid extraFields for Anthropic API: ",
+            codingPath: encoder.codingPath
+        )
+        try ProviderExtraFields.encode(extraFields, to: encoder)
     }
 }
 

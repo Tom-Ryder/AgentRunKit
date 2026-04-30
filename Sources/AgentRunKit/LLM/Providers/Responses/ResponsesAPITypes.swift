@@ -39,23 +39,13 @@ struct ResponsesRequest: Encodable {
         try container.encodeIfPresent(include, forKey: .include)
         try container.encodeIfPresent(previousResponseId, forKey: .previousResponseId)
 
-        if !extraFields.isEmpty {
-            let invalidKeys = extraFields.keys.filter { !Self.validExtraFields.contains($0) }
-            if !invalidKeys.isEmpty {
-                throw EncodingError.invalidValue(
-                    extraFields,
-                    EncodingError.Context(
-                        codingPath: encoder.codingPath,
-                        debugDescription: "Invalid extraFields for Responses API: "
-                            + invalidKeys.sorted().joined(separator: ", ")
-                    )
-                )
-            }
-            var dynamicContainer = encoder.container(keyedBy: DynamicCodingKey.self)
-            for (key, value) in extraFields {
-                try dynamicContainer.encode(value, forKey: DynamicCodingKey(key))
-            }
-        }
+        try ProviderExtraFields.validateAllowedKeys(
+            extraFields,
+            allowedKeys: Self.validExtraFields,
+            debugDescriptionPrefix: "Invalid extraFields for Responses API: ",
+            codingPath: encoder.codingPath
+        )
+        try ProviderExtraFields.encode(extraFields, to: encoder)
     }
 }
 

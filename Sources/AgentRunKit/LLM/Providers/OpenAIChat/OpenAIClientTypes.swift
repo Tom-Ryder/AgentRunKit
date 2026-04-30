@@ -78,17 +78,12 @@ struct ChatCompletionRequest: Encodable {
     }
 
     func encode(to encoder: any Encoder) throws {
-        let colliding = extraFields.keys.filter { Self.reservedKeys.contains($0) }
-        if !colliding.isEmpty {
-            throw EncodingError.invalidValue(
-                extraFields,
-                EncodingError.Context(
-                    codingPath: encoder.codingPath,
-                    debugDescription: "Reserved extraFields keys for OpenAI Chat: "
-                        + colliding.sorted().joined(separator: ", ")
-                )
-            )
-        }
+        try ProviderExtraFields.rejectReservedKeys(
+            extraFields,
+            reservedKeys: Self.reservedKeys,
+            debugDescriptionPrefix: "Reserved extraFields keys for OpenAI Chat: ",
+            codingPath: encoder.codingPath
+        )
 
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encodeIfPresent(model, forKey: .model)
@@ -103,9 +98,7 @@ struct ChatCompletionRequest: Encodable {
 
         var dynamicContainer = encoder.container(keyedBy: DynamicCodingKey.self)
         try dynamicContainer.encode(maxTokens, forKey: DynamicCodingKey(tokenFieldName))
-        for (key, value) in extraFields {
-            try dynamicContainer.encode(value, forKey: DynamicCodingKey(key))
-        }
+        try ProviderExtraFields.encode(extraFields, to: encoder)
     }
 }
 

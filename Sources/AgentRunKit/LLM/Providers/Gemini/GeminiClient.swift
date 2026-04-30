@@ -88,7 +88,7 @@ public struct GeminiClient: LLMClient, Sendable {
 }
 
 public extension GeminiClient {
-    static let geminiBaseURL = URL(string: "https://generativelanguage.googleapis.com")!
+    static let geminiBaseURL = URL(validStaticString: "https://generativelanguage.googleapis.com")
     static let defaultModelIdentifier = "gemini-2.5-flash"
 }
 

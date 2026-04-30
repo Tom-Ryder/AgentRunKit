@@ -13,17 +13,6 @@ struct ResponsesRequestSerializationTests {
         )
     }
 
-    private func makeClientWithReasoning(store: Bool = false) -> ResponsesAPIClient {
-        ResponsesAPIClient(
-            apiKey: "test-key",
-            model: "o3",
-            maxOutputTokens: 4096,
-            baseURL: ResponsesAPIClient.openAIBaseURL,
-            reasoningConfig: .medium,
-            store: store
-        )
-    }
-
     @Test
     func userMessageMapsToInputItem() async throws {
         let client = makeClient()
@@ -642,9 +631,11 @@ struct ResponsesResponseParsingTests {
             return
         }
         #expect(output.count == 1)
-        if case let .object(item) = output[0] {
-            #expect(item["type"] == .string("image"))
+        guard case let .object(item) = output[0] else {
+            Issue.record("Expected output item to be an object")
+            return
         }
+        #expect(item["type"] == .string("image"))
     }
 
     @Test
@@ -742,7 +733,7 @@ struct ResponsesResponseParsingTests {
         let client = makeClient()
         let response = try await client.decodeResponse(Data(json.utf8))
 
-        await #expect(throws: AgentError.self) {
+        await #expect(throws: AgentError.llmError(.other("server_error: Internal failure"))) {
             try await client.checkResponseError(response)
         }
     }
@@ -760,7 +751,7 @@ struct ResponsesResponseParsingTests {
         let client = makeClient()
         let response = try await client.decodeResponse(Data(json.utf8))
 
-        await #expect(throws: AgentError.self) {
+        await #expect(throws: AgentError.llmError(.other("Unexpected Responses status: in_progress"))) {
             try await client.checkResponseError(response)
         }
     }
@@ -829,8 +820,7 @@ struct ResponsesURLRequestTests {
         )
         let urlRequest = try await client.buildURLRequest(request)
 
-        let expected = "https://custom.api.com/v2/custom/responses"
-        #expect(urlRequest.url?.absoluteString == expected)
+        #expect(urlRequest.url?.absoluteString == "https://custom.api.com/v2/custom/responses")
     }
 }
 
@@ -913,14 +903,18 @@ struct ResponsesExtraFieldsTests {
     func invalidExtraFieldThrowsEncodingError() async throws {
         let request = try await makeClient().buildRequest(
             messages: [.user("Hi")], tools: [],
-            extraFields: ["custom_field": .string("bad"), "temperature": .double(0.7)]
+            extraFields: [
+                "z_custom_field": .string("bad"),
+                "custom_field": .string("bad"),
+                "temperature": .double(0.7),
+            ]
         )
 
         do {
             _ = try JSONEncoder().encode(request)
             Issue.record("Expected EncodingError")
         } catch let EncodingError.invalidValue(_, context) {
-            #expect(context.debugDescription.contains("custom_field"))
+            #expect(context.debugDescription == "Invalid extraFields for Responses API: custom_field, z_custom_field")
         } catch {
             Issue.record("Expected EncodingError.invalidValue, got \(error)")
         }
@@ -937,7 +931,7 @@ struct ResponsesExtraFieldsTests {
             _ = try JSONEncoder().encode(request)
             Issue.record("Expected EncodingError")
         } catch let EncodingError.invalidValue(_, context) {
-            #expect(context.debugDescription.contains("model"))
+            #expect(context.debugDescription == "Invalid extraFields for Responses API: model")
         } catch {
             Issue.record("Expected EncodingError.invalidValue, got \(error)")
         }
