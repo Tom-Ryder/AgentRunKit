@@ -6,6 +6,8 @@
     import FoundationModels
     import Testing
 
+    private let runsFoundationModelsSmoke = ProcessInfo.processInfo.environment["SMOKE_FOUNDATION_MODELS"] == "1"
+
     private struct CalculatorParams: Codable, SchemaProviding {
         let expression: String
     }
@@ -30,7 +32,10 @@
         }
     }
 
-    @Suite(.serialized) struct FMSmokeTest {
+    @Suite(
+        .enabled(if: runsFoundationModelsSmoke, "Requires SMOKE_FOUNDATION_MODELS=1"),
+        .serialized
+    ) struct FMSmokeTest {
         @Test func agentRunWithCalculator() async throws {
             guard #available(macOS 26, iOS 26, *) else { return }
             guard SystemLanguageModel.default.isAvailable else {
