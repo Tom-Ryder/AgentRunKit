@@ -4,7 +4,7 @@ extension Agent {
     @discardableResult
     func checkpointIfConfigured(
         iterationNumber: Int,
-        state: StreamingLoopState,
+        state: AgentLoopState,
         totalUsage: TokenUsage,
         iterationUsage: TokenUsage?,
         eventFactory: StreamEventFactory,

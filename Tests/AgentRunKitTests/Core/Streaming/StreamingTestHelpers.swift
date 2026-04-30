@@ -104,6 +104,7 @@ actor ContentOnlyTerminatingMockLLMClient: LLMClient, ContentOnlyTerminatingClie
     nonisolated let providerIdentifier: ProviderIdentifier = .custom("ContentOnlyTerminatingMockLLMClient")
     private let inner: StreamingMockLLMClient
     private(set) var invocationCount = 0
+    private(set) var capturedGenerateMessages: [[ChatMessage]] = []
 
     init(
         generateResponses: [AssistantMessage] = [],
@@ -122,6 +123,7 @@ actor ContentOnlyTerminatingMockLLMClient: LLMClient, ContentOnlyTerminatingClie
         requestContext: RequestContext?
     ) async throws -> AssistantMessage {
         invocationCount += 1
+        capturedGenerateMessages.append(messages)
         return try await inner.generate(
             messages: messages, tools: tools,
             responseFormat: responseFormat, requestContext: requestContext

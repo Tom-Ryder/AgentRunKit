@@ -77,7 +77,7 @@ extension Agent {
             iteration: target.iteration,
             history: target.messages
         )))
-        var state = StreamingLoopState(
+        var state = AgentLoopState(
             messages: target.messages,
             historyWasRewrittenLocally: true,
             budgetPhase: target.contextBudgetState.map(ContextBudgetPhase.init(checkpointState:)),

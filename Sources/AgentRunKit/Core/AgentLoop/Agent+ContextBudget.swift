@@ -149,14 +149,6 @@ extension Agent {
         }
     }
 
-    func toolResultCharacterLimit(for toolName: String) -> Int? {
-        firstTool(named: toolName, in: tools)?.maxResultCharacters ?? configuration.maxToolResultCharacters
-    }
-
-    func truncatedToolResult(_ result: ToolResult, toolName: String) -> ToolResult {
-        ContextCompactor.truncateToolResult(result, maxCharacters: toolResultCharacterLimit(for: toolName))
-    }
-
     private func partitionCallsRequiringApproval(
         _ calls: [IndexedToolCall],
         allowlist: Set<String>
@@ -187,7 +179,12 @@ extension Agent {
             IndexedToolResult(
                 index: indexed.index,
                 call: entry.call,
-                result: truncatedToolResult(entry.result, toolName: entry.call.name)
+                result: truncatedToolResult(
+                    entry.result,
+                    toolName: entry.call.name,
+                    tools: tools,
+                    fallbackLimit: configuration.maxToolResultCharacters
+                )
             )
         }
     }
@@ -217,7 +214,12 @@ extension Agent {
         IndexedToolResult(
             index: entry.index,
             call: entry.call,
-            result: truncatedToolResult(entry.result, toolName: entry.call.name)
+            result: truncatedToolResult(
+                entry.result,
+                toolName: entry.call.name,
+                tools: tools,
+                fallbackLimit: configuration.maxToolResultCharacters
+            )
         )
     }
 }

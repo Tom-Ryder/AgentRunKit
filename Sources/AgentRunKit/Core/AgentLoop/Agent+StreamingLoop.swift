@@ -1,12 +1,5 @@
 import Foundation
 
-struct StreamingLoopState {
-    var messages: [ChatMessage]
-    var historyWasRewrittenLocally: Bool = false
-    var budgetPhase: ContextBudgetPhase?
-    var sessionAllowlist: Set<String> = []
-}
-
 extension Agent {
     func compactStreamingMessagesIfNeeded(
         _ messages: inout [ChatMessage],
@@ -40,7 +33,7 @@ extension Agent {
         budgetUsage: TokenUsage?,
         options: InvocationOptions,
         continuation: AsyncThrowingStream<StreamEvent, Error>.Continuation,
-        state: inout StreamingLoopState
+        state: inout AgentLoopState
     ) async throws {
         let indexedCalls = indexedExecutableToolCalls(from: toolCalls)
         let pruneCalls = indexedCalls.filter { $0.call.name == "prune_context" }

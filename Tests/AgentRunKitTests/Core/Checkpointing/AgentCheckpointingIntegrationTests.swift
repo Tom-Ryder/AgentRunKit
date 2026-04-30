@@ -33,6 +33,34 @@ private func makeEchoTool() throws -> Tool<EchoParams, EchoOutput, EmptyContext>
     )
 }
 
+private func makeRemoteToolTransport(schema: JSONValue) -> DynamicMCPTransport {
+    DynamicMCPTransport { data in
+        guard let request = try? JSONDecoder().decode(JSONRPCRequest.self, from: data) else { return nil }
+        let idValue: Int = if case let .int(val) = request.id { val } else { 0 }
+        switch request.method {
+        case "initialize":
+            return MCPTestHelpers.encodeResponse(id: idValue, result: MCPTestHelpers.initializeResult())
+        case "tools/list":
+            return MCPTestHelpers.encodeResponse(
+                id: idValue,
+                result: MCPTestHelpers.toolsListResult(
+                    tools: [
+                        .init(name: "remote_tool", description: "Remote", schema: schema),
+                        .init(name: "unused_tool", description: "Unused", schema: schema),
+                    ]
+                )
+            )
+        case "tools/call":
+            return MCPTestHelpers.encodeResponse(
+                id: idValue,
+                result: MCPTestHelpers.callToolResult(text: "remote result")
+            )
+        default:
+            return nil
+        }
+    }
+}
+
 private func runStream(
     sequences: [[StreamDelta]],
     tools: [any AnyTool<EmptyContext>],
@@ -73,6 +101,75 @@ struct AgentCheckpointingIntegrationTests {
         }
         #expect(hasToolMessage)
         #expect(firstCheckpoint.iteration == 1)
+    }
+
+    @Test
+    func streamSavesMCPToolBindingsAfterToolResults() async throws {
+        let backend = InMemoryCheckpointer()
+        let sessionID = SessionID()
+        let schema = MCPTestHelpers.toolSchema(properties: [:])
+        let config = MCPServerConfiguration(name: "server1", command: "/bin/test")
+        let mcpSession = MCPSession(configurations: [config]) { _ in
+            makeRemoteToolTransport(schema: schema)
+        }
+        let remoteToolCallDeltas: [StreamDelta] = [
+            .toolCallStart(index: 0, id: "call_remote", name: "remote_tool", kind: .function),
+            .toolCallDelta(index: 0, arguments: "{}"),
+            .finished(usage: TokenUsage(input: 10, output: 5)),
+        ]
+
+        try await mcpSession.withTools { (mcpTools: [any AnyTool<EmptyContext>]) in
+            _ = try await runStream(
+                sequences: [remoteToolCallDeltas, finishDeltas],
+                tools: mcpTools,
+                checkpointer: backend,
+                sessionID: sessionID
+            )
+            let ids = try await backend.list(session: sessionID)
+            let checkpoint = try await backend.load(#require(ids.first))
+            #expect(checkpoint.mcpToolBindings == [
+                MCPToolBinding(serverName: "server1", toolName: "remote_tool")
+            ])
+        }
+    }
+
+    @Test
+    func mcpToolBindingsRecognizeAssistantAndToolMessagesIndependently() async throws {
+        let schema = MCPTestHelpers.toolSchema(properties: [:])
+        let config = MCPServerConfiguration(name: "server1", command: "/bin/test")
+        let mcpSession = MCPSession(configurations: [config]) { _ in
+            makeRemoteToolTransport(schema: schema)
+        }
+
+        try await mcpSession.withTools { (mcpTools: [any AnyTool<EmptyContext>]) in
+            let agent = Agent<EmptyContext>(
+                client: StreamingMockLLMClient(),
+                tools: mcpTools
+            )
+            let expected: Set<MCPToolBinding> = [
+                MCPToolBinding(serverName: "server1", toolName: "remote_tool")
+            ]
+
+            #expect(agent.mcpToolBindings(in: [
+                .assistant(AssistantMessage(
+                    content: "",
+                    toolCalls: [ToolCall(id: "call_remote", name: "remote_tool", arguments: "{}")]
+                )),
+            ]) == expected)
+
+            #expect(agent.mcpToolBindings(in: [
+                .tool(id: "call_remote", name: "remote_tool", content: "{}")
+            ]) == expected)
+
+            #expect(agent.mcpToolBindings(in: [
+                .assistant(AssistantMessage(
+                    content: "",
+                    toolCalls: [ToolCall(id: "call_unused", name: "unused_tool", arguments: "{}")]
+                )),
+            ]) == [
+                MCPToolBinding(serverName: "server1", toolName: "unused_tool")
+            ])
+        }
     }
 
     @Test

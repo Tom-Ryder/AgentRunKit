@@ -1,6 +1,74 @@
 import Foundation
 
+struct IndexedToolCall {
+    let index: Int
+    let call: ToolCall
+}
+
+struct IndexedToolResult {
+    let index: Int
+    let call: ToolCall
+    let result: ToolResult
+}
+
 extension Agent {
+    func requiresApproval(_ call: ToolCall, allowlist: Set<String>) -> Bool {
+        configuration.approvalPolicy.requiresApproval(toolName: call.name, allowlist: allowlist)
+    }
+
+    func resolveApprovals(
+        _ calls: [IndexedToolCall],
+        handler: @escaping ToolApprovalHandler,
+        emit: StreamEmitter? = nil,
+        allowlist: inout Set<String>
+    ) async throws -> (approved: [IndexedToolCall], denied: [IndexedToolResult]) {
+        var approved: [IndexedToolCall] = []
+        var denied: [IndexedToolResult] = []
+
+        for indexed in calls {
+            guard let tool = firstTool(named: indexed.call.name, in: tools) else {
+                approved.append(indexed)
+                continue
+            }
+
+            if allowlist.contains(indexed.call.name) {
+                approved.append(indexed)
+                continue
+            }
+
+            let request = ToolApprovalRequest(
+                toolCallId: indexed.call.id,
+                toolName: indexed.call.name,
+                arguments: indexed.call.arguments,
+                toolDescription: tool.description
+            )
+            emit?.yield(.toolApprovalRequested(request))
+            let decision = try await awaitApprovalDecision(for: request, using: handler)
+            emit?.yield(.toolApprovalResolved(toolCallId: indexed.call.id, decision: decision))
+
+            switch decision {
+            case .approve:
+                approved.append(indexed)
+            case .approveAlways:
+                allowlist.insert(indexed.call.name)
+                approved.append(indexed)
+            case let .approveWithModifiedArguments(newArgs):
+                let modified = ToolCall(
+                    id: indexed.call.id,
+                    name: indexed.call.name,
+                    arguments: newArgs,
+                    kind: indexed.call.kind
+                )
+                approved.append(IndexedToolCall(index: indexed.index, call: modified))
+            case let .deny(reason):
+                let result = ToolResult.error(reason ?? ToolFeedback.denied)
+                denied.append(IndexedToolResult(index: indexed.index, call: indexed.call, result: result))
+            }
+        }
+
+        return (approved: approved, denied: denied)
+    }
+
     func resolveTimeout(for call: ToolCall) -> Duration {
         guard let tool = firstTool(named: call.name, in: tools) else {
             return configuration.toolTimeout
@@ -27,7 +95,7 @@ extension Agent {
         } catch let error as AgentError {
             return ToolResult.error(error.feedbackMessage)
         } catch {
-            return ToolResult.error("Tool failed: \(error)")
+            return ToolResult.error(ToolFeedback.failed(error))
         }
     }
 
@@ -41,7 +109,7 @@ extension Agent {
         let eventFactory = options.eventFactory
         continuation.yield(eventFactory.make(.subAgentStarted(toolCallId: call.id, toolName: call.name)))
 
-        let parentDepth = (context as? any CurrentDepthProviding)?.currentDepth ?? 0
+        let parentDepth = currentDepth(of: context)
         let eventHandler: @Sendable (StreamEvent) -> Void = { [self] event in
             let processed = applyHistoryEmissionLimitToSubAgentEvent(event, parentDepth: parentDepth)
             continuation.yield(eventFactory.make(
@@ -63,7 +131,7 @@ extension Agent {
         } catch let error as AgentError {
             result = ToolResult.error(error.feedbackMessage)
         } catch {
-            result = ToolResult.error("Tool failed: \(error)")
+            result = ToolResult.error(ToolFeedback.failed(error))
         }
         continuation.yield(eventFactory.make(
             .subAgentCompleted(toolCallId: call.id, toolName: call.name, result: result)
@@ -95,7 +163,12 @@ extension Agent {
                 } else {
                     try await executeWithTimeout(call, context: context, approvalHandler: options.approvalHandler)
                 }
-                let truncated = truncatedToolResult(result, toolName: call.name)
+                let truncated = truncatedToolResult(
+                    result,
+                    toolName: call.name,
+                    tools: tools,
+                    fallbackLimit: configuration.maxToolResultCharacters
+                )
                 continuation.yield(eventFactory.make(
                     .toolCallCompleted(id: call.id, name: call.name, result: truncated)
                 ))
@@ -205,7 +278,12 @@ extension Agent {
 
             var results = [(Int, ToolCall, ToolResult)]()
             for try await (index, call, result) in group {
-                let truncated = truncatedToolResult(result, toolName: call.name)
+                let truncated = truncatedToolResult(
+                    result,
+                    toolName: call.name,
+                    tools: tools,
+                    fallbackLimit: configuration.maxToolResultCharacters
+                )
                 continuation.yield(eventFactory.make(
                     .toolCallCompleted(id: call.id, name: call.name, result: truncated)
                 ))

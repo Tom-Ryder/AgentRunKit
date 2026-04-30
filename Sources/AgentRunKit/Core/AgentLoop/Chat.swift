@@ -277,7 +277,12 @@ private extension Chat {
                     call, context: context, approvalHandler: approvalHandler,
                     allowlist: &sessionAllowlist, continuation: continuation
                 )
-                let truncatedResult = truncatedToolResult(result, toolName: call.name)
+                let truncatedResult = truncatedToolResult(
+                    result,
+                    toolName: call.name,
+                    tools: tools,
+                    fallbackLimit: maxToolResultCharacters
+                )
                 continuation.yield(.make(.toolCallCompleted(id: call.id, name: call.name, result: truncatedResult)))
                 messages.append(.tool(id: call.id, name: call.name, content: truncatedResult.content))
             }
@@ -314,14 +319,6 @@ private extension Chat {
         guard truncated.count < messages.count else { return false }
         messages = truncated
         return true
-    }
-
-    func toolResultCharacterLimit(for toolName: String) -> Int? {
-        firstTool(named: toolName, in: tools)?.maxResultCharacters ?? maxToolResultCharacters
-    }
-
-    func truncatedToolResult(_ result: ToolResult, toolName: String) -> ToolResult {
-        ContextCompactor.truncateToolResult(result, maxCharacters: toolResultCharacterLimit(for: toolName))
     }
 
     func resolveTimeout(for tool: any AnyTool<C>) -> Duration {
@@ -389,7 +386,7 @@ private extension Chat {
                 approvalHandler: approvalHandler
             )
         case let .deny(reason):
-            return .error(reason ?? "Tool call was denied.")
+            return .error(reason ?? ToolFeedback.denied)
         }
     }
 
@@ -413,7 +410,7 @@ private extension Chat {
         } catch let error as AgentError {
             return .error(error.feedbackMessage)
         } catch {
-            return .error("Tool failed: \(error)")
+            return .error(ToolFeedback.failed(error))
         }
     }
 

@@ -122,11 +122,19 @@ public final class Agent<C: ToolContext>: Sendable {
     }
 }
 
-struct RunLoopState {
+struct AgentLoopState {
     var messages: [ChatMessage]
     var historyWasRewrittenLocally: Bool = false
     var budgetPhase: ContextBudgetPhase?
     var sessionAllowlist: Set<String> = []
+}
+
+func shouldTerminateOnContent(
+    client: any LLMClient,
+    toolCalls: [ToolCall],
+    content: String
+) -> Bool {
+    client is any ContentOnlyTerminatingClient && toolCalls.isEmpty && !content.isEmpty
 }
 
 extension Agent {
@@ -155,7 +163,7 @@ extension Agent {
         options: InvocationOptions
     ) async throws -> AgentResult {
         validateInvocation(options)
-        var state = RunLoopState(messages: buildInitialMessages(
+        var state = AgentLoopState(messages: buildInitialMessages(
             userMessage: userMessage, history: history,
             systemPromptOverride: options.systemPromptOverride
         ))
@@ -188,9 +196,7 @@ extension Agent {
                 )
             }
 
-            if client is any ContentOnlyTerminatingClient,
-               response.toolCalls.isEmpty,
-               !response.content.isEmpty {
+            if shouldTerminateOnContent(client: client, toolCalls: response.toolCalls, content: response.content) {
                 return try AgentResult(
                     finishReason: .completed,
                     content: response.content,
@@ -228,7 +234,7 @@ extension Agent {
         totalUsage: TokenUsage,
         budgetUsage: TokenUsage?,
         options: InvocationOptions,
-        state: inout RunLoopState
+        state: inout AgentLoopState
     ) async throws -> AgentResult? {
         let indexedCalls = indexedExecutableToolCalls(from: toolCalls)
         let pruneCalls = indexedCalls.filter { $0.call.name == "prune_context" }
@@ -321,7 +327,7 @@ extension Agent {
         options: InvocationOptions,
         continuation: AsyncThrowingStream<StreamEvent, Error>.Continuation
     ) async throws {
-        var state = StreamingLoopState(messages: buildInitialMessages(
+        var state = AgentLoopState(messages: buildInitialMessages(
             userMessage: userMessage, history: history, systemPromptOverride: options.systemPromptOverride
         ))
         try state.messages.validateForAgentHistory()
@@ -335,7 +341,7 @@ extension Agent {
     }
 
     func performStreamLoop(
-        state: inout StreamingLoopState,
+        state: inout AgentLoopState,
         startIteration: Int,
         totalUsage: TokenUsage,
         lastTotalTokens: Int?,
@@ -396,7 +402,7 @@ extension Agent {
 
     private func runStreamIteration(
         iterationNumber: Int,
-        state: inout StreamingLoopState,
+        state: inout AgentLoopState,
         totalUsage: inout TokenUsage,
         lastTotalTokens: inout Int?,
         compactor: inout ContextCompactor,
