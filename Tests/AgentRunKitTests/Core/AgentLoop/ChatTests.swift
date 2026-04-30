@@ -241,7 +241,7 @@ struct ChatTests {
 
     @Test
     func nonStreamingSendWorks() async throws {
-        let client = GenerateOnlyMockLLMClient(responses: [
+        let client = MockLLMClient(responses: [
             AssistantMessage(content: "Hello from send!", tokenUsage: TokenUsage(input: 5, output: 3))
         ])
         let chat = Chat<EmptyContext>(client: client)
@@ -282,7 +282,7 @@ struct ChatTests {
 
     @Test
     func sendReturnsHistoryWithResponse() async throws {
-        let client = GenerateOnlyMockLLMClient(responses: [
+        let client = MockLLMClient(responses: [
             AssistantMessage(content: "Response", tokenUsage: TokenUsage(input: 5, output: 3))
         ])
         let chat = Chat<EmptyContext>(client: client, systemPrompt: "System")

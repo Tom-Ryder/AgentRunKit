@@ -2,37 +2,6 @@
 import Foundation
 import Testing
 
-actor MockLLMClient: LLMClient {
-    nonisolated let providerIdentifier: ProviderIdentifier = .custom("MockLLMClient")
-    private let responses: [AssistantMessage]
-    private var callIndex: Int = 0
-
-    init(responses: [AssistantMessage]) {
-        self.responses = responses
-    }
-
-    func generate(
-        messages _: [ChatMessage],
-        tools _: [ToolDefinition],
-        responseFormat _: ResponseFormat?,
-        requestContext _: RequestContext?
-    ) async throws -> AssistantMessage {
-        defer { callIndex += 1 }
-        guard callIndex < responses.count else {
-            throw AgentError.llmError(.other("No more mock responses"))
-        }
-        return responses[callIndex]
-    }
-
-    nonisolated func stream(
-        messages _: [ChatMessage],
-        tools _: [ToolDefinition],
-        requestContext _: RequestContext?
-    ) -> AsyncThrowingStream<StreamDelta, Error> {
-        AsyncThrowingStream { $0.finish() }
-    }
-}
-
 private actor FallbackRequestModeMockLLMClient: LLMClient {
     nonisolated let providerIdentifier: ProviderIdentifier = .custom("FallbackRequestModeMockLLMClient")
     private let response: AssistantMessage
@@ -781,15 +750,6 @@ struct ProxyModeTests {
         await #expect(throws: AgentError.self) {
             _ = try await client.transcribe(audio: Data(), format: .wav, model: "whisper-1")
         }
-    }
-}
-
-struct ControlledByteStream: AsyncSequence {
-    typealias Element = UInt8
-    let stream: AsyncStream<UInt8>
-
-    func makeAsyncIterator() -> AsyncStream<UInt8>.AsyncIterator {
-        stream.makeAsyncIterator()
     }
 }
 

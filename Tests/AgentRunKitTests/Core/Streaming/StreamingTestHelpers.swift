@@ -1,6 +1,46 @@
 @testable import AgentRunKit
 import Foundation
 
+actor MockLLMClient: LLMClient {
+    nonisolated let providerIdentifier: ProviderIdentifier = .custom("MockLLMClient")
+    private let responses: [AssistantMessage]
+    private var callIndex: Int = 0
+
+    init(responses: [AssistantMessage]) {
+        self.responses = responses
+    }
+
+    func generate(
+        messages _: [ChatMessage],
+        tools _: [ToolDefinition],
+        responseFormat _: ResponseFormat?,
+        requestContext _: RequestContext?
+    ) async throws -> AssistantMessage {
+        defer { callIndex += 1 }
+        guard callIndex < responses.count else {
+            throw AgentError.llmError(.other("No more mock responses"))
+        }
+        return responses[callIndex]
+    }
+
+    nonisolated func stream(
+        messages _: [ChatMessage],
+        tools _: [ToolDefinition],
+        requestContext _: RequestContext?
+    ) -> AsyncThrowingStream<StreamDelta, Error> {
+        AsyncThrowingStream { $0.finish() }
+    }
+}
+
+struct ControlledByteStream: AsyncSequence {
+    typealias Element = UInt8
+    let stream: AsyncStream<UInt8>
+
+    func makeAsyncIterator() -> AsyncStream<UInt8>.AsyncIterator {
+        stream.makeAsyncIterator()
+    }
+}
+
 actor StreamingMockLLMClient: LLMClient {
     nonisolated let providerIdentifier: ProviderIdentifier = .custom("StreamingMockLLMClient")
     let contextWindowSize: Int?
@@ -112,37 +152,6 @@ actor ContentOnlyTerminatingMockLLMClient: LLMClient, ContentOnlyTerminatingClie
                 }
             }
         }
-    }
-}
-
-actor GenerateOnlyMockLLMClient: LLMClient {
-    nonisolated let providerIdentifier: ProviderIdentifier = .custom("GenerateOnlyMockLLMClient")
-    private let responses: [AssistantMessage]
-    private var callIndex = 0
-
-    init(responses: [AssistantMessage]) {
-        self.responses = responses
-    }
-
-    func generate(
-        messages _: [ChatMessage],
-        tools _: [ToolDefinition],
-        responseFormat _: ResponseFormat?,
-        requestContext _: RequestContext?
-    ) async throws -> AssistantMessage {
-        defer { callIndex += 1 }
-        guard callIndex < responses.count else {
-            throw AgentError.llmError(.other("No more mock responses"))
-        }
-        return responses[callIndex]
-    }
-
-    nonisolated func stream(
-        messages _: [ChatMessage],
-        tools _: [ToolDefinition],
-        requestContext _: RequestContext?
-    ) -> AsyncThrowingStream<StreamDelta, Error> {
-        AsyncThrowingStream { $0.finish() }
     }
 }
 
