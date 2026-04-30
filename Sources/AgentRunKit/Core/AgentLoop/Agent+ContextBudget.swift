@@ -150,7 +150,7 @@ extension Agent {
     }
 
     func toolResultCharacterLimit(for toolName: String) -> Int? {
-        tool(named: toolName)?.maxResultCharacters ?? configuration.maxToolResultCharacters
+        firstTool(named: toolName, in: tools)?.maxResultCharacters ?? configuration.maxToolResultCharacters
     }
 
     func truncatedToolResult(_ result: ToolResult, toolName: String) -> ToolResult {

@@ -7,12 +7,7 @@ extension Agent {
         history: [ChatMessage],
         eventFactory: StreamEventFactory
     ) throws -> StreamEvent {
-        let decoded: FinishArguments
-        do {
-            decoded = try JSONDecoder().decode(FinishArguments.self, from: finishCall.argumentsData)
-        } catch {
-            throw AgentError.finishDecodingFailed(message: String(describing: error))
-        }
+        let decoded = try decodeFinishArguments(from: finishCall.argumentsData)
         return try makeFinishedEvent(
             tokenUsage: tokenUsage,
             content: decoded.content,

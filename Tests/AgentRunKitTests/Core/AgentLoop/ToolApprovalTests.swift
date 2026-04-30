@@ -276,6 +276,7 @@ struct ToolApprovalAgentTests {
         #expect(count == 1)
         let requests = await counter.requests
         #expect(requests.first?.toolName == "search")
+        #expect(requests.first?.toolDescription == "Searches")
     }
 
     @Test

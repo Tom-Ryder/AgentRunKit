@@ -194,6 +194,7 @@ struct AgentTests {
         }.last
         #expect(toolMessage?.0 == "slow")
         #expect(toolMessage?.1.contains("timed out") == true)
+        #expect(toolMessage?.1.contains("'slow'") == true)
     }
 
     @Test

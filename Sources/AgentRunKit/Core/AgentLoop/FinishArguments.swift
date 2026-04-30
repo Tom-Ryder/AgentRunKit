@@ -10,6 +10,14 @@ public struct FinishArguments: Codable, Sendable {
     }
 }
 
+func decodeFinishArguments(from arguments: Data) throws -> FinishArguments {
+    do {
+        return try JSONDecoder().decode(FinishArguments.self, from: arguments)
+    } catch {
+        throw AgentError.finishDecodingFailed(message: String(describing: error))
+    }
+}
+
 package let reservedFinishToolDefinition = ToolDefinition(
     name: "finish",
     description: """

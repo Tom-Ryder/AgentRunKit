@@ -1,43 +1,21 @@
 import Foundation
 
 extension Agent {
-    func tool(named name: String) -> (any AnyTool<C>)? {
-        tools.first(where: { $0.name == name })
-    }
-
     func resolveTimeout(for call: ToolCall) -> Duration {
-        guard let tool = tool(named: call.name) else {
+        guard let tool = firstTool(named: call.name, in: tools) else {
             return configuration.toolTimeout
         }
         return resolvedToolTimeout(for: tool, default: configuration.toolTimeout)
-    }
-
-    func withTimeout<T: Sendable>(
-        _ timeout: Duration,
-        toolName: String,
-        operation: @Sendable @escaping () async throws -> T
-    ) async throws -> T {
-        try await withThrowingTaskGroup(of: T.self) { group in
-            group.addTask { try await operation() }
-            group.addTask {
-                try await Task.sleep(for: timeout)
-                throw AgentError.toolTimeout(tool: toolName)
-            }
-            guard let result = try await group.next() else {
-                preconditionFailure("ThrowingTaskGroup with two tasks must yield a result")
-            }
-            group.cancelAll()
-            return result
-        }
     }
 
     func executeWithTimeout(
         _ call: ToolCall, context: C, approvalHandler: ToolApprovalHandler? = nil
     ) async throws -> ToolResult {
         do {
-            return try await withTimeout(resolveTimeout(for: call), toolName: call.name) {
+            return try await withToolTimeout(resolveTimeout(for: call), toolName: call.name) {
                 if let handler = approvalHandler,
-                   let approvalAware = self.tool(named: call.name) as? any ApprovalAwareSubAgentTool<C> {
+                   let tool = firstTool(named: call.name, in: self.tools),
+                   let approvalAware = tool as? any ApprovalAwareSubAgentTool<C> {
                     return try await approvalAware.executeWithApproval(
                         arguments: call.argumentsData, context: context, approvalHandler: handler
                     )
@@ -73,7 +51,7 @@ extension Agent {
 
         let result: ToolResult
         do {
-            result = try await withTimeout(resolveTimeout(for: call), toolName: call.name) {
+            result = try await withToolTimeout(resolveTimeout(for: call), toolName: call.name) {
                 try await tool.executeStreaming(
                     toolCallId: call.id, arguments: call.argumentsData,
                     context: context, parentSessionID: eventFactory.sessionID,
@@ -108,7 +86,7 @@ extension Agent {
                 ))
             } else {
                 let call = wave.calls[0]
-                let result: ToolResult = if let streamableTool = tool(named: call.name)
+                let result: ToolResult = if let streamableTool = firstTool(named: call.name, in: tools)
                     as? any StreamableSubAgentTool<C> {
                     try await executeStreamableWithTimeout(
                         call, tool: streamableTool, context: context,
@@ -150,7 +128,7 @@ extension Agent {
     }
 
     func executeTool(_ call: ToolCall, context: C) async throws -> ToolResult {
-        guard let tool = tool(named: call.name) else {
+        guard let tool = firstTool(named: call.name, in: tools) else {
             throw AgentError.toolNotFound(name: call.name)
         }
         return try await tool.execute(arguments: call.argumentsData, context: context)
@@ -161,7 +139,7 @@ extension Agent {
         var waves: [ExecutionWave] = []
         var safeBatch: [ToolCall] = []
         for call in calls {
-            if tool(named: call.name)?.isConcurrencySafe ?? false {
+            if firstTool(named: call.name, in: tools)?.isConcurrencySafe ?? false {
                 safeBatch.append(call)
             } else {
                 if !safeBatch.isEmpty {
@@ -210,7 +188,7 @@ extension Agent {
         return try await withThrowingTaskGroup(of: (Int, ToolCall, ToolResult).self) { group in
             for (index, call) in calls.enumerated() {
                 group.addTask {
-                    let result: ToolResult = if let streamableTool = self.tool(named: call.name)
+                    let result: ToolResult = if let streamableTool = firstTool(named: call.name, in: self.tools)
                         as? any StreamableSubAgentTool<C> {
                         try await self.executeStreamableWithTimeout(
                             call, tool: streamableTool, context: context,

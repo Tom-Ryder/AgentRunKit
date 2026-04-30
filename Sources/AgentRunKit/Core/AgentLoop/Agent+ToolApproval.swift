@@ -26,7 +26,7 @@ extension Agent {
         var denied: [IndexedToolResult] = []
 
         for indexed in calls {
-            guard let tool = tool(named: indexed.call.name) else {
+            guard let tool = firstTool(named: indexed.call.name, in: tools) else {
                 approved.append(indexed)
                 continue
             }

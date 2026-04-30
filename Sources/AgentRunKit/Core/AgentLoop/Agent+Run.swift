@@ -97,12 +97,7 @@ extension Agent {
         iterations: Int,
         history: [ChatMessage]
     ) throws -> AgentResult {
-        let decoded: FinishArguments
-        do {
-            decoded = try JSONDecoder().decode(FinishArguments.self, from: call.argumentsData)
-        } catch {
-            throw AgentError.finishDecodingFailed(message: String(describing: error))
-        }
+        let decoded = try decodeFinishArguments(from: call.argumentsData)
         return try AgentResult(
             finishReason: FinishReason(decoded.reason ?? "completed"),
             content: decoded.content,

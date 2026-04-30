@@ -49,7 +49,10 @@ struct ChatTimeoutTests {
 
         let toolCompletedEvent = events.first { event in
             if case let .toolCallCompleted(_, name, result) = event.kind {
-                return name == "slow" && result.isError && result.content.contains("timed out")
+                return name == "slow"
+                    && result.isError
+                    && result.content.contains("timed out")
+                    && result.content.contains("'slow'")
             }
             return false
         }

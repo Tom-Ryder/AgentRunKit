@@ -317,7 +317,7 @@ private extension Chat {
     }
 
     func toolResultCharacterLimit(for toolName: String) -> Int? {
-        tool(named: toolName)?.maxResultCharacters ?? maxToolResultCharacters
+        firstTool(named: toolName, in: tools)?.maxResultCharacters ?? maxToolResultCharacters
     }
 
     func truncatedToolResult(_ result: ToolResult, toolName: String) -> ToolResult {
@@ -335,7 +335,7 @@ private extension Chat {
         allowlist: inout Set<String>,
         continuation: AsyncThrowingStream<StreamEvent, Error>.Continuation
     ) async throws -> ToolResult {
-        guard let tool = tool(named: call.name) else {
+        guard let tool = firstTool(named: call.name, in: tools) else {
             return .error(AgentError.toolNotFound(name: call.name).feedbackMessage)
         }
 
@@ -400,25 +400,13 @@ private extension Chat {
         approvalHandler: ToolApprovalHandler? = nil
     ) async throws -> ToolResult {
         do {
-            return try await withThrowingTaskGroup(of: ToolResult.self) { group in
-                group.addTask {
-                    try await executeTool(
-                        call,
-                        with: resolvedTool,
-                        context: context,
-                        approvalHandler: approvalHandler
-                    )
-                }
-                group.addTask {
-                    try await Task.sleep(for: self.resolveTimeout(for: resolvedTool))
-                    throw AgentError.toolTimeout(tool: call.name)
-                }
-
-                guard let result = try await group.next() else {
-                    preconditionFailure("ThrowingTaskGroup with two tasks must yield a result")
-                }
-                group.cancelAll()
-                return result
+            return try await withToolTimeout(resolveTimeout(for: resolvedTool), toolName: call.name) {
+                try await self.executeTool(
+                    call,
+                    with: resolvedTool,
+                    context: context,
+                    approvalHandler: approvalHandler
+                )
             }
         } catch is CancellationError {
             throw CancellationError()
@@ -444,9 +432,5 @@ private extension Chat {
             )
         }
         return try await tool.execute(arguments: call.argumentsData, context: context)
-    }
-
-    func tool(named name: String) -> (any AnyTool<C>)? {
-        tools.first(where: { $0.name == name })
     }
 }
