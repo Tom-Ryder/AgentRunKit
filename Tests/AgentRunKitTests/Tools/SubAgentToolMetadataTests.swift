@@ -22,25 +22,25 @@ struct SubAgentToolMetadataTests {
         )
 
         #expect(tool.isConcurrencySafe == false)
-        #expect(tool.isReadOnly == false)
         #expect(tool.maxResultCharacters == nil)
+        #expect(tool.toolTimeout == nil)
     }
 
     @Test
-    func helperPreservesMetadataOverrides() throws {
+    func initializerPreservesMetadataOverrides() throws {
         let childAgent = Agent<SubAgentContext<EmptyContext>>(client: MockLLMClient(responses: []), tools: [])
-        let tool: SubAgentTool<MetadataQueryParams, EmptyContext> = try subAgentTool(
+        let tool = try SubAgentTool<MetadataQueryParams, EmptyContext>(
             name: "research",
             description: "Research tool",
             agent: childAgent,
             isConcurrencySafe: true,
-            isReadOnly: true,
             maxResultCharacters: 500,
+            toolTimeout: .seconds(5),
             messageBuilder: { $0.query }
         )
 
         #expect(tool.isConcurrencySafe == true)
-        #expect(tool.isReadOnly == true)
         #expect(tool.maxResultCharacters == 500)
+        #expect(tool.toolTimeout == .seconds(5))
     }
 }

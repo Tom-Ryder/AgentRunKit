@@ -3,25 +3,22 @@ import Foundation
 /// A typed tool with compile-time schema validation.
 ///
 /// For guidance on defining tools, see <doc:DefiningTools>.
-public struct Tool<P: Codable & SchemaProviding & Sendable, O: Codable & Sendable, C: ToolContext>: AnyTool,
-    TimeoutOverriding {
+public struct Tool<P: Codable & SchemaProviding & Sendable, O: Codable & Sendable, C: ToolContext>: AnyTool {
     public typealias Context = C
 
     public let name: String
     public let description: String
     public let parametersSchema: JSONSchema
     public let isConcurrencySafe: Bool
-    public let isReadOnly: Bool
     public let maxResultCharacters: Int?
     public let strict: Bool?
-    let toolTimeout: Duration?
+    public let toolTimeout: Duration?
     private let executor: @Sendable (P, C) async throws -> O
 
     public init(
         name: String,
         description: String,
         isConcurrencySafe: Bool = false,
-        isReadOnly: Bool = false,
         maxResultCharacters: Int? = nil,
         strict: Bool? = nil,
         toolTimeout: Duration? = nil,
@@ -37,7 +34,6 @@ public struct Tool<P: Codable & SchemaProviding & Sendable, O: Codable & Sendabl
         self.name = name
         self.description = description
         self.isConcurrencySafe = isConcurrencySafe
-        self.isReadOnly = isReadOnly
         self.maxResultCharacters = maxResultCharacters
         self.strict = strict
         self.toolTimeout = toolTimeout

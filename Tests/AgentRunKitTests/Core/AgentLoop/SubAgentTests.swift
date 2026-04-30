@@ -277,14 +277,14 @@ struct SubAgentToolTests {
     }
 
     @Test
-    func factoryFunctionCreatesEquivalentTool() async throws {
+    func initializerCreatesExecutableTool() async throws {
         let finishCall = ToolCall(id: "c1", name: "finish", arguments: #"{"content": "factory result"}"#)
         let childClient = MockLLMClient(responses: [
             AssistantMessage(content: "", toolCalls: [finishCall])
         ])
         let childAgent = Agent<SubAgentContext<EmptyContext>>(client: childClient, tools: [])
 
-        let tool: any AnyTool<SubAgentContext<EmptyContext>> = try subAgentTool(
+        let tool: any AnyTool<SubAgentContext<EmptyContext>> = try SubAgentTool<QueryParams, EmptyContext>(
             name: "via_factory",
             description: "Factory test",
             agent: childAgent,

@@ -109,14 +109,13 @@ ToolResult.error("City not found")
 
 ## Tool Classification
 
-``Tool`` exposes four optional metadata properties that describe a tool's behavior:
+``Tool`` exposes optional metadata properties that describe a tool's behavior:
 
 ```swift
 let searchTool = try Tool<SearchParams, String, EmptyContext>(
     name: "search",
     description: "Search the database",
     isConcurrencySafe: true,
-    isReadOnly: true,
     maxResultCharacters: 5_000,
     strict: true,
     executor: { params, _ in performSearch(params.query) }
@@ -126,17 +125,16 @@ let searchTool = try Tool<SearchParams, String, EmptyContext>(
 | Property | Default | Description |
 |---|---|---|
 | `isConcurrencySafe` | `false` | Whether the tool can safely run concurrently with other tools. ``Agent`` honors this: unsafe tools form exclusive barriers in the execution schedule. |
-| `isReadOnly` | `false` | Whether the tool only reads state without side effects. Advisory; not currently enforced. |
 | `maxResultCharacters` | `nil` | Per-tool override for ``AgentConfiguration/maxToolResultCharacters``. When set, this limit governs instead of the global default. |
 | `strict` | `nil` | Whether the provider should enforce strict JSON Schema adherence on the tool's arguments. Preserved on first-party OpenAI Chat and Responses function tools where supported; unsupported providers reject strict schemas instead of dropping the request. |
 
-Defaults are fail-closed: tools are assumed non-concurrent and non-read-only unless explicitly declared otherwise. Direct ``AnyTool`` conformers can override these properties in the same way.
+Defaults are fail-closed: tools are assumed non-concurrent unless explicitly declared otherwise. Direct ``AnyTool`` conformers can override these properties in the same way.
 
 When ``Agent`` executes sibling tool calls, it groups contiguous `isConcurrencySafe` calls into concurrent waves and treats each unsafe or unresolved call as an exclusive barrier. ``Chat`` executes tool calls sequentially regardless of this property.
 
 ## Per-Tool Timeout
 
-Override ``AgentConfiguration/toolTimeout`` for a specific tool by passing `toolTimeout: Duration?` to ``Tool/init(name:description:isConcurrencySafe:isReadOnly:maxResultCharacters:strict:toolTimeout:executor:)``. `nil` (the default) inherits the agent's configured timeout. Set an explicit `Duration` to apply a per-tool ceiling:
+Override ``AgentConfiguration/toolTimeout`` for a specific tool by passing `toolTimeout: Duration?` to ``Tool/init(name:description:isConcurrencySafe:maxResultCharacters:strict:toolTimeout:executor:)``. `nil` (the default) inherits the agent's configured timeout. Set an explicit `Duration` to apply a per-tool ceiling:
 
 ```swift
 let deepPoll = try Tool<PollParams, PollResult, AppContext>(

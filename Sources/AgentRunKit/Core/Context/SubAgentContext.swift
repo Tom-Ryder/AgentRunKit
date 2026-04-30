@@ -1,6 +1,4 @@
-/// Surface a current sub-agent recursion depth so emission gates (`historyEmissionDepthLimit`)
-/// can apply across non-`SubAgentContext` context types adopted by external consumers.
-public protocol CurrentDepthProviding {
+protocol CurrentDepthProviding {
     var currentDepth: Int { get }
 }
 

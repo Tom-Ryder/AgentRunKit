@@ -13,11 +13,11 @@ public protocol AnyTool<Context>: Sendable {
     /// Whether this tool can safely execute concurrently with other tools.
     var isConcurrencySafe: Bool { get }
 
-    /// Whether this tool only reads state without producing side effects (advisory; not currently enforced).
-    var isReadOnly: Bool { get }
-
     /// Per-tool override for the maximum tool result length before truncation, or `nil` to use the global default.
     var maxResultCharacters: Int? { get }
+
+    /// Per-tool override for execution timeout, or `nil` to use the agent or chat default.
+    var toolTimeout: Duration? { get }
 
     /// Whether to request provider-side strict schema enforcement on this tool's arguments.
     var strict: Bool? { get }
@@ -30,11 +30,11 @@ public extension AnyTool {
         false
     }
 
-    var isReadOnly: Bool {
-        false
+    var maxResultCharacters: Int? {
+        nil
     }
 
-    var maxResultCharacters: Int? {
+    var toolTimeout: Duration? {
         nil
     }
 
