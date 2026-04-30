@@ -165,21 +165,23 @@ enum MP3Concatenator {
 
     private static func lookupBitrate(version: MPEGVersion, index: UInt8) -> Int? {
         let idx = Int(index)
-        guard idx >= 0, idx < 16 else { return nil }
-        switch version {
-        case .mpeg1: return bitrateTableV1[idx]
-        case .mpeg2, .mpeg25: return bitrateTableV2[idx]
+        let table = switch version {
+        case .mpeg1: bitrateTableV1
+        case .mpeg2, .mpeg25: bitrateTableV2
         }
+        guard idx < table.count else { return nil }
+        return table[idx]
     }
 
     private static func lookupSampleRate(version: MPEGVersion, index: UInt8) -> Int? {
         let idx = Int(index)
-        guard idx >= 0, idx < 4 else { return nil }
-        switch version {
-        case .mpeg1: return sampleRateTableV1[idx]
-        case .mpeg2: return sampleRateTableV2[idx]
-        case .mpeg25: return sampleRateTableV25[idx]
+        let table = switch version {
+        case .mpeg1: sampleRateTableV1
+        case .mpeg2: sampleRateTableV2
+        case .mpeg25: sampleRateTableV25
         }
+        guard idx < table.count else { return nil }
+        return table[idx]
     }
 
     private static func decodeSyncsafe(_ byte0: UInt8, _ byte1: UInt8, _ byte2: UInt8, _ byte3: UInt8) -> Int {
