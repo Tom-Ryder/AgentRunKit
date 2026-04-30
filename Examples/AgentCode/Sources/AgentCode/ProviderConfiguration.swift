@@ -77,6 +77,8 @@ struct ProviderConfiguration {
 }
 
 struct OfflineDemoClient: LLMClient {
+    let providerIdentifier: ProviderIdentifier = .custom("offline-demo")
+
     func generate(
         messages _: [ChatMessage],
         tools _: [ToolDefinition],
