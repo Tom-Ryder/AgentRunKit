@@ -69,25 +69,6 @@ struct SSEEventParser {
     }
 }
 
-func buildJSONPostRequest(
-    url: URL,
-    body: some Encodable,
-    headers: [String: String]
-) throws -> URLRequest {
-    var request = URLRequest(url: url)
-    request.httpMethod = "POST"
-    request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-    for (field, value) in headers {
-        request.setValue(value, forHTTPHeaderField: field)
-    }
-    do {
-        request.httpBody = try JSONEncoder().encode(body)
-    } catch {
-        throw AgentError.llmError(.encodingFailed(error))
-    }
-    return request
-}
-
 @discardableResult
 func processSSEStream<S: AsyncSequence & Sendable>(
     bytes: S,

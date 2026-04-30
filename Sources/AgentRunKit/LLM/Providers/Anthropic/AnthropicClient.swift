@@ -404,11 +404,11 @@ extension AnthropicClient {
 
     func buildURLRequest(_ request: AnthropicRequest) throws -> URLRequest {
         let url = baseURL.appendingPathComponent("messages")
-        var headers = additionalHeaders()
-        headers["x-api-key"] = apiKey
-        headers["anthropic-version"] = Self.anthropicAPIVersion
-        applyBetaHeaders(for: request, into: &headers)
-        return try buildJSONPostRequest(url: url, body: request, headers: headers)
+        var headerMap = additionalHeaders()
+        headerMap["x-api-key"] = apiKey
+        headerMap["anthropic-version"] = Self.anthropicAPIVersion
+        applyBetaHeaders(for: request, into: &headerMap)
+        return try buildJSONPostRequest(url: url, body: request, headers: headerMap)
     }
 
     func parseResponse(_ data: Data) throws -> AssistantMessage {

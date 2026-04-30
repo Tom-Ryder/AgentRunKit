@@ -482,6 +482,21 @@ struct OpenAIClientURLRequestTests {
     }
 
     @Test
+    func additionalAuthorizationHeaderOverridesApiKeyCaseInsensitively() throws {
+        let client = OpenAIClient(
+            apiKey: "sk-test-key-123",
+            model: "test/model",
+            baseURL: OpenAIClient.openRouterBaseURL,
+            additionalHeaders: { ["authorization": "Bearer override"] }
+        )
+        let messages: [ChatMessage] = [.user("Hello")]
+        let request = try client.buildRequest(messages: messages, tools: [])
+        let urlRequest = try client.buildURLRequest(request)
+
+        #expect(urlRequest.value(forHTTPHeaderField: "Authorization") == "Bearer override")
+    }
+
+    @Test
     func buildURLRequestWithCustomBaseURL() throws {
         guard let customURL = URL(string: "https://custom.api.example.com/v2") else {
             Issue.record("Failed to create custom URL")

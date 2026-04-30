@@ -216,22 +216,12 @@ extension OpenAIClient {
 
     func buildURLRequest(_ request: ChatCompletionRequest) throws -> URLRequest {
         let url = baseURL.appendingPathComponent(chatCompletionPath)
-        var urlRequest = URLRequest(url: url)
-        urlRequest.httpMethod = "POST"
-        urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        var headers: [(String, String)] = []
         if let apiKey {
-            urlRequest.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+            headers.append(("Authorization", "Bearer \(apiKey)"))
         }
-        for (field, value) in additionalHeaders() {
-            urlRequest.setValue(value, forHTTPHeaderField: field)
-        }
-
-        do {
-            urlRequest.httpBody = try JSONEncoder().encode(request)
-        } catch {
-            throw AgentError.llmError(.encodingFailed(error))
-        }
-        return urlRequest
+        headers.append(contentsOf: additionalHeaders().map { ($0.key, $0.value) })
+        return try buildJSONPostRequest(url: url, body: request, headers: headers)
     }
 
     func buildTranscriptionURLRequest(

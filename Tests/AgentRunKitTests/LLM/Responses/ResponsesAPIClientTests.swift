@@ -794,6 +794,39 @@ struct ResponsesURLRequestTests {
     }
 
     @Test
+    func buildURLRequestAppliesAdditionalHeaders() async throws {
+        let client = ResponsesAPIClient(
+            apiKey: "sk-test-123",
+            model: "gpt-4.1",
+            baseURL: ResponsesAPIClient.openAIBaseURL,
+            additionalHeaders: { ["X-Custom-Header": "custom-value"] }
+        )
+        let request = try await client.buildRequest(
+            messages: [.user("Hello")], tools: []
+        )
+        let urlRequest = try await client.buildURLRequest(request)
+
+        #expect(urlRequest.value(forHTTPHeaderField: "X-Custom-Header") == "custom-value")
+        #expect(urlRequest.value(forHTTPHeaderField: "Authorization") == "Bearer sk-test-123")
+    }
+
+    @Test
+    func additionalAuthorizationHeaderOverridesApiKeyCaseInsensitively() async throws {
+        let client = ResponsesAPIClient(
+            apiKey: "sk-test-123",
+            model: "gpt-4.1",
+            baseURL: ResponsesAPIClient.openAIBaseURL,
+            additionalHeaders: { ["authorization": "Bearer override"] }
+        )
+        let request = try await client.buildRequest(
+            messages: [.user("Hello")], tools: []
+        )
+        let urlRequest = try await client.buildURLRequest(request)
+
+        #expect(urlRequest.value(forHTTPHeaderField: "Authorization") == "Bearer override")
+    }
+
+    @Test
     func buildURLRequestWithoutApiKeyOmitsAuth() async throws {
         let client = ResponsesAPIClient(
             model: "gpt-4.1",

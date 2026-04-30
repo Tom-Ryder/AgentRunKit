@@ -241,9 +241,10 @@ public struct VertexAnthropicClient: LLMClient, Sendable {
         }
         let url = baseURL.appendingPathComponent(basePath)
 
-        var headers = ["Authorization": "Bearer \(token)"]
-        anthropic.applyBetaHeaders(for: request.inner, into: &headers)
-        return try buildJSONPostRequest(url: url, body: request, headers: headers)
+        var headerMap: [String: String] = [:]
+        headerMap["Authorization"] = "Bearer \(token)"
+        anthropic.applyBetaHeaders(for: request.inner, into: &headerMap)
+        return try buildJSONPostRequest(url: url, body: request, headers: headerMap)
     }
 }
 

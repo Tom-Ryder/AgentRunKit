@@ -227,8 +227,7 @@ extension GeminiClient {
             throw AgentError.llmError(.other("Failed to construct URL with query items"))
         }
 
-        let headers = additionalHeaders()
-        return try buildJSONPostRequest(url: finalURL, body: request, headers: headers)
+        return try buildJSONPostRequest(url: finalURL, body: request, headers: additionalHeaders())
     }
 }
 
