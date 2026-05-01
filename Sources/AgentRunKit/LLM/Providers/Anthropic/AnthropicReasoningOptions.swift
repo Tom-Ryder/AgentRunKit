@@ -2,7 +2,7 @@ import Foundation
 
 /// Provider-specific request options for Anthropic reasoning behavior.
 public struct AnthropicReasoningOptions: Sendable, Equatable {
-    /// The Anthropic wire-level strategy used to lower shared reasoning intent.
+    /// Whether reasoning uses Anthropic's manual `thinking` block or the adaptive thinking flow.
     public enum Mode: Sendable, Equatable {
         case manual
         case adaptive

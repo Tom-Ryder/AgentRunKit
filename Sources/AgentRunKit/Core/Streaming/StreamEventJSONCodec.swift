@@ -2,7 +2,7 @@ import Foundation
 
 /// Stable JSON encoding for persisting and replaying streamed events.
 public enum StreamEventJSONCodec {
-    /// Returns a `JSONEncoder` configured for the stable event wire format.
+    /// Returns an encoder configured for the stable stream event wire format.
     public static func makeEncoder() -> JSONEncoder {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys]
@@ -11,7 +11,7 @@ public enum StreamEventJSONCodec {
         return encoder
     }
 
-    /// Returns a `JSONDecoder` configured for the stable event wire format.
+    /// Returns a decoder configured for the stable stream event wire format.
     public static func makeDecoder() -> JSONDecoder {
         let decoder = JSONDecoder()
         decoder.keyDecodingStrategy = .useDefaultKeys

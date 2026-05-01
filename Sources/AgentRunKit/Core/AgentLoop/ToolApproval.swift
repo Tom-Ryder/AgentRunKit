@@ -74,9 +74,7 @@ extension ToolApprovalDecision: Codable {
     }
 }
 
-/// Asynchronously resolves a tool approval request.
-///
-/// Callers remain responsible for approval timeout policy, while task cancellation aborts waiting immediately.
+/// Asynchronously resolves a tool approval request; no timeout is enforced, cancel the awaiting task to abort.
 public typealias ToolApprovalHandler = @Sendable (ToolApprovalRequest) async -> ToolApprovalDecision
 
 private actor ApprovalDecisionWaiter {
