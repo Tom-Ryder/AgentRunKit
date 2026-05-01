@@ -9,18 +9,25 @@ private struct QueryParams: Codable, SchemaProviding {
     }
 }
 
-private struct ThrowingTool: AnyTool, StreamableSubAgentTool {
+private struct ThrowingTool: AnyTool, SubAgentExecutableTool {
     typealias Context = SubAgentContext<EmptyContext>
     let name = "delegate"
     let description = "Throws on resume"
     let parametersSchema: JSONSchema = .object(properties: ["query": .string()], required: ["query"])
 
     func execute(arguments _: Data, context _: Context) async throws -> ToolResult {
-        throw AgentError.toolNotFound(name: "stale")
+        throw AgentError.toolExecutionFailed(tool: name, message: "ordinary execute path used")
     }
 
-    func executeStreaming(
-        toolCallId _: String,
+    func executeSubAgent(
+        arguments _: Data,
+        context _: Context,
+        approvalHandler _: ToolApprovalHandler?
+    ) async throws -> ToolResult {
+        throw AgentError.toolExecutionFailed(tool: name, message: "non-streaming sub-agent path used")
+    }
+
+    func executeSubAgentStreaming(
         arguments _: Data,
         context _: Context,
         parentSessionID _: SessionID?,
@@ -31,19 +38,25 @@ private struct ThrowingTool: AnyTool, StreamableSubAgentTool {
     }
 }
 
-private struct CancellingStreamableTool: AnyTool, StreamableSubAgentTool {
+private struct CancellingSubAgentTool: AnyTool, SubAgentExecutableTool {
     typealias Context = SubAgentContext<EmptyContext>
     let name = "delegate"
     let description = "Awaits cancellation"
     let parametersSchema: JSONSchema = .object(properties: ["query": .string()], required: ["query"])
 
     func execute(arguments _: Data, context _: Context) async throws -> ToolResult {
-        try await Task.sleep(for: .seconds(60))
-        return .error("unreachable")
+        throw AgentError.toolExecutionFailed(tool: name, message: "ordinary execute path used")
     }
 
-    func executeStreaming(
-        toolCallId _: String,
+    func executeSubAgent(
+        arguments _: Data,
+        context _: Context,
+        approvalHandler _: ToolApprovalHandler?
+    ) async throws -> ToolResult {
+        throw AgentError.toolExecutionFailed(tool: name, message: "non-streaming sub-agent path used")
+    }
+
+    func executeSubAgentStreaming(
         arguments _: Data,
         context _: Context,
         parentSessionID _: SessionID?,
@@ -51,7 +64,7 @@ private struct CancellingStreamableTool: AnyTool, StreamableSubAgentTool {
         approvalHandler _: ToolApprovalHandler?
     ) async throws -> ToolResult {
         try await Task.sleep(for: .seconds(60))
-        return .error("unreachable")
+        return .error("streaming path completed without cancellation")
     }
 }
 
@@ -156,11 +169,12 @@ struct AgentResumeSubAgentTests {
         }
         #expect(completedResults.count == 1)
         #expect(completedResults.first?.isError == true)
+        #expect(completedResults.first?.content == "Error: Tool 'stale' does not exist.")
     }
 
     @MainActor @Test
     func subAgentStreamCancellationDoesNotEmitCompleted() async throws {
-        let tool = CancellingStreamableTool()
+        let tool = CancellingSubAgentTool()
         let parentDeltas: [StreamDelta] = [
             .toolCallStart(index: 0, id: "call_block", name: "delegate", kind: .function),
             .toolCallDelta(index: 0, arguments: #"{"query":"x"}"#),

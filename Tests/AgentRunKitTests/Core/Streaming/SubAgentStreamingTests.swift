@@ -686,7 +686,7 @@ private func containsCompletedToolCall(
     }
 }
 
-private struct BlockingStreamableTool: AnyTool, StreamableSubAgentTool {
+private struct BlockingSubAgentTool: AnyTool, SubAgentExecutableTool {
     typealias Context = SubAgentContext<EmptyContext>
 
     let name = "blocking"
@@ -694,12 +694,18 @@ private struct BlockingStreamableTool: AnyTool, StreamableSubAgentTool {
     let parametersSchema: JSONSchema = .object(properties: ["query": .string()], required: ["query"])
 
     func execute(arguments _: Data, context _: Context) async throws -> ToolResult {
-        try await Task.sleep(for: .seconds(60))
-        return .error("Should not reach here")
+        throw AgentError.toolExecutionFailed(tool: name, message: "ordinary execute path used")
     }
 
-    func executeStreaming(
-        toolCallId _: String,
+    func executeSubAgent(
+        arguments _: Data,
+        context _: Context,
+        approvalHandler _: ToolApprovalHandler?
+    ) async throws -> ToolResult {
+        throw AgentError.toolExecutionFailed(tool: name, message: "non-streaming sub-agent path used")
+    }
+
+    func executeSubAgentStreaming(
         arguments _: Data,
         context _: Context,
         parentSessionID _: SessionID?,
@@ -707,14 +713,14 @@ private struct BlockingStreamableTool: AnyTool, StreamableSubAgentTool {
         approvalHandler _: ToolApprovalHandler?
     ) async throws -> ToolResult {
         try await Task.sleep(for: .seconds(60))
-        return .error("Should not reach here")
+        return .error("streaming path completed without cancellation")
     }
 }
 
 struct SubAgentCancellationTests {
     @Test
     func cancellationDuringSubAgentTerminatesStream() async throws {
-        let tool = BlockingStreamableTool()
+        let tool = BlockingSubAgentTool()
 
         let parentDeltas1: [StreamDelta] = [
             .toolCallStart(index: 0, id: "call_block", name: "blocking", kind: .function),
@@ -747,25 +753,25 @@ struct SubAgentCancellationTests {
         try? await task.value
 
         let events = await collector.events
-        let hasNoFinished = !events.contains { event in
+        #expect(!events.contains { event in
             if case .finished = event.kind { return true }
             return false
-        }
-        #expect(hasNoFinished)
+        })
 
-        let hasStarted = events.contains { event in
+        #expect(events.contains { event in
             if case let .subAgentStarted(id, name) = event.kind {
                 return id == "call_block" && name == "blocking"
             }
             return false
-        }
-        #expect(hasStarted)
+        })
+
+        #expect(!events.contains { if case .subAgentCompleted = $0.kind { return true }; return false })
     }
 }
 
 struct SubAgentDepthLimitStreamingTests {
     @Test
-    func executeStreamingThrowsAtMaxDepth() async throws {
+    func executeSubAgentStreamingThrowsAtMaxDepth() async throws {
         let childClient = StreamingMockLLMClient(streamSequences: [])
         let childAgent = Agent<SubAgentContext<EmptyContext>>(client: childClient, tools: [])
 
@@ -780,9 +786,12 @@ struct SubAgentDepthLimitStreamingTests {
         let ctx = SubAgentContext(inner: EmptyContext(), maxDepth: 2, currentDepth: 2)
 
         do {
-            _ = try await tool.executeStreaming(
-                toolCallId: "call_deep", arguments: args,
-                context: ctx, eventHandler: { _ in }
+            _ = try await tool.executeSubAgentStreaming(
+                arguments: args,
+                context: ctx,
+                parentSessionID: nil,
+                eventHandler: { _ in },
+                approvalHandler: nil
             )
             Issue.record("Expected maxDepthExceeded")
         } catch let error as AgentError {

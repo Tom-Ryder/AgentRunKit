@@ -81,11 +81,12 @@ extension Agent {
     ) async throws -> ToolResult {
         do {
             return try await withToolTimeout(resolveTimeout(for: call), toolName: call.name) {
-                if let handler = approvalHandler,
-                   let tool = firstTool(named: call.name, in: self.tools),
-                   let approvalAware = tool as? any ApprovalAwareSubAgentTool<C> {
-                    return try await approvalAware.executeWithApproval(
-                        arguments: call.argumentsData, context: context, approvalHandler: handler
+                if let tool = firstTool(named: call.name, in: self.tools),
+                   let subAgentTool = tool as? any SubAgentExecutableTool<C> {
+                    return try await subAgentTool.executeSubAgent(
+                        arguments: call.argumentsData,
+                        context: context,
+                        approvalHandler: approvalHandler
                     )
                 }
                 return try await self.executeTool(call, context: context)
@@ -99,9 +100,9 @@ extension Agent {
         }
     }
 
-    func executeStreamableWithTimeout(
+    func executeSubAgentStreamingWithTimeout(
         _ call: ToolCall,
-        tool: any StreamableSubAgentTool<C>,
+        tool: any SubAgentExecutableTool<C>,
         context: C,
         options: InvocationOptions,
         continuation: AsyncThrowingStream<StreamEvent, Error>.Continuation
@@ -120,8 +121,8 @@ extension Agent {
         let result: ToolResult
         do {
             result = try await withToolTimeout(resolveTimeout(for: call), toolName: call.name) {
-                try await tool.executeStreaming(
-                    toolCallId: call.id, arguments: call.argumentsData,
+                try await tool.executeSubAgentStreaming(
+                    arguments: call.argumentsData,
                     context: context, parentSessionID: eventFactory.sessionID,
                     eventHandler: eventHandler, approvalHandler: options.approvalHandler
                 )
@@ -154,10 +155,10 @@ extension Agent {
                 ))
             } else {
                 let call = wave.calls[0]
-                let result: ToolResult = if let streamableTool = firstTool(named: call.name, in: tools)
-                    as? any StreamableSubAgentTool<C> {
-                    try await executeStreamableWithTimeout(
-                        call, tool: streamableTool, context: context,
+                let result: ToolResult = if let subAgentTool = firstTool(named: call.name, in: tools)
+                    as? any SubAgentExecutableTool<C> {
+                    try await executeSubAgentStreamingWithTimeout(
+                        call, tool: subAgentTool, context: context,
                         options: options, continuation: continuation
                     )
                 } else {
@@ -261,10 +262,10 @@ extension Agent {
         return try await withThrowingTaskGroup(of: (Int, ToolCall, ToolResult).self) { group in
             for (index, call) in calls.enumerated() {
                 group.addTask {
-                    let result: ToolResult = if let streamableTool = firstTool(named: call.name, in: self.tools)
-                        as? any StreamableSubAgentTool<C> {
-                        try await self.executeStreamableWithTimeout(
-                            call, tool: streamableTool, context: context,
+                    let result: ToolResult = if let subAgentTool = firstTool(named: call.name, in: self.tools)
+                        as? any SubAgentExecutableTool<C> {
+                        try await self.executeSubAgentStreamingWithTimeout(
+                            call, tool: subAgentTool, context: context,
                             options: options, continuation: continuation
                         )
                     } else {

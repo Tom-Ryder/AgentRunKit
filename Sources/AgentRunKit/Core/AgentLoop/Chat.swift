@@ -420,12 +420,11 @@ private extension Chat {
         context: C,
         approvalHandler: ToolApprovalHandler?
     ) async throws -> ToolResult {
-        if let handler = approvalHandler,
-           let approvalAware = tool as? any ApprovalAwareSubAgentTool<C> {
-            return try await approvalAware.executeWithApproval(
+        if let subAgentTool = tool as? any SubAgentExecutableTool<C> {
+            return try await subAgentTool.executeSubAgent(
                 arguments: call.argumentsData,
                 context: context,
-                approvalHandler: handler
+                approvalHandler: approvalHandler
             )
         }
         return try await tool.execute(arguments: call.argumentsData, context: context)

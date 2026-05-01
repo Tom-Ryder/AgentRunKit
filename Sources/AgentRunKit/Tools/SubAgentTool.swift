@@ -4,13 +4,14 @@ import Foundation
 ///
 /// For guidance on composing sub-agents, see <doc:SubAgents>.
 public struct SubAgentTool<P: Codable & SchemaProviding & Sendable, InnerContext: ToolContext>: AnyTool,
-    StreamableSubAgentTool, ApprovalAwareSubAgentTool {
+    SubAgentExecutableTool {
     public typealias Context = SubAgentContext<InnerContext>
 
     public let name: String
     public let description: String
     public let parametersSchema: JSONSchema
     public let isConcurrencySafe: Bool
+    public let isReadOnly: Bool
     public let maxResultCharacters: Int?
     public let toolTimeout: Duration?
     private let agent: Agent<SubAgentContext<InnerContext>>
@@ -24,6 +25,7 @@ public struct SubAgentTool<P: Codable & SchemaProviding & Sendable, InnerContext
         description: String,
         agent: Agent<SubAgentContext<InnerContext>>,
         isConcurrencySafe: Bool = false,
+        isReadOnly: Bool = false,
         maxResultCharacters: Int? = nil,
         tokenBudget: Int? = nil,
         toolTimeout: Duration? = nil,
@@ -42,6 +44,7 @@ public struct SubAgentTool<P: Codable & SchemaProviding & Sendable, InnerContext
         self.description = description
         parametersSchema = P.jsonSchema
         self.isConcurrencySafe = isConcurrencySafe
+        self.isReadOnly = isReadOnly
         self.maxResultCharacters = maxResultCharacters
         self.agent = agent
         self.tokenBudget = tokenBudget
@@ -52,13 +55,13 @@ public struct SubAgentTool<P: Codable & SchemaProviding & Sendable, InnerContext
     }
 
     public func execute(arguments: Data, context: SubAgentContext<InnerContext>) async throws -> ToolResult {
-        try await runInner(arguments: arguments, context: context, approvalHandler: nil)
+        try await executeSubAgent(arguments: arguments, context: context, approvalHandler: nil)
     }
 
-    func executeWithApproval(
+    func executeSubAgent(
         arguments: Data,
         context: SubAgentContext<InnerContext>,
-        approvalHandler: @escaping ToolApprovalHandler
+        approvalHandler: ToolApprovalHandler?
     ) async throws -> ToolResult {
         try await runInner(arguments: arguments, context: context, approvalHandler: approvalHandler)
     }
@@ -84,8 +87,7 @@ public struct SubAgentTool<P: Codable & SchemaProviding & Sendable, InnerContext
         return toolResult(content: result.content, reason: result.finishReason)
     }
 
-    func executeStreaming(
-        toolCallId _: String,
+    func executeSubAgentStreaming(
         arguments: Data,
         context: SubAgentContext<InnerContext>,
         parentSessionID: SessionID?,
@@ -140,4 +142,33 @@ public struct SubAgentTool<P: Codable & SchemaProviding & Sendable, InnerContext
         }
         return ToolResult(content: content, isError: reason == .error)
     }
+}
+
+/// Creates a sub-agent tool with improved type inference at the call site.
+public func subAgentTool<P: Codable & SchemaProviding & Sendable, InnerContext: ToolContext>(
+    name: String,
+    description: String,
+    agent: Agent<SubAgentContext<InnerContext>>,
+    isConcurrencySafe: Bool = false,
+    isReadOnly: Bool = false,
+    maxResultCharacters: Int? = nil,
+    tokenBudget: Int? = nil,
+    toolTimeout: Duration? = nil,
+    inheritParentMessages: Bool = false,
+    systemPromptBuilder: (@Sendable (P) -> String)? = nil,
+    messageBuilder: @escaping @Sendable (P) -> String
+) throws -> SubAgentTool<P, InnerContext> {
+    try SubAgentTool(
+        name: name,
+        description: description,
+        agent: agent,
+        isConcurrencySafe: isConcurrencySafe,
+        isReadOnly: isReadOnly,
+        maxResultCharacters: maxResultCharacters,
+        tokenBudget: tokenBudget,
+        toolTimeout: toolTimeout,
+        inheritParentMessages: inheritParentMessages,
+        systemPromptBuilder: systemPromptBuilder,
+        messageBuilder: messageBuilder
+    )
 }
