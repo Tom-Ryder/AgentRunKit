@@ -21,7 +21,8 @@ enum CodingTools {
         try Tool<EmptyParameters, WorkspaceStatus, CodingContext>(
             name: "workspace_status",
             description: "Inspect the current workspace root, detected package type, and git status.",
-            isConcurrencySafe: true
+            isConcurrencySafe: true,
+            isReadOnly: true
         ) { _, context in
             let gitStatus = try await context.commandRunner.run(
                 CommandInvocation(command: "git", arguments: ["status", "--short", "--branch"], timeoutSeconds: 10),
@@ -39,7 +40,8 @@ enum CodingTools {
         try Tool<ListFilesParameters, FileList, CodingContext>(
             name: "list_files",
             description: "List text-oriented source files in the workspace.",
-            isConcurrencySafe: true
+            isConcurrencySafe: true,
+            isReadOnly: true
         ) { params, context in
             let limit = try ToolLimits.bounded(params.limit, default: 250, maximum: 500)
             let files = try context.workspace.listFiles(limit: limit + 1)
@@ -51,7 +53,8 @@ enum CodingTools {
         try Tool<ReadFileParameters, FileContent, CodingContext>(
             name: "read_file",
             description: "Read one UTF-8 text file inside the workspace.",
-            isConcurrencySafe: true
+            isConcurrencySafe: true,
+            isReadOnly: true
         ) { params, context in
             try FileContent(path: params.path, content: context.workspace.readFile(params.path))
         }
@@ -61,7 +64,8 @@ enum CodingTools {
         try Tool<GrepParameters, SearchResults, CodingContext>(
             name: "grep",
             description: "Search workspace text files by literal text or regular expression.",
-            isConcurrencySafe: true
+            isConcurrencySafe: true,
+            isReadOnly: true
         ) { params, context in
             try SearchEngine().search(
                 query: params.query,
@@ -76,7 +80,8 @@ enum CodingTools {
         try Tool<GlobParameters, FileList, CodingContext>(
             name: "glob",
             description: "Find workspace files matching a glob pattern such as Sources/**/*.swift.",
-            isConcurrencySafe: true
+            isConcurrencySafe: true,
+            isReadOnly: true
         ) { params, context in
             let limit = try ToolLimits.bounded(params.limit, default: 100, maximum: 500)
             let files = try context.workspace.glob(params.pattern, limit: limit + 1)
@@ -88,7 +93,8 @@ enum CodingTools {
         try Tool<EmptyParameters, String, CodingContext>(
             name: "git_diff",
             description: "Return the current git diff for the workspace.",
-            isConcurrencySafe: true
+            isConcurrencySafe: true,
+            isReadOnly: true
         ) { _, context in
             try await context.workspace.currentDiff()
         }
