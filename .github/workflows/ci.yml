@@ -49,6 +49,23 @@ jobs:
       - name: Run tests
         run: swift test --parallel -Xswiftc -warnings-as-errors
 
+  api-breakage:
+    if: github.event_name == 'pull_request'
+    runs-on: macos-26
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: actions/cache@cdf6c1fa76f9f475f3d7449005a359c84ca0f306 # v5.0.3
+        with:
+          path: .build
+          key: macos-api-breakage-spm-${{ hashFiles('Package.resolved', 'Package.swift') }}
+          restore-keys: macos-api-breakage-spm-
+      - name: Diagnose API breaking changes
+        run: swift package diagnose-api-breaking-changes "origin/${{ github.base_ref }}"
+
   docs:
     runs-on: macos-26
     timeout-minutes: 20
@@ -66,18 +83,25 @@ jobs:
 
   check:
     if: always()
-    needs: [lint, test-macos, docs]
+    needs: [lint, test-macos, api-breakage, docs]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - name: Verify all jobs passed
         run: |
+          api_ok=true
+          if [[ "${{ needs.api-breakage.result }}" != "success" && \
+                "${{ needs.api-breakage.result }}" != "skipped" ]]; then
+            api_ok=false
+          fi
           if [[ "${{ needs.lint.result }}" != "success" || \
                 "${{ needs.test-macos.result }}" != "success" || \
-                "${{ needs.docs.result }}" != "success" ]]; then
+                "${{ needs.docs.result }}" != "success" || \
+                "$api_ok" != "true" ]]; then
             echo "Required jobs failed:"
             echo "  lint: ${{ needs.lint.result }}"
             echo "  test-macos: ${{ needs.test-macos.result }}"
+            echo "  api-breakage: ${{ needs.api-breakage.result }}"
             echo "  docs: ${{ needs.docs.result }}"
             exit 1
           fi
