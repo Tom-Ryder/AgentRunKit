@@ -215,6 +215,7 @@ struct ToolClassificationTests {
             executor: { params, _ in TestOutput(result: params.value) }
         )
         #expect(tool.isConcurrencySafe == false)
+        #expect(tool.isReadOnly == false)
         #expect(tool.maxResultCharacters == nil)
         #expect(tool.toolTimeout == nil)
     }
@@ -224,11 +225,13 @@ struct ToolClassificationTests {
         let tool = try Tool<TestParams, TestOutput, EmptyContext>(
             name: "test", description: "Test",
             isConcurrencySafe: true,
+            isReadOnly: true,
             maxResultCharacters: 5000,
             toolTimeout: .seconds(5),
             executor: { params, _ in TestOutput(result: params.value) }
         )
         #expect(tool.isConcurrencySafe == true)
+        #expect(tool.isReadOnly == true)
         #expect(tool.maxResultCharacters == 5000)
         #expect(tool.toolTimeout == .seconds(5))
     }
@@ -237,6 +240,7 @@ struct ToolClassificationTests {
     func protocolDefaultsOnDirectConformer() {
         let tool = MinimalClassificationTool()
         #expect(tool.isConcurrencySafe == false)
+        #expect(tool.isReadOnly == false)
         #expect(tool.maxResultCharacters == nil)
         #expect(tool.toolTimeout == nil)
     }
@@ -245,6 +249,7 @@ struct ToolClassificationTests {
     func existentialPreservesOverrides() {
         let tool: any AnyTool<EmptyContext> = OverriddenClassificationTool()
         #expect(tool.isConcurrencySafe == true)
+        #expect(tool.isReadOnly == true)
         #expect(tool.maxResultCharacters == 500)
         #expect(tool.toolTimeout == .seconds(10))
     }
@@ -267,6 +272,7 @@ private struct OverriddenClassificationTool: AnyTool {
     let description = "Classified"
     let parametersSchema: JSONSchema = .object(properties: [:], required: [])
     let isConcurrencySafe = true
+    let isReadOnly = true
     let maxResultCharacters: Int? = 500
     let toolTimeout: Duration? = .seconds(10)
 

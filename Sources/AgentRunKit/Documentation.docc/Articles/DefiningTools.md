@@ -125,6 +125,7 @@ let searchTool = try Tool<SearchParams, String, EmptyContext>(
 | Property | Default | Description |
 |---|---|---|
 | `isConcurrencySafe` | `false` | Whether the tool can safely run concurrently with other tools. ``Agent`` honors this: unsafe tools form exclusive barriers in the execution schedule. |
+| `isReadOnly` | `false` | Whether the tool only reads state without side effects. This is advisory metadata for callers and approval policy. |
 | `maxResultCharacters` | `nil` | Per-tool override for ``AgentConfiguration/maxToolResultCharacters``. When set, this limit governs instead of the global default. |
 | `strict` | `nil` | Whether the provider should enforce strict JSON Schema adherence on the tool's arguments. Preserved on first-party OpenAI Chat and Responses function tools where supported; unsupported providers reject strict schemas instead of dropping the request. |
 
@@ -134,7 +135,7 @@ When ``Agent`` executes sibling tool calls, it groups contiguous `isConcurrencyS
 
 ## Per-Tool Timeout
 
-Override ``AgentConfiguration/toolTimeout`` for a specific tool by passing `toolTimeout: Duration?` to ``Tool/init(name:description:isConcurrencySafe:maxResultCharacters:strict:toolTimeout:executor:)``. `nil` (the default) inherits the agent's configured timeout. Set an explicit `Duration` to apply a per-tool ceiling:
+Override ``AgentConfiguration/toolTimeout`` for a specific tool by passing `toolTimeout: Duration?` to ``Tool/init(name:description:isConcurrencySafe:isReadOnly:maxResultCharacters:strict:toolTimeout:executor:)``. `nil` (the default) inherits the agent's configured timeout. Set an explicit `Duration` to apply a per-tool ceiling:
 
 ```swift
 let deepPoll = try Tool<PollParams, PollResult, AppContext>(

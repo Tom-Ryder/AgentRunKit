@@ -1,4 +1,5 @@
-protocol CurrentDepthProviding {
+/// Surfaces a current sub-agent recursion depth for custom depth-aware contexts.
+public protocol CurrentDepthProviding {
     var currentDepth: Int { get }
 }
 

@@ -13,6 +13,9 @@ public protocol AnyTool<Context>: Sendable {
     /// Whether this tool can safely execute concurrently with other tools.
     var isConcurrencySafe: Bool { get }
 
+    /// Whether this tool only reads state without producing side effects.
+    var isReadOnly: Bool { get }
+
     /// Per-tool override for the maximum tool result length before truncation, or `nil` to use the global default.
     var maxResultCharacters: Int? { get }
 
@@ -27,6 +30,10 @@ public protocol AnyTool<Context>: Sendable {
 
 public extension AnyTool {
     var isConcurrencySafe: Bool {
+        false
+    }
+
+    var isReadOnly: Bool {
         false
     }
 

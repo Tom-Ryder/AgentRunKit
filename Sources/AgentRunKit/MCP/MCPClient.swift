@@ -51,6 +51,22 @@ public actor MCPClient {
         self.toolCallTimeout = toolCallTimeout
     }
 
+    #if os(macOS)
+        public init(configuration: MCPServerConfiguration) {
+            self.init(
+                serverName: configuration.name,
+                transport: StdioMCPTransport(
+                    command: configuration.command,
+                    arguments: configuration.arguments,
+                    environment: configuration.environment,
+                    workingDirectory: configuration.workingDirectory.map { URL(fileURLWithPath: $0) }
+                ),
+                initializationTimeout: configuration.initializationTimeout,
+                toolCallTimeout: configuration.toolCallTimeout
+            )
+        }
+    #endif
+
     func connectAndInitialize() async throws {
         guard case .created = state else {
             throw MCPError.connectionFailed("MCPClient is in state \(state), expected .created")

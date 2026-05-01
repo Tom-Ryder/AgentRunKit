@@ -10,6 +10,7 @@ public struct Tool<P: Codable & SchemaProviding & Sendable, O: Codable & Sendabl
     public let description: String
     public let parametersSchema: JSONSchema
     public let isConcurrencySafe: Bool
+    public let isReadOnly: Bool
     public let maxResultCharacters: Int?
     public let strict: Bool?
     public let toolTimeout: Duration?
@@ -19,6 +20,7 @@ public struct Tool<P: Codable & SchemaProviding & Sendable, O: Codable & Sendabl
         name: String,
         description: String,
         isConcurrencySafe: Bool = false,
+        isReadOnly: Bool = false,
         maxResultCharacters: Int? = nil,
         strict: Bool? = nil,
         toolTimeout: Duration? = nil,
@@ -34,6 +36,7 @@ public struct Tool<P: Codable & SchemaProviding & Sendable, O: Codable & Sendabl
         self.name = name
         self.description = description
         self.isConcurrencySafe = isConcurrencySafe
+        self.isReadOnly = isReadOnly
         self.maxResultCharacters = maxResultCharacters
         self.strict = strict
         self.toolTimeout = toolTimeout

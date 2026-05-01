@@ -14,6 +14,12 @@ struct ResponsesRequestSerializationTests {
     }
 
     @Test
+    func baseURLConstantsExposeOpenAIAndChatGPTEndpoints() {
+        #expect(ResponsesAPIClient.openAIBaseURL.absoluteString == "https://api.openai.com/v1")
+        #expect(ResponsesAPIClient.chatGPTBaseURL.absoluteString == "https://chatgpt.com/backend-api/codex")
+    }
+
+    @Test
     func userMessageMapsToInputItem() async throws {
         let client = makeClient()
         let request = try await client.buildRequest(messages: [.user("Hello")], tools: [])

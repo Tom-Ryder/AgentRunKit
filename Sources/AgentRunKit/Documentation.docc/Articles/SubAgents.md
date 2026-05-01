@@ -96,7 +96,7 @@ When a sub-agent executes, ``SubAgentTool`` calls `descending()` to increment th
 
 **Tool timeout.** `toolTimeout` overrides the parent agent's default tool timeout for this sub-agent invocation. `nil` (the default) inherits the parent's ``AgentConfiguration/toolTimeout``.
 
-**Tool metadata.** `SubAgentTool` also exposes `isConcurrencySafe` and `maxResultCharacters`, matching `Tool`. ``Agent`` honors `isConcurrencySafe` for scheduling: sibling sub-agents default to sequential execution and must opt in to concurrent execution.
+**Tool metadata.** `SubAgentTool` also exposes `isConcurrencySafe`, `isReadOnly`, and `maxResultCharacters`, matching `Tool`. ``Agent`` honors `isConcurrencySafe` for scheduling: sibling sub-agents default to sequential execution and must opt in to concurrent execution. `isReadOnly` is advisory metadata for callers and approval policy.
 
 ## Streaming Propagation
 

@@ -45,6 +45,14 @@ struct MCPClientTests {
         await client.shutdown()
     }
 
+    #if os(macOS)
+        @Test
+        func configurationInitializerPreservesServerName() {
+            let client = MCPClient(configuration: MCPServerConfiguration(name: "configured", command: "/bin/test"))
+            #expect(client.serverName == "configured")
+        }
+    #endif
+
     @Test
     func initializeVersionMismatch() async throws {
         let transport = ScriptedMCPTransport(responses: [
