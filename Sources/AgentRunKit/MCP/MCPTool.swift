@@ -21,8 +21,6 @@ public struct MCPTool<C: ToolContext>: AnyTool, Sendable {
             return try await client.callTool(name: name, arguments: arguments).toToolResult()
         } catch is CancellationError {
             throw CancellationError()
-        } catch let error as AgentError {
-            throw error
         } catch {
             throw AgentError.toolExecutionFailed(tool: name, message: String(describing: error))
         }

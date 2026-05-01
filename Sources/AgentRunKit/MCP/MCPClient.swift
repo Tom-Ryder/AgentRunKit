@@ -84,8 +84,6 @@ public actor MCPClient {
 
         startReaderTask()
 
-        guard case .connecting = state else { throw MCPError.transportClosed }
-
         let initResult = try await sendRequest(
             method: "initialize",
             params: .object([

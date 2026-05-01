@@ -315,11 +315,8 @@ extension StreamEvent: Codable {
     }
 
     private static let timestampCalendar: Calendar = {
-        guard let gmt = TimeZone(secondsFromGMT: 0) else {
-            preconditionFailure("GMT time zone must exist")
-        }
         var calendar = Calendar(identifier: .gregorian)
-        calendar.timeZone = gmt
+        calendar.timeZone = .gmt
         return calendar
     }()
 

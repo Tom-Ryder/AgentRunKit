@@ -113,17 +113,9 @@ public struct TTSClient<P: TTSProvider>: Sendable {
         guard let firstFormat = segments.first?.encoding.format else {
             return TTSConcatenationResult(audio: Data(), manifest: [])
         }
-        precondition(
-            segments.allSatisfy { $0.encoding.format == firstFormat },
-            "TTSClient stream must yield segments with a single encoding format"
-        )
 
         let audioSegments = segments.map(\.audio)
         let (audio, byteRanges) = Self.concatenate(audioSegments, format: firstFormat)
-        precondition(
-            byteRanges.count == segments.count,
-            "Concatenation must produce one byte range per input segment"
-        )
 
         var manifest: [TTSManifestEntry] = []
         manifest.reserveCapacity(segments.count)
