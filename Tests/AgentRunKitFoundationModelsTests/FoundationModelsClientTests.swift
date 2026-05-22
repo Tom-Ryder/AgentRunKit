@@ -109,10 +109,79 @@
                 for try await _ in client.stream(messages: malformedHistory, tools: [], requestContext: nil) {}
             }
         }
+
+        @Test func generateRejectsMultiTurnHistory() async {
+            guard #available(macOS 26, iOS 26, *) else { return }
+            let client = FoundationModelsClient<EmptyContext>(context: EmptyContext())
+
+            await #expect {
+                _ = try await client.generate(
+                    messages: resolvedToolHistory,
+                    tools: [],
+                    responseFormat: nil,
+                    requestContext: nil
+                )
+            } throws: { error in
+                isUnsupportedFoundationModelsMappingError(error)
+            }
+        }
+
+        @Test func streamRejectsMultiTurnHistory() async {
+            guard #available(macOS 26, iOS 26, *) else { return }
+            let client = FoundationModelsClient<EmptyContext>(context: EmptyContext())
+
+            await #expect {
+                for try await _ in client.stream(messages: resolvedToolHistory, tools: [], requestContext: nil) {}
+            } throws: { error in
+                isUnsupportedFoundationModelsMappingError(error)
+            }
+        }
+
+        @Test func generateRejectsSystemAfterUser() async {
+            guard #available(macOS 26, iOS 26, *) else { return }
+            let client = FoundationModelsClient<EmptyContext>(context: EmptyContext())
+
+            await #expect {
+                _ = try await client.generate(
+                    messages: trailingSystemHistory,
+                    tools: [],
+                    responseFormat: nil,
+                    requestContext: nil
+                )
+            } throws: { error in
+                isUnsupportedFoundationModelsMappingError(error)
+            }
+        }
+
+        @Test func streamRejectsSystemAfterUser() async {
+            guard #available(macOS 26, iOS 26, *) else { return }
+            let client = FoundationModelsClient<EmptyContext>(context: EmptyContext())
+
+            await #expect {
+                for try await _ in client.stream(messages: trailingSystemHistory, tools: [], requestContext: nil) {}
+            } throws: { error in
+                isUnsupportedFoundationModelsMappingError(error)
+            }
+        }
     }
 
     private struct DummySchema: SchemaProviding, Codable {
         static let jsonSchema = JSONSchema.object(properties: [:], required: [])
     }
+
+    private let resolvedToolHistory: [ChatMessage] = [
+        .user("Hi"),
+        .assistant(AssistantMessage(
+            content: "",
+            toolCalls: [ToolCall(id: "call_1", name: "lookup", arguments: "{}")]
+        )),
+        .tool(id: "call_1", name: "lookup", content: "result"),
+        .user("Continue"),
+    ]
+
+    private let trailingSystemHistory: [ChatMessage] = [
+        .user("Hi"),
+        .system("Late instruction"),
+    ]
 
 #endif

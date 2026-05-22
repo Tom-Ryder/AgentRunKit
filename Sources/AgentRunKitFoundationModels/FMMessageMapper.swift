@@ -10,33 +10,54 @@
             let prompt: String
         }
 
-        static func map(_ messages: [ChatMessage]) -> MappedInput {
+        static func map(_ messages: [ChatMessage]) throws -> MappedInput {
             var systemParts: [String] = []
-            var lastUserPrompt: String?
+            var userPrompt: String?
 
             for message in messages {
                 switch message {
                 case let .system(content):
+                    guard userPrompt == nil else { throw unsupportedMappingError }
                     systemParts.append(content)
                 case let .user(content):
-                    lastUserPrompt = content
+                    try assignPrompt(content, to: &userPrompt)
                 case let .userMultimodal(parts):
-                    let textContent = parts.compactMap { part -> String? in
-                        if case let .text(text) = part { return text }
-                        return nil
-                    }
-                    if !textContent.isEmpty {
-                        lastUserPrompt = textContent.joined(separator: "\n")
-                    }
+                    try assignPrompt(textOnlyPrompt(from: parts), to: &userPrompt)
                 case .assistant, .tool:
-                    break
+                    throw unsupportedMappingError
                 }
             }
 
+            guard let userPrompt else { throw unsupportedMappingError }
             return MappedInput(
                 instructions: systemParts.isEmpty ? nil : systemParts.joined(separator: "\n"),
-                prompt: lastUserPrompt ?? ""
+                prompt: userPrompt
             )
+        }
+
+        private static func assignPrompt(_ prompt: String, to currentPrompt: inout String?) throws {
+            guard currentPrompt == nil, !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                throw unsupportedMappingError
+            }
+            currentPrompt = prompt
+        }
+
+        private static func textOnlyPrompt(from parts: [ContentPart]) throws -> String {
+            var textParts: [String] = []
+            for part in parts {
+                guard case let .text(text) = part else {
+                    throw unsupportedMappingError
+                }
+                textParts.append(text)
+            }
+            return textParts.joined(separator: "\n")
+        }
+
+        private static var unsupportedMappingError: AgentError {
+            .llmError(.featureUnsupported(
+                provider: ProviderIdentifier.foundationModels.description,
+                feature: "single-turn text-only message mapping"
+            ))
         }
     }
 
