@@ -6,6 +6,7 @@ actor DynamicMCPTransport: MCPTransport {
     private let stream: AsyncThrowingStream<Data, Error>
     private let continuation: AsyncThrowingStream<Data, Error>.Continuation
     private var connected = false
+    private var effectiveDisconnectCount = 0
 
     init(handler: @escaping @Sendable (Data) async throws -> Data?) {
         self.handler = handler
@@ -19,6 +20,9 @@ actor DynamicMCPTransport: MCPTransport {
     }
 
     func disconnect() async {
+        if connected {
+            effectiveDisconnectCount += 1
+        }
         connected = false
         continuation.finish()
     }
@@ -44,5 +48,9 @@ actor DynamicMCPTransport: MCPTransport {
 
     func terminateStreamWithError(_ error: any Error) {
         continuation.finish(throwing: error)
+    }
+
+    func effectiveDisconnectCallCount() -> Int {
+        effectiveDisconnectCount
     }
 }

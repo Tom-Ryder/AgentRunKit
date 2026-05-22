@@ -163,7 +163,7 @@ public actor MCPClient {
     }
 
     func shutdown() async {
-        guard drainPendingRequests() else { return }
+        _ = drainPendingRequests()
         readerTask?.cancel()
         readerTask = nil
         await transport.disconnect()

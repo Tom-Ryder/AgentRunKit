@@ -55,12 +55,14 @@ struct MCPClientTests {
 
     @Test
     func initializeVersionMismatch() async throws {
-        let transport = ScriptedMCPTransport(responses: [
-            MCPTestHelpers.encodeResponse(
-                id: 1,
+        let transport = DynamicMCPTransport { data in
+            guard let request = decodeRequest(data) else { return nil }
+            let idValue: Int = if case let .int(val) = request.id { val } else { 0 }
+            return MCPTestHelpers.encodeResponse(
+                id: idValue,
                 result: MCPTestHelpers.initializeResult(protocolVersion: "1999-01-01")
-            ),
-        ])
+            )
+        }
         let client = MCPClient(serverName: "test", transport: transport)
         do {
             try await client.connectAndInitialize()
@@ -74,6 +76,7 @@ struct MCPClientTests {
             #expect(supported == "1999-01-01")
         }
         await client.shutdown()
+        await #expect(transport.effectiveDisconnectCallCount() == 1)
     }
 
     @Test
@@ -245,27 +248,6 @@ struct MCPClientTests {
         #expect(slowText == "result_slow")
         #expect(fastText == "result_fast")
         await client.shutdown()
-    }
-
-    @Test
-    func transportClosedMidCall() async throws {
-        let transport = DynamicMCPTransport(handler: standardHandler { _ in nil })
-        let client = MCPClient(serverName: "test", transport: transport)
-        try await client.connectAndInitialize()
-
-        let callTask = Task {
-            try await client.callTool(name: "test", arguments: Data("{}".utf8))
-        }
-
-        try await Task.sleep(for: .milliseconds(50))
-        await transport.terminateStream()
-
-        do {
-            _ = try await callTask.value
-            Issue.record("Expected transportClosed")
-        } catch let error as MCPError {
-            #expect(error == .transportClosed)
-        }
     }
 
     @Test
@@ -470,12 +452,36 @@ struct MCPClientTests {
 
 struct MCPClientEdgeCaseTests {
     @Test
+    func transportClosedMidCall() async throws {
+        let transport = DynamicMCPTransport(handler: standardHandler { _ in nil })
+        let client = MCPClient(serverName: "test", transport: transport)
+        try await client.connectAndInitialize()
+
+        let callTask = Task {
+            try await client.callTool(name: "test", arguments: Data("{}".utf8))
+        }
+
+        try await Task.sleep(for: .milliseconds(50))
+        await transport.terminateStream()
+
+        do {
+            _ = try await callTask.value
+            Issue.record("Expected transportClosed")
+        } catch let error as MCPError {
+            #expect(error == .transportClosed)
+        }
+        await client.shutdown()
+        await #expect(transport.effectiveDisconnectCallCount() == 1)
+    }
+
+    @Test
     func shutdownIdempotent() async throws {
         let transport = DynamicMCPTransport(handler: standardHandler())
         let client = MCPClient(serverName: "test", transport: transport)
         try await client.connectAndInitialize()
         await client.shutdown()
         await client.shutdown()
+        await #expect(transport.effectiveDisconnectCallCount() == 1)
 
         await #expect(throws: MCPError.transportClosed) {
             try await client.callTool(name: "test", arguments: Data("{}".utf8))
