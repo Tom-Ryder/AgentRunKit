@@ -67,6 +67,8 @@ let client = OpenAIClient.openRouter(
 
 `OpenAIClient.openRouter(...)` pins ``OpenAIChatProfile/openRouter`` and defaults ``OpenAIChatAssistantReplayProfile`` to `.openRouterReasoningDetails`.
 
+Reasoning replay is best-effort. Some models return no `reasoning_details` on a given turn (for example GPT-class models routed through Chat Completions, which expose replayable reasoning only through the Responses API). When that happens the assistant turn carries no replayable reasoning and `reasoning_details` is absent from the next request. A workflow that requires replayable reasoning continuity can detect this by inspecting the reasoning details on the returned assistant message, such as the last assistant entry in ``AgentResult/history``.
+
 Together's preserved-thinking replay depends on a provider-specific mode (`clear_thinking`) not yet modeled by the client, so it remains conservative in this release. For first-party OpenAI reasoning continuity, and for Responses-native OpenRouter models such as xAI Grok, use ``ResponsesAPIClient`` instead. See `Targeting OpenRouter with ResponsesAPIClient` below.
 
 ## ResponsesAPIClient vs OpenAIClient
@@ -75,16 +77,14 @@ Together's preserved-thinking replay depends on a provider-specific mode (`clear
 
 ### Targeting OpenRouter with ResponsesAPIClient
 
-``ResponsesAPIClient`` is not locked to OpenAI. It accepts any base URL and works with OpenRouter's `/v1/responses` endpoint for models that OpenRouter routes through the Responses protocol. Point it at `OpenAIClient.openRouterBaseURL`:
+``ResponsesAPIClient`` is not locked to OpenAI. It accepts any base URL and works with OpenRouter's `/v1/responses` endpoint for models that OpenRouter routes through the Responses protocol. The `ResponsesAPIClient.openRouter(...)` factory pins ``ResponsesAPIClient/openRouterBaseURL`` and `store: false`:
 
 ```swift
-let client = ResponsesAPIClient(
+let client = ResponsesAPIClient.openRouter(
     apiKey: "sk-or-...",
     model: "x-ai/grok-4",
     maxOutputTokens: 4096,
-    baseURL: OpenAIClient.openRouterBaseURL,
-    reasoningConfig: .high,
-    store: false
+    reasoningConfig: .high
 )
 ```
 
@@ -93,7 +93,7 @@ Prefer ``ResponsesAPIClient`` over ``OpenAIClient`` on OpenRouter when:
 - The target model is Responses-API-native rather than Chat-Completions-native.
 - Provider-native reasoning continuity depends on preserving full Responses output items across turns.
 
-xAI Grok models are the canonical case. Grok returns encrypted reasoning artifacts as Responses output items, and ``ResponsesAPIClient`` preserves those items in ``AssistantContinuity`` for lossless replay on the next turn. ``OpenAIClient`` with `.openRouterReasoningDetails` flattens reasoning back to Chat Completions `reasoning_details`, which is the right contract for Chat-Completions-native OpenRouter models but not for Responses-native Grok. Set `store: false` on ``ResponsesAPIClient`` when targeting OpenRouter: this makes the client request `reasoning.encrypted_content` and send full history on every call, and it disables `previous_response_id` continuation, which matches OpenRouter's stateless Responses routing.
+xAI Grok models are the canonical case. Grok returns encrypted reasoning artifacts as Responses output items, and ``ResponsesAPIClient`` preserves those items in ``AssistantContinuity`` for lossless replay on the next turn. ``OpenAIClient`` with `.openRouterReasoningDetails` flattens reasoning back to Chat Completions `reasoning_details`, which is the right contract for Chat-Completions-native OpenRouter models but not for Responses-native Grok. The `openRouter(...)` factory sets `store: false`: this makes the client request `reasoning.encrypted_content` and send full history on every call, and it disables `previous_response_id` continuation, which matches OpenRouter's stateless Responses routing.
 
 ``OpenAIClient`` remains the correct Chat Completions transport for OpenRouter models that are not Responses-native. The two clients are independent paths, not substitutes: pick the one the target model speaks.
 

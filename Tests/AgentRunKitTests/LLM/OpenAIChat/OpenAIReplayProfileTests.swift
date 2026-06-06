@@ -214,6 +214,46 @@ struct ReasoningMultiTurnTests {
         let jsonToolCalls = msg?["tool_calls"] as? [[String: Any]]
         #expect(jsonToolCalls?.count == 1)
     }
+
+    @Test
+    func openRouterProfileEmitsReasoningDetailsAlongsideToolCalls() throws {
+        let details: [JSONValue] = [
+            .object([
+                "type": .string("reasoning.text"),
+                "format": .string("anthropic-claude-v1"),
+                "index": .int(0),
+                "text": .string("Let me check the weather"),
+                "signature": .string("sig-abc"),
+            ]),
+        ]
+        let toolCall = ToolCall(id: "call_123", name: "get_weather", arguments: "{\"city\":\"NYC\"}")
+        let assistantMsg = AssistantMessage(
+            content: "Checking",
+            toolCalls: [toolCall],
+            reasoningDetails: details
+        )
+        let client = OpenAIClient(
+            apiKey: "test-key",
+            model: "test/model",
+            baseURL: OpenAIClient.openRouterBaseURL,
+            assistantReplayProfile: .openRouterReasoningDetails
+        )
+        let messages: [ChatMessage] = [.assistant(assistantMsg)]
+        let request = try client.buildRequest(messages: messages, tools: [])
+
+        let data = try JSONEncoder().encode(request)
+        let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+
+        let jsonMessages = json?["messages"] as? [[String: Any]]
+        let msg = jsonMessages?[0]
+        let encodedDetails = msg?["reasoning_details"] as? [[String: Any]]
+        #expect(encodedDetails?.count == 1)
+        #expect(encodedDetails?[0]["type"] as? String == "reasoning.text")
+        #expect(encodedDetails?[0]["signature"] as? String == "sig-abc")
+        let jsonToolCalls = msg?["tool_calls"] as? [[String: Any]]
+        #expect(jsonToolCalls?.count == 1)
+        #expect(jsonToolCalls?[0]["id"] as? String == "call_123")
+    }
 }
 
 struct ReplayProfileDefaultTests {

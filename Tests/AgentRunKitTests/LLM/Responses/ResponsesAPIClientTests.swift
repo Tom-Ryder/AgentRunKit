@@ -17,6 +17,7 @@ struct ResponsesRequestSerializationTests {
     func baseURLConstantsExposeOpenAIAndChatGPTEndpoints() {
         #expect(ResponsesAPIClient.openAIBaseURL.absoluteString == "https://api.openai.com/v1")
         #expect(ResponsesAPIClient.chatGPTBaseURL.absoluteString == "https://chatgpt.com/backend-api/codex")
+        #expect(ResponsesAPIClient.openRouterBaseURL.absoluteString == "https://openrouter.ai/api/v1")
     }
 
     @Test

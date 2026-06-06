@@ -355,4 +355,24 @@ public extension ResponsesAPIClient {
         URL(validStaticString: "https://api.openai.com/v1")
     nonisolated static let chatGPTBaseURL =
         URL(validStaticString: "https://chatgpt.com/backend-api/codex")
+    nonisolated static let openRouterBaseURL =
+        URL(validStaticString: "https://openrouter.ai/api/v1")
+
+    static func openRouter(
+        apiKey: String,
+        model: String? = nil,
+        maxOutputTokens: Int? = nil,
+        contextWindowSize: Int? = nil,
+        reasoningConfig: ReasoningConfig? = nil
+    ) -> ResponsesAPIClient {
+        ResponsesAPIClient(
+            apiKey: apiKey,
+            model: model,
+            maxOutputTokens: maxOutputTokens,
+            contextWindowSize: contextWindowSize,
+            baseURL: openRouterBaseURL,
+            reasoningConfig: reasoningConfig,
+            store: false
+        )
+    }
 }
