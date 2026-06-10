@@ -169,4 +169,126 @@ struct SchemaDecoderAdvancedTests {
         }
         #expect(innerItems == .integer())
     }
+
+    @Test
+    func arrayOfOptionalStrings() throws {
+        struct Params: Codable {
+            let values: [String?]
+        }
+        let schema = try SchemaDecoder.decode(Params.self)
+        guard case let .object(properties, _, _) = schema else {
+            Issue.record("Expected object schema")
+            return
+        }
+        guard case let .array(itemSchema, _) = properties["values"] else {
+            Issue.record("Expected array schema for values")
+            return
+        }
+        guard case let .anyOf(options) = itemSchema else {
+            Issue.record("Expected anyOf for nullable array items")
+            return
+        }
+        #expect(options.contains(.string()))
+        #expect(options.contains(.null))
+        #expect(options.count == 2)
+    }
+
+    @Test
+    func arrayOfOptionalInts() throws {
+        struct Params: Codable {
+            let counts: [Int?]
+        }
+        let schema = try SchemaDecoder.decode(Params.self)
+        guard case let .object(properties, _, _) = schema else {
+            Issue.record("Expected object schema")
+            return
+        }
+        guard case let .array(itemSchema, _) = properties["counts"] else {
+            Issue.record("Expected array schema for counts")
+            return
+        }
+        guard case let .anyOf(options) = itemSchema else {
+            Issue.record("Expected anyOf for nullable array items")
+            return
+        }
+        #expect(options.contains(.integer()))
+        #expect(options.contains(.null))
+        #expect(options.count == 2)
+    }
+
+    @Test
+    func arrayOfOptionalDoubles() throws {
+        struct Params: Codable {
+            let scores: [Double?]
+        }
+        let schema = try SchemaDecoder.decode(Params.self)
+        guard case let .object(properties, _, _) = schema else {
+            Issue.record("Expected object schema")
+            return
+        }
+        guard case let .array(itemSchema, _) = properties["scores"] else {
+            Issue.record("Expected array schema for scores")
+            return
+        }
+        guard case let .anyOf(options) = itemSchema else {
+            Issue.record("Expected anyOf for nullable array items")
+            return
+        }
+        #expect(options.contains(.number()))
+        #expect(options.contains(.null))
+        #expect(options.count == 2)
+    }
+
+    @Test
+    func arrayOfOptionalBools() throws {
+        struct Params: Codable {
+            let flags: [Bool?]
+        }
+        let schema = try SchemaDecoder.decode(Params.self)
+        guard case let .object(properties, _, _) = schema else {
+            Issue.record("Expected object schema")
+            return
+        }
+        guard case let .array(itemSchema, _) = properties["flags"] else {
+            Issue.record("Expected array schema for flags")
+            return
+        }
+        guard case let .anyOf(options) = itemSchema else {
+            Issue.record("Expected anyOf for nullable array items")
+            return
+        }
+        #expect(options.contains(.boolean()))
+        #expect(options.contains(.null))
+        #expect(options.count == 2)
+    }
+
+    @Test
+    func mixedOptionalAndNonOptionalArrays() throws {
+        struct Params: Codable {
+            let required: [String]
+            let nullable: [String?]
+        }
+        let schema = try SchemaDecoder.decode(Params.self)
+        guard case let .object(properties, _, _) = schema else {
+            Issue.record("Expected object schema")
+            return
+        }
+
+        guard case let .array(requiredItems, _) = properties["required"] else {
+            Issue.record("Expected array schema for required")
+            return
+        }
+        #expect(requiredItems == .string())
+
+        guard case let .array(nullableItems, _) = properties["nullable"] else {
+            Issue.record("Expected array schema for nullable")
+            return
+        }
+        guard case let .anyOf(options) = nullableItems else {
+            Issue.record("Expected anyOf for nullable items")
+            return
+        }
+        #expect(options.contains(.string()))
+        #expect(options.contains(.null))
+    }
 }
