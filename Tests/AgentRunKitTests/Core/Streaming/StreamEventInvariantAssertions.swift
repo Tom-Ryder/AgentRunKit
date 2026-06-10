@@ -38,7 +38,6 @@ enum StreamEventInvariantAssertions {
         #expect(ids.insert(event.id).inserted)
         #expect(event.timestamp >= startedAt)
         #expect(event.timestamp <= endedAt)
-        #expect(event.parentEventID == nil)
         #expect(event.origin == .live)
         switch scope {
         case .chat:

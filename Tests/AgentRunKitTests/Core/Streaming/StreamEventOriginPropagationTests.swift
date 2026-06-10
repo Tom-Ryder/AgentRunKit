@@ -13,13 +13,11 @@ struct StreamEventOriginPropagationTests {
         let timestamp = Date(timeIntervalSince1970: 1_774_880_530)
         let sessionID = try SessionID(rawValue: uuid("00000000-0000-0000-0000-000000000702"))
         let runID = try RunID(rawValue: uuid("00000000-0000-0000-0000-000000000703"))
-        let parentEventID = try EventID(rawValue: uuid("00000000-0000-0000-0000-000000000704"))
         let original = StreamEvent(
             id: id,
             timestamp: timestamp,
             sessionID: sessionID,
             runID: runID,
-            parentEventID: parentEventID,
             origin: .live,
             kind: .delta("payload")
         )
@@ -30,7 +28,6 @@ struct StreamEventOriginPropagationTests {
         #expect(copy.timestamp == original.timestamp)
         #expect(copy.sessionID == original.sessionID)
         #expect(copy.runID == original.runID)
-        #expect(copy.parentEventID == original.parentEventID)
         #expect(copy.kind == original.kind)
         #expect(copy.origin == .replayed(from: checkpointID))
     }

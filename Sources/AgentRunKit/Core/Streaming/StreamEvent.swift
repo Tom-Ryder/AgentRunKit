@@ -6,7 +6,6 @@ public struct StreamEvent: Sendable, Identifiable {
     public let timestamp: Date
     public let sessionID: SessionID?
     public let runID: RunID?
-    public let parentEventID: EventID?
     public let origin: EventOrigin
     public let kind: Kind
 
@@ -15,7 +14,6 @@ public struct StreamEvent: Sendable, Identifiable {
         timestamp: Date = Date(),
         sessionID: SessionID? = nil,
         runID: RunID? = nil,
-        parentEventID: EventID? = nil,
         origin: EventOrigin = .live,
         kind: Kind
     ) {
@@ -23,7 +21,6 @@ public struct StreamEvent: Sendable, Identifiable {
         self.timestamp = timestamp
         self.sessionID = sessionID
         self.runID = runID
-        self.parentEventID = parentEventID
         self.origin = origin
         self.kind = kind
     }
@@ -34,7 +31,6 @@ public struct StreamEvent: Sendable, Identifiable {
             timestamp: timestamp,
             sessionID: sessionID,
             runID: runID,
-            parentEventID: parentEventID,
             origin: origin,
             kind: kind
         )
@@ -295,7 +291,7 @@ extension StreamEvent.Kind: Codable {
 
 extension StreamEvent: Codable {
     private enum CodingKeys: String, CodingKey {
-        case id, timestamp, sessionID, runID, parentEventID, origin, kind
+        case id, timestamp, sessionID, runID, origin, kind
     }
 
     private static let timestampCalendar: Calendar = {
@@ -317,7 +313,6 @@ extension StreamEvent: Codable {
         timestamp = parsedTimestamp
         sessionID = try container.decodeIfPresent(SessionID.self, forKey: .sessionID)
         runID = try container.decodeIfPresent(RunID.self, forKey: .runID)
-        parentEventID = try container.decodeIfPresent(EventID.self, forKey: .parentEventID)
         origin = container.contains(.origin) ? try container.decode(EventOrigin.self, forKey: .origin) : .live
         kind = try container.decode(Kind.self, forKey: .kind)
     }
@@ -332,7 +327,6 @@ extension StreamEvent: Codable {
         try container.encode(timestamp, forKey: .timestamp)
         try container.encodeIfPresent(sessionID, forKey: .sessionID)
         try container.encodeIfPresent(runID, forKey: .runID)
-        try container.encodeIfPresent(parentEventID, forKey: .parentEventID)
         if case .replayed = origin {
             try container.encode(origin, forKey: .origin)
         }

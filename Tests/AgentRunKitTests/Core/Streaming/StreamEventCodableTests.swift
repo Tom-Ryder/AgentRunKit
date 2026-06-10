@@ -159,14 +159,12 @@ struct StreamEventRecursiveCodableTests {
         let innerID = try EventID(rawValue: requiredUUID("00000000-0000-0000-0000-000000000001"))
         let innerSessionID = try SessionID(rawValue: requiredUUID("00000000-0000-0000-0000-000000000002"))
         let innerRunID = try RunID(rawValue: requiredUUID("00000000-0000-0000-0000-000000000003"))
-        let innerParentEventID = try EventID(rawValue: requiredUUID("00000000-0000-0000-0000-000000000004"))
         let innerTimestamp = Date(timeIntervalSince1970: 0.123)
         let innerEvent = StreamEvent(
             id: innerID,
             timestamp: innerTimestamp,
             sessionID: innerSessionID,
             runID: innerRunID,
-            parentEventID: innerParentEventID,
             kind: .delta("leaf")
         )
         let outerKind = StreamEvent.Kind.subAgentEvent(
@@ -189,7 +187,6 @@ struct StreamEventRecursiveCodableTests {
         #expect(abs(nestedEvent.timestamp.timeIntervalSince1970 - innerTimestamp.timeIntervalSince1970) < 0.001)
         #expect(nestedEvent.sessionID == innerSessionID)
         #expect(nestedEvent.runID == innerRunID)
-        #expect(nestedEvent.parentEventID == innerParentEventID)
         #expect(nestedEvent.kind == .delta("leaf"))
     }
 
@@ -197,14 +194,12 @@ struct StreamEventRecursiveCodableTests {
         let level3ID = try EventID(rawValue: requiredUUID("00000000-0000-0000-0000-000000000011"))
         let level3SessionID = try SessionID(rawValue: requiredUUID("00000000-0000-0000-0000-000000000012"))
         let level3RunID = try RunID(rawValue: requiredUUID("00000000-0000-0000-0000-000000000013"))
-        let level3ParentEventID = try EventID(rawValue: requiredUUID("00000000-0000-0000-0000-000000000014"))
         let level3Timestamp = Date(timeIntervalSince1970: 10.456)
         let level3 = StreamEvent(
             id: level3ID,
             timestamp: level3Timestamp,
             sessionID: level3SessionID,
             runID: level3RunID,
-            parentEventID: level3ParentEventID,
             kind: .reasoningDelta("thinking")
         )
         let level2Kind = StreamEvent.Kind.subAgentEvent(
@@ -239,7 +234,6 @@ struct StreamEventRecursiveCodableTests {
         #expect(abs(leaf.timestamp.timeIntervalSince1970 - level3Timestamp.timeIntervalSince1970) < 0.001)
         #expect(leaf.sessionID == level3SessionID)
         #expect(leaf.runID == level3RunID)
-        #expect(leaf.parentEventID == level3ParentEventID)
         #expect(leaf.kind == .reasoningDelta("thinking"))
     }
 }
@@ -267,14 +261,12 @@ struct StreamEventEnvelopeCodableTests {
         let id = EventID()
         let sessionID = SessionID()
         let runID = RunID()
-        let parentEventID = EventID()
         let checkpointID = CheckpointID()
         let event = StreamEvent(
             id: id,
             timestamp: Date(timeIntervalSince1970: 1_711_800_000),
             sessionID: sessionID,
             runID: runID,
-            parentEventID: parentEventID,
             origin: .replayed(from: checkpointID),
             kind: .delta("test")
         )
@@ -285,7 +277,6 @@ struct StreamEventEnvelopeCodableTests {
         #expect(decoded.id == id)
         #expect(decoded.sessionID == sessionID)
         #expect(decoded.runID == runID)
-        #expect(decoded.parentEventID == parentEventID)
         #expect(decoded.origin == .replayed(from: checkpointID))
         #expect(decoded.kind == .delta("test"))
     }
@@ -321,18 +312,15 @@ struct StreamEventEnvelopeCodableTests {
 
         #expect(json["sessionID"] == nil)
         #expect(json["runID"] == nil)
-        #expect(json["parentEventID"] == nil)
         #expect(json["origin"] == nil)
     }
 
     @Test func nonNilOptionalFieldsPreserved() throws {
         let sessionID = SessionID()
         let runID = RunID()
-        let parentEventID = EventID()
         let event = StreamEvent(
             sessionID: sessionID,
             runID: runID,
-            parentEventID: parentEventID,
             kind: .delta("ctx")
         )
 
@@ -341,7 +329,6 @@ struct StreamEventEnvelopeCodableTests {
 
         #expect(decoded.sessionID == sessionID)
         #expect(decoded.runID == runID)
-        #expect(decoded.parentEventID == parentEventID)
     }
 }
 

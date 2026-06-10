@@ -71,7 +71,6 @@ Every event includes:
 | ``StreamEvent/timestamp`` | Emission time in UTC |
 | ``StreamEvent/sessionID`` | Session identity, populated when a stream is started with `sessionID:` |
 | ``StreamEvent/runID`` | Run identity, freshly assigned on each `stream()` or `resume(...)` |
-| ``StreamEvent/parentEventID`` | Optional parent correlation identity |
 | ``StreamEvent/origin`` | ``EventOrigin/live`` or ``EventOrigin/replayed(from:)`` (set on resume) |
 | ``StreamEvent/kind`` | The semantic payload |
 

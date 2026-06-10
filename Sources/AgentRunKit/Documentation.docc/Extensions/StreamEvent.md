@@ -8,12 +8,11 @@ Each event carries identity, timing, and provenance metadata around a semantic `
 
 ### Envelope
 
-- ``init(id:timestamp:sessionID:runID:parentEventID:origin:kind:)``
+- ``init(id:timestamp:sessionID:runID:origin:kind:)``
 - ``id``
 - ``timestamp``
 - ``sessionID``
 - ``runID``
-- ``parentEventID``
 - ``origin``
 - ``kind``
 

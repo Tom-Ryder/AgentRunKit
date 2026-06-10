@@ -45,7 +45,6 @@ struct StreamEventWireFormatTests {
         #expect(decoded.timestamp == event.timestamp)
         #expect(decoded.sessionID == event.sessionID)
         #expect(decoded.runID == event.runID)
-        #expect(decoded.parentEventID == nil)
         #expect(decoded.kind == event.kind)
 
         let reencoded = try StreamEventJSONCodec.encode(decoded)
