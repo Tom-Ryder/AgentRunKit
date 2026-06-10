@@ -96,6 +96,8 @@ For on-device inference, additional targets are available:
 - Type-safe tools with compile-time JSON schema validation
 - Sub-agent composition with depth control and streaming propagation
 - Context management: automatic compaction, pruning, token budgets
+- Checkpoint and resume: per-iteration snapshots, file or in-memory backends
+- Tool approval: human-in-the-loop policies with session allowlists
 - Structured output with JSON schema constraints
 - Multimodal input: images, audio, video, PDF
 - Text-to-speech with concurrent chunking and MP3 concatenation
@@ -108,12 +110,12 @@ For on-device inference, additional targets are available:
 
 | Provider | Description |
 |----------|-------------|
-| `OpenAIClient` | OpenAI and compatible APIs (OpenRouter, Groq, Together, Ollama) |
-| `AnthropicClient` | Anthropic Messages API |
+| `OpenAIClient` | OpenAI and compatible APIs (OpenRouter with reasoning replay, Groq, Together, Ollama) |
+| `AnthropicClient` | Anthropic Messages API with same-substrate continuity replay |
 | `GeminiClient` | Google Gemini API |
-| `VertexAnthropicClient` | Anthropic models on Google Vertex AI |
+| `VertexAnthropicClient` | Anthropic models on Google Vertex AI with same-substrate continuity replay |
 | `VertexGoogleClient` | Google models on Vertex AI |
-| `ResponsesAPIClient` | OpenAI Responses API with same-substrate continuity replay |
+| `ResponsesAPIClient` | OpenAI Responses API with same-substrate continuity replay and OpenRouter factory |
 | `FoundationModelsClient` | Apple on-device (macOS 26+ / iOS 26+) |
 | `MLXClient` | On-device via MLX on Apple Silicon |
 
