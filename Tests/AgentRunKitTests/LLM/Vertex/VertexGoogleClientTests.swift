@@ -155,10 +155,32 @@ struct VertexGoogleResponseTests {
             }
         }
         """
-        let msg = try client.gemini.parseResponse(Data(json.utf8))
+        let msg = try client.gemini.parseResponse(Data(json.utf8), provider: .vertexGoogle)
         #expect(msg.content == "Hello from Vertex!")
         #expect(msg.tokenUsage?.input == 10)
         #expect(msg.tokenUsage?.output == 5)
+    }
+
+    @Test
+    func errorResponseAttributesVertexProvider() throws {
+        let client = VertexGoogleClient(
+            projectID: "p", location: "l", model: "m",
+            tokenProvider: { "tok" }
+        )
+        let json = #"{"error":{"code":429,"message":"Quota exceeded","status":"RESOURCE_EXHAUSTED"}}"#
+
+        do {
+            _ = try client.gemini.parseResponse(Data(json.utf8), provider: client.providerIdentifier)
+            Issue.record("Expected providerError")
+        } catch let error as AgentError {
+            guard case let .llmError(.providerError(provider, code, message)) = error else {
+                Issue.record("Expected providerError, got \(error)")
+                return
+            }
+            #expect(provider == .vertexGoogle)
+            #expect(code == "RESOURCE_EXHAUSTED")
+            #expect(message == "Quota exceeded")
+        }
     }
 
     @Test

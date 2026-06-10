@@ -2,5 +2,11 @@
 import Foundation
 
 extension StreamFailureDiagnostics {
-    static let empty = StreamFailureDiagnostics(elapsed: .zero, eventsObserved: 0, lastEvent: nil)
+    static let empty = StreamFailureDiagnostics(
+        provider: .custom("test"),
+        elapsed: .zero,
+        eventsObserved: 0,
+        finishSignalSeen: false,
+        lastEvent: nil
+    )
 }

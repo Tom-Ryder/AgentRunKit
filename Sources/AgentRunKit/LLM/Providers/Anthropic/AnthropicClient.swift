@@ -141,7 +141,7 @@ public struct AnthropicClient: LLMClient, Sendable {
             urlRequest: urlRequest, session: session, retryPolicy: retryPolicy
         )
         requestContext?.onResponse?(httpResponse)
-        return try parseResponse(data)
+        return try parseResponse(data, provider: providerIdentifier)
     }
 
     public func stream(
@@ -411,14 +411,18 @@ extension AnthropicClient {
         return try buildJSONPostRequest(url: url, body: request, headers: headerMap)
     }
 
-    func parseResponse(_ data: Data) throws -> AssistantMessage {
+    func parseResponse(_ data: Data, provider: ProviderIdentifier) throws -> AssistantMessage {
         let response: AnthropicResponse
         do {
             response = try JSONDecoder().decode(AnthropicResponse.self, from: data)
         } catch let decodingError {
             if let err = try? JSONDecoder().decode(AnthropicErrorResponse.self, from: data),
                err.type == "error" {
-                throw AgentError.llmError(.other("\(err.error.type): \(err.error.message)"))
+                throw AgentError.llmError(.providerError(
+                    provider: provider,
+                    code: err.error.type,
+                    message: err.error.message
+                ))
             }
             throw AgentError.llmError(.decodingFailed(decodingError))
         }

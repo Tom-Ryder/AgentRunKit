@@ -4,10 +4,13 @@ import Foundation
 public struct StreamCompletionDiagnostics: Sendable, Equatable {
     public let elapsed: Duration
     public let eventsObserved: Int
+    /// Whether the stream ended through the provider's own completion signal rather than completion inferred at EOF.
+    public let terminalMarkerSeen: Bool
 
-    public init(elapsed: Duration, eventsObserved: Int) {
+    public init(elapsed: Duration, eventsObserved: Int, terminalMarkerSeen: Bool) {
         self.elapsed = elapsed
         self.eventsObserved = eventsObserved
+        self.terminalMarkerSeen = terminalMarkerSeen
     }
 }
 

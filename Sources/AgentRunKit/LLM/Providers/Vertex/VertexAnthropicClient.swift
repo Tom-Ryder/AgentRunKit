@@ -111,7 +111,7 @@ public struct VertexAnthropicClient: LLMClient, Sendable {
             urlRequest: urlRequest, session: session, retryPolicy: retryPolicy
         )
         requestContext?.onResponse?(httpResponse)
-        return try anthropic.parseResponse(data)
+        return try anthropic.parseResponse(data, provider: providerIdentifier)
     }
 
     public func stream(
@@ -164,11 +164,11 @@ public struct VertexAnthropicClient: LLMClient, Sendable {
 
         try await processSSEStream(
             bytes: bytes,
+            provider: providerIdentifier,
             stallTimeout: retryPolicy.streamStallTimeout
         ) { event, diagnostics in
             try await anthropic.handleSSEEvent(
-                event, state: state, providerIdentifier: providerIdentifier,
-                diagnostics: diagnostics, continuation: continuation
+                event, state: state, diagnostics: diagnostics, continuation: continuation
             )
         }
         continuation.finish()
@@ -200,10 +200,11 @@ public struct VertexAnthropicClient: LLMClient, Sendable {
 
         try await processSSEStream(
             bytes: bytes,
+            provider: providerIdentifier,
             stallTimeout: retryPolicy.streamStallTimeout
         ) { event, diagnostics in
             try await anthropic.handleSSEEvent(
-                event, state: state, providerIdentifier: providerIdentifier, diagnostics: diagnostics
+                event, state: state, diagnostics: diagnostics
             ) { delta in
                 continuation.yield(.delta(delta))
             }

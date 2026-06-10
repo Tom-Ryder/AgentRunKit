@@ -369,7 +369,9 @@ struct HTTPRetryStreamBodySanitizationTests {
                 retryPolicy: RetryPolicy(maxAttempts: 1)
             )
             do {
-                try await processSSEStream(bytes: bytes, stallTimeout: nil) { _, _ in false }
+                try await processSSEStream(
+                    bytes: bytes, provider: .custom("test"), stallTimeout: nil
+                ) { _, _ in .continue }
                 Issue.record("Expected stream request failure")
             } catch {
                 assertSanitized(error)
@@ -392,7 +394,9 @@ struct HTTPRetryStreamBodySanitizationTests {
                 session: SecretURLLoadingProtocol.session(),
                 retryPolicy: RetryPolicy(maxAttempts: 1)
             )
-            try await processSSEStream(bytes: bytes, stallTimeout: nil) { _, _ in false }
+            try await processSSEStream(
+                bytes: bytes, provider: .custom("test"), stallTimeout: nil
+            ) { _, _ in .continue }
             Issue.record("Expected mid-stream failure")
         } catch {
             assertSanitized(error)

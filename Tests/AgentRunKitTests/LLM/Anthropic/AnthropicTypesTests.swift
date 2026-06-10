@@ -19,7 +19,7 @@ struct AnthropicResponseParsingTests {
             "usage": {"input_tokens": 100, "output_tokens": 50}
         }
         """
-        let msg = try makeClient().parseResponse(Data(json.utf8))
+        let msg = try makeClient().parseResponse(Data(json.utf8), provider: .anthropic)
         #expect(msg.content == "Hello there!")
         #expect(msg.toolCalls.isEmpty)
         #expect(msg.tokenUsage?.input == 100)
@@ -42,7 +42,7 @@ struct AnthropicResponseParsingTests {
             "usage": {"input_tokens": 50, "output_tokens": 30}
         }
         """
-        let msg = try makeClient().parseResponse(Data(json.utf8))
+        let msg = try makeClient().parseResponse(Data(json.utf8), provider: .anthropic)
         #expect(msg.content == "Let me check.")
         #expect(msg.toolCalls.count == 1)
         #expect(msg.toolCalls[0].id == "toolu_01")
@@ -65,7 +65,7 @@ struct AnthropicResponseParsingTests {
             "usage": {"input_tokens": 100, "output_tokens": 200}
         }
         """
-        let msg = try makeClient().parseResponse(Data(json.utf8))
+        let msg = try makeClient().parseResponse(Data(json.utf8), provider: .anthropic)
         #expect(msg.content == "The answer is 42.")
         #expect(msg.reasoning?.content == "Let me reason...")
         #expect(msg.reasoningDetails?.count == 1)
@@ -97,7 +97,7 @@ struct AnthropicResponseParsingTests {
             "usage": {"input_tokens": 80, "output_tokens": 120}
         }
         """
-        let msg = try makeClient().parseResponse(Data(json.utf8))
+        let msg = try makeClient().parseResponse(Data(json.utf8), provider: .anthropic)
         #expect(msg.content == "Checking.More text.")
         #expect(msg.toolCalls.count == 1)
         #expect(msg.reasoning?.content == "Think first\nThink again")
@@ -113,17 +113,40 @@ struct AnthropicResponseParsingTests {
         }
         """
         do {
-            _ = try makeClient().parseResponse(Data(json.utf8))
+            _ = try makeClient().parseResponse(Data(json.utf8), provider: .anthropic)
             Issue.record("Expected error")
         } catch let error as AgentError {
             guard case let .llmError(transport) = error,
-                  case let .other(msg) = transport
+                  case let .providerError(provider, code, message) = transport
             else {
-                Issue.record("Expected .other, got \(error)")
+                Issue.record("Expected providerError, got \(error)")
                 return
             }
-            #expect(msg.contains("invalid_request_error"))
-            #expect(msg.contains("Bad input"))
+            #expect(provider == .anthropic)
+            #expect(code == "invalid_request_error")
+            #expect(message == "Bad input")
+        }
+    }
+
+    @Test
+    func errorResponseAttributesVertexProvider() throws {
+        let json = """
+        {
+            "type": "error",
+            "error": {"type": "overloaded_error", "message": "Overloaded"}
+        }
+        """
+        do {
+            _ = try makeClient().parseResponse(Data(json.utf8), provider: .vertexAnthropic)
+            Issue.record("Expected error")
+        } catch let error as AgentError {
+            guard case let .llmError(.providerError(provider, code, message)) = error else {
+                Issue.record("Expected providerError, got \(error)")
+                return
+            }
+            #expect(provider == .vertexAnthropic)
+            #expect(code == "overloaded_error")
+            #expect(message == "Overloaded")
         }
     }
 
@@ -139,7 +162,7 @@ struct AnthropicResponseParsingTests {
             "usage": {"input_tokens": 200, "output_tokens": 100}
         }
         """
-        let msg = try makeClient().parseResponse(Data(json.utf8))
+        let msg = try makeClient().parseResponse(Data(json.utf8), provider: .anthropic)
         #expect(msg.tokenUsage == TokenUsage(input: 200, output: 100))
     }
 
@@ -155,7 +178,7 @@ struct AnthropicResponseParsingTests {
             "usage": {"input_tokens": 10, "output_tokens": 0}
         }
         """
-        let msg = try makeClient().parseResponse(Data(json.utf8))
+        let msg = try makeClient().parseResponse(Data(json.utf8), provider: .anthropic)
         #expect(msg.content == "")
         #expect(msg.toolCalls.isEmpty)
         #expect(msg.continuity == nil)
@@ -173,7 +196,7 @@ struct AnthropicResponseParsingTests {
             "usage": {"input_tokens": 10, "output_tokens": 0}
         }
         """
-        let msg = try makeClient().parseResponse(Data(json.utf8))
+        let msg = try makeClient().parseResponse(Data(json.utf8), provider: .anthropic)
         let (_, mapped) = try AnthropicMessageMapper.mapMessages([.assistant(msg)])
         guard case let .blocks(blocks) = mapped[0].content else {
             Issue.record("Expected blocks content")
@@ -204,7 +227,7 @@ struct AnthropicResponseParsingTests {
             "usage": {"input_tokens": 50, "output_tokens": 30}
         }
         """
-        let msg = try makeClient().parseResponse(Data(json.utf8))
+        let msg = try makeClient().parseResponse(Data(json.utf8), provider: .anthropic)
         #expect(msg.toolCalls.count == 2)
         #expect(msg.toolCalls[0].id == "toolu_a")
         #expect(msg.toolCalls[1].id == "toolu_b")
@@ -225,7 +248,7 @@ struct AnthropicResponseParsingTests {
             "usage": {"input_tokens": 40, "output_tokens": 20}
         }
         """
-        let msg = try makeClient().parseResponse(Data(json.utf8))
+        let msg = try makeClient().parseResponse(Data(json.utf8), provider: .anthropic)
         #expect(msg.toolCalls.count == 1)
         #expect(msg.toolCalls[0].id == "toolu_rt")
         #expect(msg.toolCalls[0].name == "get_weather")
@@ -274,7 +297,7 @@ struct AnthropicContinuityTests {
             "usage": {"input_tokens": 100, "output_tokens": 50}
         }
         """
-        let msg = try makeClient().parseResponse(Data(json.utf8))
+        let msg = try makeClient().parseResponse(Data(json.utf8), provider: .anthropic)
         #expect(msg.continuity?.substrate == .anthropicMessages)
         guard case let .object(payload) = msg.continuity?.payload,
               case let .array(blocks) = payload["content"] else {
@@ -309,7 +332,7 @@ struct AnthropicContinuityTests {
             "usage": {"input_tokens": 80, "output_tokens": 120}
         }
         """
-        let msg = try makeClient().parseResponse(Data(json.utf8))
+        let msg = try makeClient().parseResponse(Data(json.utf8), provider: .anthropic)
         guard case let .object(payload) = msg.continuity?.payload,
               case let .array(blocks) = payload["content"] else {
             Issue.record("Expected continuity with content array")
@@ -440,7 +463,7 @@ struct AnthropicContinuityTests {
             "usage": {"input_tokens": 100, "output_tokens": 200}
         }
         """
-        let parsed = try makeClient().parseResponse(Data(json.utf8))
+        let parsed = try makeClient().parseResponse(Data(json.utf8), provider: .anthropic)
 
         let (_, mapped) = try AnthropicMessageMapper.mapMessages([.assistant(parsed)])
         guard case let .blocks(blocks) = mapped[0].content else {
@@ -508,7 +531,7 @@ struct AnthropicContinuityTests {
         }
         """
         let client = try makeClient()
-        let parsed = try client.parseResponse(Data(json.utf8))
+        let parsed = try client.parseResponse(Data(json.utf8), provider: .anthropic)
         #expect(parsed.continuity?.substrate == .anthropicMessages)
         #expect(parsed.content == "")
         #expect(parsed.toolCalls.count == 2)
@@ -549,7 +572,7 @@ struct AnthropicContinuityTests {
         }
         """
         let client = try makeClient()
-        let parsed = try client.parseResponse(Data(json.utf8))
+        let parsed = try client.parseResponse(Data(json.utf8), provider: .anthropic)
 
         let (_, mapped) = try AnthropicMessageMapper.mapMessages([.assistant(parsed)])
         guard case let .blocks(blocks) = mapped[0].content else {
@@ -589,7 +612,7 @@ struct AnthropicCacheUsageParsingTests {
             }
         }
         """
-        let msg = try makeClient().parseResponse(Data(json.utf8))
+        let msg = try makeClient().parseResponse(Data(json.utf8), provider: .anthropic)
         #expect(msg.tokenUsage?.input == 2500)
         #expect(msg.tokenUsage?.output == 100)
         #expect(msg.tokenUsage?.cacheWrite == 2400)
@@ -608,7 +631,7 @@ struct AnthropicCacheUsageParsingTests {
             "usage": {"input_tokens": 100, "output_tokens": 50}
         }
         """
-        let msg = try makeClient().parseResponse(Data(json.utf8))
+        let msg = try makeClient().parseResponse(Data(json.utf8), provider: .anthropic)
         #expect(msg.tokenUsage?.cacheRead == nil)
         #expect(msg.tokenUsage?.cacheWrite == nil)
     }

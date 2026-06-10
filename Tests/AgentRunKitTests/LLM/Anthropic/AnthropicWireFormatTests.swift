@@ -240,7 +240,7 @@ struct AnthropicErrorHandlingTests {
         let garbage = Data("not json at all".utf8)
 
         #expect(throws: AgentError.self) {
-            _ = try client.parseResponse(garbage)
+            _ = try client.parseResponse(garbage, provider: .anthropic)
         }
     }
 
@@ -261,7 +261,7 @@ struct AnthropicErrorHandlingTests {
         """
         let client = try AnthropicClient(apiKey: "test-key", model: "claude-sonnet-4-6")
 
-        let message = try client.parseResponse(Data(json.utf8))
+        let message = try client.parseResponse(Data(json.utf8), provider: .anthropic)
 
         #expect(message.content == "Hello")
         #expect(message.toolCalls.isEmpty)
@@ -324,7 +324,7 @@ struct AnthropicErrorHandlingTests {
         let client = try AnthropicClient(apiKey: "test-key", model: "claude-sonnet-4-6")
 
         #expect(throws: AgentError.self) {
-            _ = try client.parseResponse(Data(json.utf8))
+            _ = try client.parseResponse(Data(json.utf8), provider: .anthropic)
         }
     }
 }

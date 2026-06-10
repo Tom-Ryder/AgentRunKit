@@ -84,6 +84,7 @@ private struct AudioAccumulator {
 
 private struct StreamAccumulation {
     let eventFactory: StreamEventFactory
+    let provider: ProviderIdentifier
     let started: ContinuousClock.Instant = .now
     var content = ""
     var reasoning = ""
@@ -96,6 +97,9 @@ private struct StreamAccumulation {
     var yieldedEvent = false
     var eventsObserved = 0
     var sawFinished = false
+    /// Every backend except OpenAI chat can complete only through its own terminal marker, so a stream
+    /// that never reports `.streamClosed` has necessarily seen one; the chat path overrides this at EOF.
+    var terminalMarkerSeen = true
 
     mutating func apply(
         _ input: RunStreamElement,
@@ -155,6 +159,8 @@ private struct StreamAccumulation {
             guard let iterationUsage else { return }
             totalUsage += iterationUsage
             usage = iterationUsage
+        case let .streamClosed(markerSeen):
+            terminalMarkerSeen = markerSeen
         }
     }
 
@@ -222,14 +228,20 @@ private struct StreamAccumulation {
 
     var diagnostics: StreamFailureDiagnostics {
         StreamFailureDiagnostics(
+            provider: provider,
             elapsed: ContinuousClock.now - started,
             eventsObserved: eventsObserved,
+            finishSignalSeen: sawFinished,
             lastEvent: nil
         )
     }
 
     var completionDiagnostics: StreamCompletionDiagnostics {
-        StreamCompletionDiagnostics(elapsed: ContinuousClock.now - started, eventsObserved: eventsObserved)
+        StreamCompletionDiagnostics(
+            elapsed: ContinuousClock.now - started,
+            eventsObserved: eventsObserved,
+            terminalMarkerSeen: terminalMarkerSeen
+        )
     }
 
     func streamFailure(reason: MalformedStreamReason) -> AgentError {
@@ -263,7 +275,7 @@ struct StreamProcessor {
         requestContext: RequestContext? = nil,
         requestMode: RunRequestMode = .auto
     ) async throws -> StreamIteration {
-        var state = StreamAccumulation(eventFactory: eventFactory)
+        var state = StreamAccumulation(eventFactory: eventFactory, provider: client.providerIdentifier)
         let eventObserver = requestContext?.onStreamEvent
         let completionObserver = requestContext?.onStreamComplete
 

@@ -260,6 +260,8 @@ private func classifySmokeTransportError(_ transportError: TransportError) -> Sm
         smokeFailureClassification(kind: .httpError, httpStatus: statusCode, bodyExcerpt: body)
     case .rateLimited:
         smokeFailureClassification(kind: .rateLimited, httpStatus: 429)
+    case .providerError:
+        smokeFailureClassification(kind: .providerError, bodyExcerpt: transportError.description)
     case let .networkError(_, description):
         smokeFailureClassification(kind: .networkError, bodyExcerpt: description)
     case .invalidResponse:

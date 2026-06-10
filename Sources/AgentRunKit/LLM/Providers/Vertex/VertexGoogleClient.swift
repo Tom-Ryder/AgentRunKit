@@ -97,7 +97,7 @@ public struct VertexGoogleClient: LLMClient, Sendable {
             urlRequest: urlRequest, session: session, retryPolicy: retryPolicy
         )
         requestContext?.onResponse?(httpResponse)
-        return try gemini.parseResponse(data)
+        return try gemini.parseResponse(data, provider: providerIdentifier)
     }
 
     public func stream(
@@ -153,10 +153,11 @@ public struct VertexGoogleClient: LLMClient, Sendable {
 
         try await processSSEStream(
             bytes: bytes,
+            provider: providerIdentifier,
             stallTimeout: retryPolicy.streamStallTimeout
-        ) { event, _ in
+        ) { event, diagnostics in
             try await gemini.handleSSEEvent(
-                event, state: state, providerIdentifier: providerIdentifier, continuation: continuation
+                event, state: state, diagnostics: diagnostics, continuation: continuation
             )
         }
         continuation.finish()

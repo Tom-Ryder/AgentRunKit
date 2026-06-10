@@ -36,13 +36,24 @@ public enum ProviderIdentifier: Sendable, Equatable, Hashable, CustomStringConve
 /// Equatable conformance compares all fields exactly, including `elapsed`. Tests should prefer pattern matching
 /// and tolerant elapsed-time assertions when diagnostics come from wall-clock measurements.
 public struct StreamFailureDiagnostics: Sendable, Equatable {
+    public let provider: ProviderIdentifier
     public let elapsed: Duration
     public let eventsObserved: Int
+    /// Whether the provider signaled the end of generation before the stream failed.
+    public let finishSignalSeen: Bool
     public let lastEvent: String?
 
-    public init(elapsed: Duration, eventsObserved: Int, lastEvent: String?) {
+    public init(
+        provider: ProviderIdentifier,
+        elapsed: Duration,
+        eventsObserved: Int,
+        finishSignalSeen: Bool,
+        lastEvent: String?
+    ) {
+        self.provider = provider
         self.elapsed = elapsed
         self.eventsObserved = eventsObserved
+        self.finishSignalSeen = finishSignalSeen
         self.lastEvent = lastEvent
     }
 }
@@ -53,7 +64,7 @@ public enum StreamFailure: Error, Sendable, Equatable, CustomStringConvertible {
     case providerTerminationMissing(diagnostics: StreamFailureDiagnostics)
     case finishedDeltaMissing(diagnostics: StreamFailureDiagnostics)
     case midStreamTransportFailure(code: URLError.Code, diagnostics: StreamFailureDiagnostics)
-    case providerError(provider: ProviderIdentifier, code: String?, message: String)
+    case providerError(code: String?, message: String, diagnostics: StreamFailureDiagnostics)
     case malformedStream(reason: MalformedStreamReason, diagnostics: StreamFailureDiagnostics)
 
     public var description: String {
@@ -66,11 +77,11 @@ public enum StreamFailure: Error, Sendable, Equatable, CustomStringConvertible {
             "Stream ended without a finished delta after \(diagnostics.eventsObserved) events"
         case let .midStreamTransportFailure(code, diagnostics):
             "Stream transport failed with \(code) after \(diagnostics.eventsObserved) events"
-        case let .providerError(provider, code, message):
+        case let .providerError(code, message, diagnostics):
             if let code {
-                "\(provider) stream error \(code): \(message)"
+                "\(diagnostics.provider) stream error \(code): \(message)"
             } else {
-                "\(provider) stream error: \(message)"
+                "\(diagnostics.provider) stream error: \(message)"
             }
         case let .malformedStream(reason, _):
             "Malformed stream: \(reason)"
@@ -85,6 +96,7 @@ public enum TransportError: Error, Sendable, Equatable, CustomStringConvertible 
     case invalidResponse
     case httpError(statusCode: Int, body: String)
     case rateLimited(retryAfter: Duration?)
+    case providerError(provider: ProviderIdentifier, code: String?, message: String)
     case encodingFailed(description: String)
     case decodingFailed(description: String)
     case noChoices
@@ -124,6 +136,12 @@ public enum TransportError: Error, Sendable, Equatable, CustomStringConvertible 
             } else {
                 "Rate limited"
             }
+        case let .providerError(provider, code, message):
+            if let code {
+                "\(provider) error \(code): \(message)"
+            } else {
+                "\(provider) error: \(message)"
+            }
         case let .encodingFailed(description): "Encoding failed: \(description)"
         case let .decodingFailed(description): "Decoding failed: \(description)"
         case .noChoices: "No choices in response"
@@ -146,7 +164,8 @@ extension TransportError {
             return Self.matchesPromptTooLongHTTPBody(in: body)
         case let .other(message):
             return Self.matchesPromptTooLongOtherMessage(in: message)
-        case let .streamFailed(.providerError(_, code, message)):
+        case let .providerError(_, code, message),
+             let .streamFailed(.providerError(code, message, _)):
             return Self.matchesPromptTooLongOtherMessage(in: [code, message].compactMap(\.self).joined(separator: ": "))
         default:
             return false

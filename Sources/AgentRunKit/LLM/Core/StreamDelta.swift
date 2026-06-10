@@ -11,4 +11,6 @@ public enum StreamDelta: Sendable, Equatable {
     case audioTranscript(String)
     case audioStarted(id: String, expiresAt: Int)
     case finished(usage: TokenUsage?)
+    /// Emitted at most once at stream end; absent from backends that can only complete via their own terminal marker.
+    case streamClosed(terminalMarkerSeen: Bool)
 }

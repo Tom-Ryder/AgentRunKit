@@ -45,7 +45,7 @@ actor ResponsesStreamState {
                 arguments: (existing?.arguments ?? "") + arguments,
                 kind: existing?.kind ?? .function
             )
-        case .audioData, .audioTranscript, .audioStarted, .finished:
+        case .audioData, .audioTranscript, .audioStarted, .finished, .streamClosed:
             break
         }
     }

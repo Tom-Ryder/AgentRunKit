@@ -297,7 +297,7 @@ struct VertexAnthropicResponseTests {
             "usage": {"input_tokens": 100, "output_tokens": 50}
         }
         """
-        let msg = try client.anthropic.parseResponse(Data(json.utf8))
+        let msg = try client.anthropic.parseResponse(Data(json.utf8), provider: .vertexAnthropic)
         #expect(msg.content == "Hello from Vertex!")
         #expect(msg.tokenUsage?.input == 100)
         #expect(msg.tokenUsage?.output == 50)
@@ -348,8 +348,8 @@ struct VertexAnthropicContinuityTests {
             "usage": {"input_tokens": 100, "output_tokens": 80}
         }
         """
-        let directMsg = try directClient.parseResponse(Data(json.utf8))
-        let vertexMsg = try vertexClient.anthropic.parseResponse(Data(json.utf8))
+        let directMsg = try directClient.parseResponse(Data(json.utf8), provider: .anthropic)
+        let vertexMsg = try vertexClient.anthropic.parseResponse(Data(json.utf8), provider: .vertexAnthropic)
 
         #expect(directMsg.continuity == vertexMsg.continuity)
         #expect(directMsg.content == vertexMsg.content)
@@ -373,7 +373,7 @@ struct VertexAnthropicContinuityTests {
             "usage": {"input_tokens": 50, "output_tokens": 25}
         }
         """
-        let msg = try client.anthropic.parseResponse(Data(json.utf8))
+        let msg = try client.anthropic.parseResponse(Data(json.utf8), provider: .vertexAnthropic)
         #expect(msg.continuity?.substrate == .anthropicMessages)
     }
 }
@@ -411,12 +411,12 @@ struct VertexAnthropicStreamingContinuityTests {
 
         try await processSSEStream(
             bytes: controlled,
+            provider: vertexClient.providerIdentifier,
             stallTimeout: nil
         ) { event, diagnostics in
             try await vertexClient.anthropic.handleSSEEvent(
                 event,
                 state: state,
-                providerIdentifier: vertexClient.providerIdentifier,
                 diagnostics: diagnostics
             ) { delta in
                 _ = runPair.continuation.yield(.delta(delta))
@@ -438,7 +438,7 @@ struct VertexAnthropicStreamingContinuityTests {
             "usage": {"input_tokens": 50, "output_tokens": 10}
         }
         """
-        let blockingMsg = try vertexClient.anthropic.parseResponse(Data(blockingJSON.utf8))
+        let blockingMsg = try vertexClient.anthropic.parseResponse(Data(blockingJSON.utf8), provider: .vertexAnthropic)
         #expect(continuity == blockingMsg.continuity)
     }
 
@@ -459,22 +459,22 @@ struct VertexAnthropicStreamingContinuityTests {
         do {
             try await processSSEStream(
                 bytes: ControlledByteStream(stream: byteStream),
+                provider: vertexClient.providerIdentifier,
                 stallTimeout: nil
             ) { event, diagnostics in
                 try await vertexClient.anthropic.handleSSEEvent(
                     event,
                     state: state,
-                    providerIdentifier: vertexClient.providerIdentifier,
                     diagnostics: diagnostics
                 ) { _ in }
             }
             Issue.record("Expected provider error")
         } catch let error as AgentError {
-            guard case let .llmError(.streamFailed(.providerError(provider, code, message))) = error else {
+            guard case let .llmError(.streamFailed(.providerError(code, message, diagnostics))) = error else {
                 Issue.record("Expected provider error, got \(error)")
                 return
             }
-            #expect(provider == .vertexAnthropic)
+            #expect(diagnostics.provider == .vertexAnthropic)
             #expect(code == "overloaded_error")
             #expect(message == "Overloaded")
         }

@@ -25,7 +25,7 @@ struct GeminiResponseParsingTests {
             }
         }
         """
-        let msg = try makeClient().parseResponse(Data(json.utf8))
+        let msg = try makeClient().parseResponse(Data(json.utf8), provider: .gemini)
         #expect(msg.content == "Hello there!")
         #expect(msg.toolCalls.isEmpty)
         #expect(msg.tokenUsage?.input == 100)
@@ -52,7 +52,7 @@ struct GeminiResponseParsingTests {
             }
         }
         """
-        let msg = try makeClient().parseResponse(Data(json.utf8))
+        let msg = try makeClient().parseResponse(Data(json.utf8), provider: .gemini)
         #expect(msg.content == "Let me check.")
         #expect(msg.toolCalls.count == 1)
         #expect(msg.toolCalls[0].id == "call_01")
@@ -81,7 +81,7 @@ struct GeminiResponseParsingTests {
             }
         }
         """
-        let msg = try makeClient().parseResponse(Data(json.utf8))
+        let msg = try makeClient().parseResponse(Data(json.utf8), provider: .gemini)
         #expect(msg.content == "The answer is 42.")
         #expect(msg.reasoning?.content == "Let me reason...")
         #expect(msg.reasoningDetails?.count == 1)
@@ -116,7 +116,7 @@ struct GeminiResponseParsingTests {
             }
         }
         """
-        let msg = try makeClient().parseResponse(Data(json.utf8))
+        let msg = try makeClient().parseResponse(Data(json.utf8), provider: .gemini)
         #expect(msg.toolCalls.count == 2)
         #expect(msg.toolCalls[0].id == "call_a")
         #expect(msg.toolCalls[0].name == "search")
@@ -143,7 +143,7 @@ struct GeminiResponseParsingTests {
             }
         }
         """
-        let msg = try makeClient().parseResponse(Data(json.utf8))
+        let msg = try makeClient().parseResponse(Data(json.utf8), provider: .gemini)
         #expect(msg.toolCalls.count == 1)
         #expect(msg.toolCalls[0].id == "gemini_call_0")
         #expect(msg.toolCalls[0].name == "get_weather")
@@ -161,17 +161,18 @@ struct GeminiResponseParsingTests {
         }
         """
         do {
-            _ = try makeClient().parseResponse(Data(json.utf8))
+            _ = try makeClient().parseResponse(Data(json.utf8), provider: .gemini)
             Issue.record("Expected error")
         } catch let error as AgentError {
             guard case let .llmError(transport) = error,
-                  case let .other(msg) = transport
+                  case let .providerError(provider, code, message) = transport
             else {
-                Issue.record("Expected .other, got \(error)")
+                Issue.record("Expected providerError, got \(error)")
                 return
             }
-            #expect(msg.contains("INVALID_ARGUMENT"))
-            #expect(msg.contains("Invalid request"))
+            #expect(provider == .gemini)
+            #expect(code == "INVALID_ARGUMENT")
+            #expect(message == "Invalid request")
         }
     }
 
@@ -192,7 +193,7 @@ struct GeminiResponseParsingTests {
             }
         }
         """
-        let msg = try makeClient().parseResponse(Data(json.utf8))
+        let msg = try makeClient().parseResponse(Data(json.utf8), provider: .gemini)
         #expect(msg.tokenUsage == TokenUsage(input: 200, output: 100))
     }
 
@@ -208,7 +209,7 @@ struct GeminiResponseParsingTests {
         }
         """
         #expect(throws: AgentError.self) {
-            _ = try makeClient().parseResponse(Data(json.utf8))
+            _ = try makeClient().parseResponse(Data(json.utf8), provider: .gemini)
         }
     }
 
@@ -228,7 +229,7 @@ struct GeminiResponseParsingTests {
             }
         }
         """
-        let msg = try makeClient().parseResponse(Data(json.utf8))
+        let msg = try makeClient().parseResponse(Data(json.utf8), provider: .gemini)
         #expect(msg.content == "")
         #expect(msg.toolCalls.isEmpty)
     }
@@ -250,7 +251,7 @@ struct GeminiResponseParsingTests {
             }
         }
         """
-        let msg = try makeClient().parseResponse(Data(json.utf8))
+        let msg = try makeClient().parseResponse(Data(json.utf8), provider: .gemini)
         #expect(msg.content == "")
         #expect(msg.toolCalls.isEmpty)
     }
@@ -279,7 +280,7 @@ struct GeminiResponseParsingTests {
             }
         }
         """
-        let msg = try makeClient().parseResponse(Data(json.utf8))
+        let msg = try makeClient().parseResponse(Data(json.utf8), provider: .gemini)
         #expect(msg.content == "Checking.More text.")
         #expect(msg.toolCalls.count == 1)
         #expect(msg.reasoning?.content == "Think first\nThink again")
@@ -306,7 +307,7 @@ struct GeminiResponseParsingTests {
             }
         }
         """
-        let msg = try makeClient().parseResponse(Data(json.utf8))
+        let msg = try makeClient().parseResponse(Data(json.utf8), provider: .gemini)
         #expect(msg.tokenUsage?.cacheRead == 150)
     }
 
@@ -329,7 +330,7 @@ struct GeminiResponseParsingTests {
             }
         }
         """
-        let msg = try makeClient().parseResponse(Data(json.utf8))
+        let msg = try makeClient().parseResponse(Data(json.utf8), provider: .gemini)
         #expect(msg.toolCalls.count == 1)
         #expect(msg.toolCalls[0].arguments == "{}")
     }
@@ -340,7 +341,7 @@ struct GeminiResponseParsingTests {
         let garbage = Data("not json at all".utf8)
 
         do {
-            _ = try client.parseResponse(garbage)
+            _ = try client.parseResponse(garbage, provider: .gemini)
             Issue.record("Expected error")
         } catch let error as AgentError {
             guard case let .llmError(transport) = error,
@@ -374,7 +375,7 @@ struct GeminiResponseParsingTests {
             }
         }
         """
-        let msg = try makeClient().parseResponse(Data(json.utf8))
+        let msg = try makeClient().parseResponse(Data(json.utf8), provider: .gemini)
         #expect(msg.toolCalls.count == 1)
         #expect(msg.toolCalls[0].id == "call_rt")
         #expect(msg.toolCalls[0].name == "get_weather")
@@ -426,7 +427,7 @@ struct GeminiFunctionCallReasoningDetailsTests {
             }
         }
         """
-        let msg = try makeClient().parseResponse(Data(json.utf8))
+        let msg = try makeClient().parseResponse(Data(json.utf8), provider: .gemini)
 
         #expect(msg.toolCalls.count == 1)
         #expect(msg.toolCalls[0].id == "call_sig")

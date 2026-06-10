@@ -69,17 +69,29 @@ struct SSEEventParser {
     }
 }
 
+enum SSEDisposition {
+    case `continue`
+    case complete
+    case completeOnEOF
+}
+
+struct SSECompletion {
+    let diagnostics: StreamFailureDiagnostics
+    let terminalMarkerSeen: Bool
+}
+
 @discardableResult
 func processSSEStream<S: AsyncSequence & Sendable>(
     bytes: S,
+    provider: ProviderIdentifier,
     stallTimeout: Duration?,
-    handler: @escaping @Sendable (SSEEvent, StreamFailureDiagnostics) async throws -> Bool
-) async throws -> StreamFailureDiagnostics where S.Element == UInt8 {
-    let progress = StreamProgress()
+    handler: @escaping @Sendable (SSEEvent, StreamFailureDiagnostics) async throws -> SSEDisposition
+) async throws -> SSECompletion where S.Element == UInt8 {
+    let progress = StreamProgress(provider: provider)
     let started = ContinuousClock.now
 
     if let stallTimeout {
-        return try await withThrowingTaskGroup(of: StreamFailureDiagnostics.self) { group in
+        return try await withThrowingTaskGroup(of: SSECompletion.self) { group in
             defer { group.cancelAll() }
             group.addTask {
                 while true {
@@ -101,10 +113,7 @@ func processSSEStream<S: AsyncSequence & Sendable>(
             }
 
             guard let result = try await group.next() else {
-                let diagnostics = await progress.snapshot(elapsed: ContinuousClock.now - started)
-                throw AgentError.llmError(.streamFailed(.providerTerminationMissing(
-                    diagnostics: diagnostics
-                )))
+                preconditionFailure("Stream task group completed without a result")
             }
             return result
         }
@@ -117,31 +126,42 @@ private func runSSEParser<S: AsyncSequence & Sendable>(
     bytes: S,
     progress: StreamProgress,
     started: ContinuousClock.Instant,
-    handler: @Sendable (SSEEvent, StreamFailureDiagnostics) async throws -> Bool
-) async throws -> StreamFailureDiagnostics where S.Element == UInt8 {
+    handler: @Sendable (SSEEvent, StreamFailureDiagnostics) async throws -> SSEDisposition
+) async throws -> SSECompletion where S.Element == UInt8 {
+    func dispatch(_ event: SSEEvent) async throws -> SSECompletion? {
+        await progress.recordEvent(eventName: event.event)
+        let diagnostics = await progress.snapshot(elapsed: ContinuousClock.now - started)
+        switch try await handler(event, diagnostics) {
+        case .continue:
+            return nil
+        case .complete:
+            return SSECompletion(diagnostics: diagnostics, terminalMarkerSeen: true)
+        case .completeOnEOF:
+            await progress.recordFinishSignal()
+            return nil
+        }
+    }
+
     var parser = SSEEventParser()
     do {
         for try await line in UnboundedLines(source: bytes) {
             await progress.recordActivity()
             guard let event = parser.appendLine(line) else { continue }
-            await progress.recordEvent(eventName: event.event)
-            let diagnostics = await progress.snapshot(elapsed: ContinuousClock.now - started)
-            if try await handler(event, diagnostics) {
-                return diagnostics
+            if let completion = try await dispatch(event) {
+                return completion
             }
         }
-        if let event = parser.finish() {
-            await progress.recordEvent(eventName: event.event)
-            let diagnostics = await progress.snapshot(elapsed: ContinuousClock.now - started)
-            if try await handler(event, diagnostics) {
-                return diagnostics
-            }
+        if let event = parser.finish(), let completion = try await dispatch(event) {
+            return completion
         }
         try Task.checkCancellation()
         let diagnostics = await progress.snapshot(elapsed: ContinuousClock.now - started)
-        throw AgentError.llmError(.streamFailed(.providerTerminationMissing(
-            diagnostics: diagnostics
-        )))
+        guard diagnostics.finishSignalSeen else {
+            throw AgentError.llmError(.streamFailed(.providerTerminationMissing(
+                diagnostics: diagnostics
+            )))
+        }
+        return SSECompletion(diagnostics: diagnostics, terminalMarkerSeen: false)
     } catch is CancellationError {
         throw CancellationError()
     } catch let urlError as URLError {
@@ -154,9 +174,15 @@ private func runSSEParser<S: AsyncSequence & Sendable>(
 }
 
 actor StreamProgress {
+    private let provider: ProviderIdentifier
     private(set) var lastActivity: ContinuousClock.Instant = .now
     private var eventsObserved: Int = 0
     private var lastEvent: String?
+    private var finishSignalSeen = false
+
+    init(provider: ProviderIdentifier) {
+        self.provider = provider
+    }
 
     func recordActivity() {
         lastActivity = .now
@@ -170,8 +196,18 @@ actor StreamProgress {
         }
     }
 
+    func recordFinishSignal() {
+        finishSignalSeen = true
+    }
+
     func snapshot(elapsed: Duration) -> StreamFailureDiagnostics {
-        StreamFailureDiagnostics(elapsed: elapsed, eventsObserved: eventsObserved, lastEvent: lastEvent)
+        StreamFailureDiagnostics(
+            provider: provider,
+            elapsed: elapsed,
+            eventsObserved: eventsObserved,
+            finishSignalSeen: finishSignalSeen,
+            lastEvent: lastEvent
+        )
     }
 }
 

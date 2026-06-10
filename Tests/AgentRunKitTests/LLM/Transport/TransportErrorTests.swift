@@ -153,12 +153,29 @@ struct TransportErrorTests {
     @Test
     func promptTooLongClassificationMatchesStreamProviderErrors() {
         let error = TransportError.streamFailed(.providerError(
-            provider: .anthropic,
             code: "invalid_request_error",
-            message: "prompt is too long: 200001 tokens > 200000 maximum"
+            message: "prompt is too long: 200001 tokens > 200000 maximum",
+            diagnostics: .empty
         ))
 
         #expect(error.isPromptTooLong)
+    }
+
+    @Test
+    func promptTooLongClassificationMatchesTopLevelProviderErrors() {
+        let overflow = TransportError.providerError(
+            provider: .gemini,
+            code: "INVALID_ARGUMENT",
+            message: "The input token count (307201) exceeds the maximum number of tokens allowed (307200)."
+        )
+        let unrelated = TransportError.providerError(
+            provider: .openRouter,
+            code: "402",
+            message: "This request requires more credits"
+        )
+
+        #expect(overflow.isPromptTooLong)
+        #expect(!unrelated.isPromptTooLong)
     }
 
     @Test

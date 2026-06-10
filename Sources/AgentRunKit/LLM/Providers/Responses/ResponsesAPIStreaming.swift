@@ -42,7 +42,9 @@ extension ResponsesAPIClient {
         continuation: AsyncThrowingStream<RunStreamElement, Error>.Continuation
     ) async throws where S.Element == UInt8 {
         let semanticState = ResponsesStreamState()
-        try await processSSEStream(bytes: bytes, stallTimeout: stallTimeout) { [self] event, diagnostics in
+        try await processSSEStream(
+            bytes: bytes, provider: providerIdentifier, stallTimeout: stallTimeout
+        ) { [self] event, diagnostics in
             try await handleSSEEvent(
                 event,
                 messagesCount: messagesCount,
@@ -60,7 +62,7 @@ extension ResponsesAPIClient {
         semanticState: ResponsesStreamState,
         diagnostics: StreamFailureDiagnostics,
         continuation: AsyncThrowingStream<RunStreamElement, Error>.Continuation
-    ) async throws -> Bool {
+    ) async throws -> SSEDisposition {
         try await handleSSEPayload(
             event.data,
             messagesCount: messagesCount,
@@ -76,7 +78,7 @@ extension ResponsesAPIClient {
         semanticState: ResponsesStreamState,
         diagnostics: StreamFailureDiagnostics,
         continuation: AsyncThrowingStream<RunStreamElement, Error>.Continuation
-    ) async throws -> Bool {
+    ) async throws -> SSEDisposition {
         let data = Data(payload.utf8)
         let eventType = try Self.sseDecoder.decode(EventTypeOnly.self, from: data).type
 
@@ -97,7 +99,7 @@ extension ResponsesAPIClient {
         semanticState: ResponsesStreamState,
         diagnostics: StreamFailureDiagnostics,
         continuation: AsyncThrowingStream<RunStreamElement, Error>.Continuation
-    ) async throws -> Bool {
+    ) async throws -> SSEDisposition {
         switch type {
         case "response.output_text.delta":
             try await handleTextDelta(
@@ -130,20 +132,23 @@ extension ResponsesAPIClient {
                 semanticState: semanticState,
                 continuation: continuation
             )
-        case "response.completed":
-            return try await handleCompleted(
+        case "response.completed", "response.incomplete":
+            try await handleCompleted(
                 data: data,
                 messagesCount: messagesCount,
                 semanticState: semanticState,
                 diagnostics: diagnostics,
                 continuation: continuation
             )
+            return .complete
         case "response.failed":
-            try handleFailed(data: data)
+            try handleFailed(data: data, diagnostics: diagnostics)
+        case "error", "response.error":
+            try handleErrorEvent(data: data, diagnostics: diagnostics)
         default:
             break
         }
-        return false
+        return .continue
     }
 
     private func handleTextDelta(
@@ -254,7 +259,7 @@ extension ResponsesAPIClient {
         semanticState: ResponsesStreamState,
         diagnostics: StreamFailureDiagnostics,
         continuation: AsyncThrowingStream<RunStreamElement, Error>.Continuation
-    ) async throws -> Bool {
+    ) async throws {
         let event: CompletedEvent
         do {
             event = try Self.sseDecoder.decode(
@@ -284,18 +289,35 @@ extension ResponsesAPIClient {
             continuation.yield(.finalizedContinuity(continuity))
         }
         continuation.yield(.delta(.finished(usage: projection.tokenUsage)))
-        return true
     }
 
-    private func handleFailed(data: Data) throws {
+    private func handleFailed(data: Data, diagnostics: StreamFailureDiagnostics) throws {
         let event = try Self.sseDecoder.decode(FailedEvent.self, from: data)
         guard let error = event.response.error else {
-            throw AgentError.llmError(.other("Response failed"))
+            throw AgentError.llmError(.streamFailed(.providerError(
+                code: nil,
+                message: "Response failed without an error payload",
+                diagnostics: diagnostics
+            )))
         }
         throw AgentError.llmError(.streamFailed(.providerError(
-            provider: .openAIResponses,
             code: error.code,
-            message: error.message
+            message: error.message,
+            diagnostics: diagnostics
+        )))
+    }
+
+    private func handleErrorEvent(data: Data, diagnostics: StreamFailureDiagnostics) throws {
+        let event: ErrorEvent
+        do {
+            event = try Self.sseDecoder.decode(ErrorEvent.self, from: data)
+        } catch {
+            throw AgentError.llmError(.decodingFailed(error))
+        }
+        throw AgentError.llmError(.streamFailed(.providerError(
+            code: event.code ?? event.error?.code,
+            message: event.message ?? event.error?.message ?? "Provider returned an error without a message",
+            diagnostics: diagnostics
         )))
     }
 }
@@ -347,3 +369,9 @@ private struct OutputItemDoneItem: Decodable {
 private struct CompletedEvent: Decodable { let response: ResponsesAPIResponse }
 private struct FailedEvent: Decodable { let response: FailedResponseBody }
 private struct FailedResponseBody: Decodable { let error: ResponsesErrorDetail? }
+
+private struct ErrorEvent: Decodable {
+    let code: String?
+    let message: String?
+    let error: ResponsesErrorDetail?
+}

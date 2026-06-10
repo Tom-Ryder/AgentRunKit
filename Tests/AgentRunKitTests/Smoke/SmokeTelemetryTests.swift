@@ -46,7 +46,11 @@ struct SmokeTelemetryTests {
                 .midStreamTransportFailure
             ),
             (
-                .streamFailed(.providerError(provider: .anthropic, code: nil, message: "overloaded")),
+                .streamFailed(.providerError(code: nil, message: "overloaded", diagnostics: .empty)),
+                .providerError
+            ),
+            (
+                .providerError(provider: .openRouter, code: "402", message: "insufficient credits"),
                 .providerError
             ),
             (
@@ -64,9 +68,9 @@ struct SmokeTelemetryTests {
         }
 
         let providerError = classifySmokeFailure(AgentError.llmError(.streamFailed(.providerError(
-            provider: .anthropic,
             code: "overloaded_error",
-            message: "overloaded"
+            message: "overloaded",
+            diagnostics: .empty
         ))))
         #expect(providerError.bodyExcerpt?.contains("overloaded") == true)
 

@@ -2,18 +2,6 @@
 import Foundation
 import Testing
 
-private func makeResponsesStreamingClient() -> ResponsesAPIClient {
-    ResponsesAPIClient(
-        apiKey: "test-key",
-        model: "gpt-4.1",
-        baseURL: ResponsesAPIClient.openAIBaseURL
-    )
-}
-
-private let responsesStreamingEmptyCompletedJSON =
-    #"{"type":"response.completed","response":{"id":"resp_001","status":"completed","output":[],"#
-        + #""usage":{"input_tokens":10,"output_tokens":5}}}"#
-
 private let responsesCompletedWithReasoningJSON =
     #"{"type":"response.completed","response":{"id":"resp_001","status":"completed","output":[],"#
         + #""usage":{"input_tokens":50,"output_tokens":30,"output_tokens_details":{"reasoning_tokens":10}}}}"#
@@ -660,11 +648,13 @@ struct ResponsesStreamingFailureSafetyTests {
             Issue.record("Expected AgentError.llmError, got \(error)")
             return
         }
-        guard case let .other(message) = transportError else {
-            Issue.record("Expected TransportError.other, got \(transportError)")
+        guard case let .providerError(provider, code, message) = transportError else {
+            Issue.record("Expected TransportError.providerError, got \(transportError)")
             return
         }
-        #expect(message.contains("server_error"))
+        #expect(provider == .openAIResponses)
+        #expect(code == "server_error")
+        #expect(message == "Internal error")
         #expect(await client.lastResponseId == "resp_prev")
         #expect(await client.lastMessageCount == 7)
     }
@@ -763,8 +753,8 @@ struct ResponsesStreamingFailureSafetyTests {
                 Issue.record("Expected llmError, got \(error)")
                 return
             }
-            if case let .streamFailed(.providerError(provider, code, message)) = transport {
-                #expect(provider == .openAIResponses)
+            if case let .streamFailed(.providerError(code, message, diagnostics)) = transport {
+                #expect(diagnostics.provider == .openAIResponses)
                 #expect(code == "rate_limit")
                 #expect(message.contains("Rate limit"))
             } else {
@@ -772,189 +762,73 @@ struct ResponsesStreamingFailureSafetyTests {
             }
         }
     }
-}
-
-struct ResponsesStreamingReasoningDetailTests {
-    @Test
-    func reasoningSummaryDeltaYieldsReasoning() async throws {
-        let lines = [
-            responsesSSELine(#"{"type":"response.reasoning_summary_text.delta","delta":"Thinking..."}"#),
-            responsesSSELine(
-                #"{"type":"response.completed","response":{"id":"resp_001","status":"completed","#
-                    + #""output":[{"type":"reasoning","id":"rs_001","summary":[{"type":"summary_text","#
-                    + #""text":"Thinking..."}]}],"#
-                    + #""usage":{"input_tokens":10,"output_tokens":5}}}"#
-            )
-        ]
-        let deltas = try await collectResponsesStreamDeltas(client: makeResponsesStreamingClient(), lines: lines)
-
-        #expect(deltas.count == 3)
-        #expect(deltas[0] == .reasoning("Thinking..."))
-        if case let .reasoningDetails(details) = deltas[1] {
-            #expect(details.count == 1)
-        } else {
-            Issue.record("Expected reasoningDetails delta")
-        }
-    }
 
     @Test
-    func reasoningOutputItemDoneYieldsReasoningDetails() async throws {
-        let doneJSON = """
-        {"type":"response.output_item.done","item":{"type":"reasoning","id":"rs_001","summary_text":"Plan"}}
-        """
-        let lines = [
-            responsesSSELine(doneJSON),
-            responsesSSELine(
-                #"{"type":"response.completed","response":{"id":"resp_001","status":"completed","#
-                    + #""output":[{"type":"reasoning","id":"rs_001","summary_text":"Plan"}],"#
-                    + #""usage":{"input_tokens":10,"output_tokens":5}}}"#
-            )
-        ]
-        let deltas = try await collectResponsesStreamDeltas(client: makeResponsesStreamingClient(), lines: lines)
+    func failedEventWithoutPayloadThrowsProviderError() async throws {
+        let lines = [responsesSSELine(#"{"type":"response.failed","response":{}}"#)]
 
-        #expect(deltas.count == 2)
-        if case let .reasoningDetails(details) = deltas[0] {
-            #expect(details.count == 1)
-            if case let .object(obj) = details[0] {
-                #expect(obj["type"] == .string("reasoning"))
-            } else {
-                Issue.record("Expected object in reasoning details")
+        do {
+            _ = try await collectResponsesStreamDeltas(client: makeResponsesStreamingClient(), lines: lines)
+            Issue.record("Expected error")
+        } catch let error as AgentError {
+            guard case let .llmError(.streamFailed(.providerError(code, message, _))) = error else {
+                Issue.record("Expected providerError, got \(error)")
+                return
             }
-        } else {
-            Issue.record("Expected .reasoningDetails")
+            #expect(code == nil)
+            #expect(message == "Response failed without an error payload")
         }
     }
 
     @Test
-    func unknownOutputItemDoneIsIgnored() async throws {
+    func errorEventThrowsProviderError() async throws {
+        let lines = [responsesSSELine(#"{"type":"error","code":"server_error","message":"boom"}"#)]
+
+        do {
+            _ = try await collectResponsesStreamDeltas(client: makeResponsesStreamingClient(), lines: lines)
+            Issue.record("Expected error")
+        } catch let error as AgentError {
+            guard case let .llmError(.streamFailed(.providerError(code, message, diagnostics))) = error else {
+                Issue.record("Expected providerError, got \(error)")
+                return
+            }
+            #expect(code == "server_error")
+            #expect(message == "boom")
+            #expect(diagnostics.provider == .openAIResponses)
+        }
+    }
+
+    @Test
+    func responseErrorEventThrowsProviderError() async throws {
         let lines = [
-            responsesSSELine(
-                #"{"type":"response.output_item.done","item":{"type":"custom","id":"item_1","payload":"ignored"}}"#
-            ),
-            responsesSSELine(responsesStreamingEmptyCompletedJSON)
+            responsesSSELine(#"{"type":"response.error","error":{"code":"rate_limit","message":"slow down"}}"#),
         ]
-        let deltas = try await collectResponsesStreamDeltas(client: makeResponsesStreamingClient(), lines: lines)
 
-        #expect(deltas.count == 1)
-        if case let .finished(usage) = deltas[0] {
-            #expect(usage == TokenUsage(input: 10, output: 5))
-        } else {
-            Issue.record("Expected .finished")
+        do {
+            _ = try await collectResponsesStreamDeltas(client: makeResponsesStreamingClient(), lines: lines)
+            Issue.record("Expected error")
+        } catch let error as AgentError {
+            guard case let .llmError(.streamFailed(.providerError(code, message, _))) = error else {
+                Issue.record("Expected providerError, got \(error)")
+                return
+            }
+            #expect(code == "rate_limit")
+            #expect(message == "slow down")
         }
     }
 
     @Test
-    func unknownOutputItemDoneDoesNotBreakPersistedParity() async throws {
-        let client = makeResponsesStreamingClient()
-        let response = try await client.decodeResponse(Data(
-            #"{"id":"resp_001","status":"completed","output":[],"usage":{"input_tokens":10,"output_tokens":5}}"#
-                .utf8
-        ))
-        let blockingAssistant = await client.parseResponse(response)
-        let streamedAssistant = try await streamedAssistantMessage(
-            client: client,
-            lines: [
-                responsesSSELine(
-                    #"{"type":"response.output_item.done","item":{"type":"custom","id":"item_1","payload":"ignored"}}"#
-                ),
-                responsesSSELine(responsesStreamingEmptyCompletedJSON),
-            ]
+    func incompleteEventCompletesWithPartialOutput() async throws {
+        let incompleteJSON = #"{"type":"response.incomplete","response":{"id":"resp_inc","status":"incomplete","#
+            + #""output":[{"type":"message","id":"msg_001","status":"incomplete","#
+            + #""content":[{"type":"output_text","text":"Partial answer"}]}],"#
+            + #""usage":{"input_tokens":10,"output_tokens":5}}}"#
+        let deltas = try await collectResponsesStreamDeltas(
+            client: makeResponsesStreamingClient(),
+            lines: [responsesSSELine(incompleteJSON)]
         )
 
-        #expect(streamedAssistant.content == blockingAssistant.content)
-        #expect(streamedAssistant.toolCalls == blockingAssistant.toolCalls)
-        #expect(streamedAssistant.tokenUsage == blockingAssistant.tokenUsage)
-        #expect(streamedAssistant.reasoning == blockingAssistant.reasoning)
-        #expect(streamedAssistant.reasoningDetails == blockingAssistant.reasoningDetails)
-        #expect(streamedAssistant.continuity == blockingAssistant.continuity)
-    }
-}
-
-private func responsesSSELine(_ json: String) -> String {
-    "data: \(json.replacingOccurrences(of: "\n", with: ""))"
-}
-
-private func collectResponsesStreamDeltas(
-    client: ResponsesAPIClient,
-    lines: [String]
-) async throws -> [StreamDelta] {
-    var collected: [StreamDelta] = []
-    for element in try await collectRunStreamElements(client: client, lines: lines) {
-        guard case let .delta(delta) = element else { continue }
-        collected.append(delta)
-    }
-    return collected
-}
-
-private func streamedAssistantMessage(
-    client: ResponsesAPIClient,
-    lines: [String]
-) async throws -> AssistantMessage {
-    let elements = try await collectRunStreamElements(client: client, lines: lines)
-    let streamClient = ContinuityStreamingMockLLMClient(streamSequences: [elements])
-    let processor = StreamProcessor(
-        client: streamClient, toolDefinitions: [], policy: .chat,
-        eventFactory: StreamEventFactory(sessionID: nil, runID: nil, origin: .live)
-    )
-    let (_, continuation) = AsyncThrowingStream<StreamEvent, Error>.makeStream()
-    var totalUsage = TokenUsage()
-    var emittedOutput = false
-
-    let iteration = try await processor.process(
-        messages: [.user("Hi")],
-        totalUsage: &totalUsage,
-        emittedOutput: &emittedOutput,
-        continuation: continuation
-    )
-    return iteration.toAssistantMessage()
-}
-
-private func collectRunStreamElements(
-    client: ResponsesAPIClient,
-    lines: [String]
-) async throws -> [RunStreamElement] {
-    let result = await collectRunStreamElementsResult(client: client, lines: lines)
-    if let error = result.error {
-        throw error
-    }
-    return result.elements
-}
-
-private func collectRunStreamElementsResult(
-    client: ResponsesAPIClient,
-    lines: [String]
-) async -> (elements: [RunStreamElement], error: (any Error)?) {
-    let allBytes = lines.joined(separator: "\n\n").appending("\n\n")
-    let (byteStream, byteContinuation) = AsyncStream<UInt8>.makeStream()
-    for byte in Array(allBytes.utf8) {
-        byteContinuation.yield(byte)
-    }
-    byteContinuation.finish()
-
-    let controlled = ControlledByteStream(stream: byteStream)
-    let streamPair = AsyncThrowingStream<RunStreamElement, Error>.makeStream()
-    let task = Task {
-        do {
-            try await client.processRunStreamBytes(
-                bytes: controlled,
-                messagesCount: 0,
-                stallTimeout: nil,
-                continuation: streamPair.continuation
-            )
-        } catch {
-            streamPair.continuation.finish(throwing: error)
-        }
-    }
-
-    var elements: [RunStreamElement] = []
-    do {
-        for try await element in streamPair.stream {
-            elements.append(element)
-        }
-        _ = await task.result
-        return (elements, nil)
-    } catch {
-        _ = await task.result
-        return (elements, error)
+        #expect(deltas.contains(.content("Partial answer")))
+        #expect(deltas.contains(.finished(usage: TokenUsage(input: 10, output: 5))))
     }
 }

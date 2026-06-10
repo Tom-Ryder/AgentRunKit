@@ -802,8 +802,9 @@ struct StreamStallDetectionTests {
         do {
             try await processSSEStream(
                 bytes: controlled,
+                provider: .custom("test"),
                 stallTimeout: .milliseconds(500)
-            ) { _, _ in false }
+            ) { _, _ in .continue }
             Issue.record("Expected idle timeout error")
         } catch let error as AgentError {
             let elapsed = ContinuousClock.now - started
@@ -830,8 +831,9 @@ struct StreamStallDetectionTests {
         let task = Task {
             try await processSSEStream(
                 bytes: controlled,
+                provider: .custom("test"),
                 stallTimeout: .seconds(5)
-            ) { _, _ in false }
+            ) { _, _ in .continue }
         }
 
         try await Task.sleep(for: .milliseconds(20))
@@ -861,10 +863,11 @@ struct StreamStallDetectionTests {
 
         try await processSSEStream(
             bytes: controlled,
+            provider: .custom("test"),
             stallTimeout: .seconds(5)
         ) { event, _ in
             await counter.increment()
-            return event.data == "[DONE]"
+            return event.data == "[DONE]" ? .complete : .continue
         }
 
         let total = await counter.count
@@ -885,8 +888,9 @@ struct StreamStallDetectionTests {
         do {
             try await processSSEStream(
                 bytes: controlled,
+                provider: .custom("test"),
                 stallTimeout: nil
-            ) { _, _ in false }
+            ) { _, _ in .continue }
             Issue.record("Expected provider termination missing")
         } catch let error as AgentError {
             guard case let .llmError(.streamFailed(.providerTerminationMissing(diagnostics))) = error else {
@@ -894,6 +898,8 @@ struct StreamStallDetectionTests {
                 return
             }
             #expect(diagnostics.eventsObserved == 1)
+            #expect(diagnostics.provider == .custom("test"))
+            #expect(!diagnostics.finishSignalSeen)
         }
     }
 
@@ -911,8 +917,9 @@ struct StreamStallDetectionTests {
         do {
             try await processSSEStream(
                 bytes: controlled,
+                provider: .custom("test"),
                 stallTimeout: .seconds(5)
-            ) { _, _ in false }
+            ) { _, _ in .continue }
             Issue.record("Expected provider termination missing")
         } catch let error as AgentError {
             guard case let .llmError(.streamFailed(.providerTerminationMissing(diagnostics))) = error else {

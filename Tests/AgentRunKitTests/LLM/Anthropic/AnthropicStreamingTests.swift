@@ -175,6 +175,7 @@ struct AnthropicStreamingTests {
         do {
             try await processSSEStream(
                 bytes: controlled,
+                provider: .anthropic,
                 stallTimeout: nil
             ) { event, diagnostics in
                 try await client.handleSSEEvent(
@@ -251,12 +252,12 @@ struct AnthropicStreamingTests {
             Issue.record("Expected error")
         } catch let error as AgentError {
             guard case let .llmError(transport) = error,
-                  case let .streamFailed(.providerError(provider, code, message)) = transport
+                  case let .streamFailed(.providerError(code, message, diagnostics)) = transport
             else {
                 Issue.record("Expected providerError, got \(error)")
                 return
             }
-            #expect(provider == .anthropic)
+            #expect(diagnostics.provider == .anthropic)
             #expect(code == "overloaded_error")
             #expect(message == "Overloaded")
         }
@@ -617,7 +618,7 @@ struct AnthropicStreamingContinuityTests {
             "usage": {"input_tokens": 100, "output_tokens": 50}
         }
         """
-        let blockingMsg = try client.parseResponse(Data(blockingJSON.utf8))
+        let blockingMsg = try client.parseResponse(Data(blockingJSON.utf8), provider: .anthropic)
 
         let toolStart = #"{"type":"content_block_start","index":2,"content_block":"#
             + #"{"type":"tool_use","id":"toolu_1","name":"search"}}"#
@@ -667,7 +668,7 @@ struct AnthropicStreamingContinuityTests {
             "usage": {"input_tokens": 30, "output_tokens": 10}
         }
         """
-        let blockingMsg = try client.parseResponse(Data(blockingJSON.utf8))
+        let blockingMsg = try client.parseResponse(Data(blockingJSON.utf8), provider: .anthropic)
 
         let toolStart = #"{"type":"content_block_start","index":0,"content_block":"#
             + #"{"type":"tool_use","id":"toolu_e","name":"get_time"}}"#
@@ -693,6 +694,7 @@ extension AnthropicClient {
         let state = AnthropicStreamState()
         try await processSSEStream(
             bytes: byteStream,
+            provider: providerIdentifier,
             stallTimeout: nil
         ) { event, diagnostics in
             try await self.handleSSEEvent(
@@ -709,6 +711,7 @@ extension AnthropicClient {
         let state = AnthropicStreamState()
         try await processSSEStream(
             bytes: byteStream,
+            provider: providerIdentifier,
             stallTimeout: nil
         ) { event, diagnostics in
             try await self.handleSSEEvent(

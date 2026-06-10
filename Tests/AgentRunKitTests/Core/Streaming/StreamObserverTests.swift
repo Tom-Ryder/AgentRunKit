@@ -184,6 +184,42 @@ struct StreamObserverTests {
         }
         #expect(recorder.completions.count == 1)
         #expect(diagnostics.eventsObserved == 6)
+        #expect(diagnostics.terminalMarkerSeen)
+    }
+
+    @Test
+    func eofInferredCompletionObservesSuccessWithoutTerminalMarker() async throws {
+        let recorder = StreamObserverRecorder()
+        let client = ObserverScriptedClient(streamSteps: [.deltas([
+            .content("hello"),
+            .finished(usage: nil),
+            .streamClosed(terminalMarkerSeen: false),
+        ])])
+        let processor = StreamProcessor(
+            client: client,
+            toolDefinitions: [],
+            policy: .chat,
+            eventFactory: observerFactory
+        )
+        let (_, continuation) = AsyncThrowingStream<StreamEvent, Error>.makeStream()
+        var totalUsage = TokenUsage()
+        var emittedOutput = false
+
+        _ = try await processor.process(
+            messages: [.user("Hi")],
+            totalUsage: &totalUsage,
+            emittedOutput: &emittedOutput,
+            continuation: continuation,
+            requestContext: recorder.requestContext
+        )
+
+        #expect(recorder.events.map(\.kind) == [.delta("hello")])
+        guard case let .success(diagnostics) = try #require(recorder.completions.first) else {
+            Issue.record("Expected success completion")
+            return
+        }
+        #expect(!diagnostics.terminalMarkerSeen)
+        #expect(diagnostics.eventsObserved == 1)
     }
 
     @Test
@@ -193,7 +229,7 @@ struct StreamObserverTests {
             .providerTerminationMissing(diagnostics: .empty),
             .finishedDeltaMissing(diagnostics: .empty),
             .midStreamTransportFailure(code: .timedOut, diagnostics: .empty),
-            .providerError(provider: .anthropic, code: "overloaded_error", message: "Overloaded"),
+            .providerError(code: "overloaded_error", message: "Overloaded", diagnostics: .empty),
             .malformedStream(reason: .finalizedSemanticStateDiverged, diagnostics: .empty),
         ]
 
@@ -386,9 +422,9 @@ struct StreamObserverTests {
     func reactiveRetryObservesOneFailureAndOneSuccess() async throws {
         let recorder = StreamObserverRecorder()
         let promptTooLong = StreamFailure.providerError(
-            provider: .anthropic,
             code: "invalid_request_error",
-            message: "prompt is too long: 200001 tokens > 200000 maximum"
+            message: "prompt is too long: 200001 tokens > 200000 maximum",
+            diagnostics: .empty
         )
         let finishDeltas: [StreamDelta] = [
             .toolCallStart(index: 0, id: "call_1", name: "finish", kind: .function),

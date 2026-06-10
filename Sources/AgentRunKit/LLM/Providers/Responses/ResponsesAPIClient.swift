@@ -243,11 +243,13 @@ extension ResponsesAPIClient {
 
     func checkResponseError(_ response: ResponsesAPIResponse) throws {
         if let error = response.error {
-            throw AgentError.llmError(
-                .other("\(error.code): \(error.message)")
-            )
+            throw AgentError.llmError(.providerError(
+                provider: providerIdentifier,
+                code: error.code,
+                message: error.message
+            ))
         }
-        if let status = response.status, status != "completed" {
+        if let status = response.status, status != "completed", status != "incomplete" {
             throw AgentError.llmError(.other("Unexpected Responses status: \(status)"))
         }
     }

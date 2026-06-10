@@ -18,9 +18,9 @@ struct GeminiStreamingTests {
         let streamPair = AsyncThrowingStream<StreamDelta, Error>.makeStream()
         let byteStream = makeByteStream(from: sseLines)
 
-        try await processSSEStream(bytes: byteStream, stallTimeout: nil) { event, _ in
+        try await processSSEStream(bytes: byteStream, provider: .gemini, stallTimeout: nil) { event, diagnostics in
             try await geminiClient.handleSSEEvent(
-                event, state: state, continuation: streamPair.continuation
+                event, state: state, diagnostics: diagnostics, continuation: streamPair.continuation
             )
         }
         streamPair.continuation.finish()
@@ -86,8 +86,12 @@ struct GeminiStreamingTests {
         let state = GeminiStreamState()
         let streamPair = AsyncThrowingStream<StreamDelta, Error>.makeStream()
 
-        try await processSSEStream(bytes: ControlledByteStream(stream: byteStream), stallTimeout: nil) { event, _ in
-            try await client.handleSSEEvent(event, state: state, continuation: streamPair.continuation)
+        try await processSSEStream(
+            bytes: ControlledByteStream(stream: byteStream), provider: .gemini, stallTimeout: nil
+        ) { event, diagnostics in
+            try await client.handleSSEEvent(
+                event, state: state, diagnostics: diagnostics, continuation: streamPair.continuation
+            )
         }
         streamPair.continuation.finish()
 
@@ -373,18 +377,22 @@ struct GeminiStreamingTests {
         let continuation = AsyncThrowingStream<StreamDelta, Error>.makeStream()
 
         do {
-            try await processSSEStream(bytes: makeByteStream(from: lines), stallTimeout: nil) { event, _ in
-                try await client.handleSSEEvent(event, state: state, continuation: continuation.continuation)
+            try await processSSEStream(
+                bytes: makeByteStream(from: lines), provider: .gemini, stallTimeout: nil
+            ) { event, diagnostics in
+                try await client.handleSSEEvent(
+                    event, state: state, diagnostics: diagnostics, continuation: continuation.continuation
+                )
             }
             Issue.record("Expected error")
         } catch let error as AgentError {
             guard case let .llmError(transport) = error,
-                  case let .streamFailed(.providerError(provider, code, message)) = transport
+                  case let .streamFailed(.providerError(code, message, diagnostics)) = transport
             else {
                 Issue.record("Expected provider error, got \(error)")
                 return
             }
-            #expect(provider == .gemini)
+            #expect(diagnostics.provider == .gemini)
             #expect(code == "RESOURCE_EXHAUSTED")
             #expect(message == "Rate limit exceeded")
         }

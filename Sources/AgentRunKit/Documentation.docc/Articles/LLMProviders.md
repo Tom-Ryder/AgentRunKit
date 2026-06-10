@@ -217,9 +217,22 @@ All clients accept a ``RetryPolicy`` controlling retry behavior on transient fai
 | `maxAttempts` | 3 | Total attempts before failing |
 | `baseDelay` | 1 second | Initial backoff duration |
 | `maxDelay` | 30 seconds | Cap on exponential backoff |
-| `streamStallTimeout` | nil | Restarts a stream if no delta arrives within this duration |
+| `streamStallTimeout` | nil | Fails a stream with ``StreamFailure/idleTimeout(diagnostics:)`` when no bytes arrive within this duration |
 
 Two static presets: `.default` (3 attempts, 1s base, 30s max) and `.none` (single attempt, no retries).
+
+Retries apply before a stream starts; once a 2xx byte stream is open, failures propagate to the caller as typed ``StreamFailure`` values rather than being retried.
+
+## Stream Termination
+
+Each streaming transport defines exactly which wire conditions end a stream successfully; anything else throws a typed ``StreamFailure``.
+
+- OpenAI-compatible Chat Completions: a `data: [DONE]` sentinel completes the stream immediately. A terminal non-`error` `finish_reason` also marks the turn complete, so a stream that ends at EOF after one is a successful completion (reported through ``StreamCompletionDiagnostics/terminalMarkerSeen``). Frames carrying a top-level `error` payload, or `finish_reason: "error"`, throw ``StreamFailure/providerError(code:message:diagnostics:)`` with the upstream code and message preserved. EOF with no finish signal throws ``StreamFailure/providerTerminationMissing(diagnostics:)``, and a `[DONE]` with no preceding finish signal throws ``StreamFailure/finishedDeltaMissing(diagnostics:)``.
+- Anthropic (and Vertex Anthropic): `message_stop` completes the stream; `error` events throw ``StreamFailure/providerError(code:message:diagnostics:)``; EOF before `message_stop` throws ``StreamFailure/providerTerminationMissing(diagnostics:)``.
+- Gemini (and Vertex Gemini): a chunk with `finishReason` completes the stream; error envelopes throw ``StreamFailure/providerError(code:message:diagnostics:)``.
+- Responses API: `response.completed` and `response.incomplete` complete the stream; `response.failed`, `response.error`, and standalone `error` events throw ``StreamFailure/providerError(code:message:diagnostics:)``.
+
+Every failure carries ``StreamFailureDiagnostics`` identifying the provider, elapsed time, events observed, and whether a finish signal had been seen before the failure.
 
 ```swift
 let client = OpenAIClient(

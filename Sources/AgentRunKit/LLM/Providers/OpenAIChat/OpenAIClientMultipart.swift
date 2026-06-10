@@ -125,6 +125,101 @@ struct MultipartFormData {
     }
 }
 
+extension OpenAIClient {
+    func buildTranscriptionURLRequest(
+        audio: Data,
+        format: TranscriptionAudioFormat,
+        model: String,
+        options: TranscriptionOptions,
+        boundary: String,
+        apiKey: String
+    ) -> URLRequest {
+        var formData = MultipartFormData(boundary: boundary)
+        formData.addField(name: "model", value: model)
+        if let language = options.language {
+            formData.addField(name: "language", value: language)
+        }
+        if let prompt = options.prompt {
+            formData.addField(name: "prompt", value: prompt)
+        }
+        if let temperature = options.temperature {
+            formData.addField(name: "temperature", value: String(temperature))
+        }
+        formData.addFile(
+            name: "file",
+            filename: "audio.\(format.fileExtension)",
+            mimeType: format.mimeType,
+            data: audio
+        )
+
+        let url = baseURL.appendingPathComponent("audio/transcriptions")
+        var urlRequest = URLRequest(url: url)
+        urlRequest.httpMethod = "POST"
+        urlRequest.setValue(formData.contentType, forHTTPHeaderField: "Content-Type")
+        urlRequest.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+        for (field, value) in additionalHeaders() {
+            urlRequest.setValue(value, forHTTPHeaderField: field)
+        }
+        urlRequest.httpBody = formData.encoded()
+        return urlRequest
+    }
+
+    func buildTranscriptionURLRequest(
+        audioFileURL: URL,
+        format: TranscriptionAudioFormat,
+        model: String,
+        options: TranscriptionOptions,
+        boundary: String,
+        apiKey: String
+    ) throws -> (URLRequest, URL) {
+        var formData = MultipartFormData(boundary: boundary)
+        formData.addField(name: "model", value: model)
+        if let language = options.language {
+            formData.addField(name: "language", value: language)
+        }
+        if let prompt = options.prompt {
+            formData.addField(name: "prompt", value: prompt)
+        }
+        if let temperature = options.temperature {
+            formData.addField(name: "temperature", value: String(temperature))
+        }
+        formData.addFile(
+            name: "file",
+            filename: "audio.\(format.fileExtension)",
+            mimeType: format.mimeType,
+            fileURL: audioFileURL
+        )
+
+        let url = baseURL.appendingPathComponent("audio/transcriptions")
+        var urlRequest = URLRequest(url: url)
+        urlRequest.httpMethod = "POST"
+        urlRequest.setValue(formData.contentType, forHTTPHeaderField: "Content-Type")
+        urlRequest.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+        for (field, value) in additionalHeaders() {
+            urlRequest.setValue(value, forHTTPHeaderField: field)
+        }
+
+        let contentLength: Int
+        do {
+            contentLength = try formData.contentLength()
+        } catch {
+            throw AgentError.llmError(.encodingFailed(error))
+        }
+        urlRequest.setValue(String(contentLength), forHTTPHeaderField: "Content-Length")
+
+        let bodyURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("swiftagent-upload-\(UUID().uuidString)")
+        do {
+            try formData.write(to: bodyURL)
+        } catch {
+            try? FileManager.default.removeItem(at: bodyURL)
+            throw AgentError.llmError(.encodingFailed(error))
+        }
+
+        return (urlRequest, bodyURL)
+    }
+}
+
 private extension Data {
     mutating func appendString(_ value: String) {
         append(Data(value.utf8))

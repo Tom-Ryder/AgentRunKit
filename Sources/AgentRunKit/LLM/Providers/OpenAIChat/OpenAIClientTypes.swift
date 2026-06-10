@@ -323,7 +323,47 @@ struct CompletionTokensDetails: Decodable {
     let reasoningTokens: Int?
 }
 
+struct OpenAIErrorResponse: Decodable {
+    let error: OpenAIErrorDetail
+}
+
+struct OpenAIErrorDetail: Decodable {
+    let code: String?
+    let message: String?
+
+    var resolvedMessage: String {
+        message ?? "Provider returned an error without a message"
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case code, message
+    }
+
+    init(from decoder: any Decoder) throws {
+        if let container = try? decoder.container(keyedBy: CodingKeys.self) {
+            if let numericCode = try? container.decode(Int.self, forKey: .code) {
+                code = String(numericCode)
+            } else {
+                code = try container.decodeIfPresent(String.self, forKey: .code)
+            }
+            let decodedMessage = try container.decodeIfPresent(String.self, forKey: .message)
+            message = decodedMessage.flatMap { $0.isEmpty ? nil : $0 }
+        } else {
+            let bareMessage = try decoder.singleValueContainer().decode(String.self)
+            guard !bareMessage.isEmpty else {
+                throw DecodingError.dataCorrupted(DecodingError.Context(
+                    codingPath: decoder.codingPath,
+                    debugDescription: "error message is empty"
+                ))
+            }
+            code = nil
+            message = bareMessage
+        }
+    }
+}
+
 struct StreamingChunk: Decodable {
+    let error: OpenAIErrorDetail?
     let choices: [StreamingChoice]?
     let usage: ResponseUsage?
 }

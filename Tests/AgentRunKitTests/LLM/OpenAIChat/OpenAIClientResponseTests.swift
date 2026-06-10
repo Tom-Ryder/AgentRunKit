@@ -296,30 +296,62 @@ struct OpenAIClientResponseTests {
 
         #expect(msg.reasoning?.content == "Primary reasoning")
     }
-}
 
-struct OpenAIClientStreamingCompletionTests {
     @Test
-    func publicStreamEndingBeforeDoneThrowsStreamStalled() async throws {
-        let session = URLSession(configuration: StreamingTestURLProtocol.configuration())
-        defer { session.invalidateAndCancel() }
-        let client = try OpenAIClient(
-            apiKey: "test-key",
-            model: "test-model",
-            baseURL: #require(URL(string: "https://openai-streaming.test/v1")),
-            session: session
-        )
-        let request = try client.buildRequest(messages: [.user("Hi")], tools: [], stream: true)
-        let urlRequest = try client.buildURLRequest(request)
-        let requestURL = try #require(urlRequest.url)
-        let body = #"data: {"choices":[{"delta":{"content":"partial"},"index":0}]}"# + "\n\n"
-        StreamingTestURLProtocol.register(url: requestURL, body: Data(body.utf8))
-        defer { StreamingTestURLProtocol.unregister(url: requestURL) }
+    func errorEnvelopeResponseThrowsProviderError() throws {
+        let json = #"{"error":{"code":"server_error","message":"boom"}}"#
+        let client = OpenAIClient(apiKey: "test", model: "test", baseURL: OpenAIClient.openRouterBaseURL)
 
-        let result = await collectStreamResult(client.stream(messages: [.user("Hi")], tools: [], requestContext: nil))
+        do {
+            _ = try client.parseResponse(Data(json.utf8))
+            Issue.record("Expected providerError")
+        } catch let error as AgentError {
+            guard case let .llmError(.providerError(provider, code, message)) = error else {
+                Issue.record("Expected providerError, got \(error)")
+                return
+            }
+            #expect(provider == .openAICompatible)
+            #expect(code == "server_error")
+            #expect(message == "boom")
+        }
+    }
 
-        #expect(result.deltas == [.content("partial")])
-        assertProviderTerminationMissing(result.error)
+    @Test
+    func bareStringErrorBodyThrowsProviderError() throws {
+        let json = #"{"error":"upstream exploded"}"#
+        let client = OpenAIClient(apiKey: "test", model: "test", baseURL: OpenAIClient.openRouterBaseURL)
+
+        do {
+            _ = try client.parseResponse(Data(json.utf8))
+            Issue.record("Expected providerError")
+        } catch let error as AgentError {
+            guard case let .llmError(.providerError(provider, code, message)) = error else {
+                Issue.record("Expected providerError, got \(error)")
+                return
+            }
+            #expect(provider == .openAICompatible)
+            #expect(code == nil)
+            #expect(message == "upstream exploded")
+        }
+    }
+
+    @Test
+    func emptyMessageErrorBodyThrowsProviderError() throws {
+        let json = #"{"error":{"code":"server_error","message":""}}"#
+        let client = OpenAIClient(apiKey: "test", model: "test", baseURL: OpenAIClient.openRouterBaseURL)
+
+        do {
+            _ = try client.parseResponse(Data(json.utf8))
+            Issue.record("Expected providerError")
+        } catch let error as AgentError {
+            guard case let .llmError(.providerError(provider, code, message)) = error else {
+                Issue.record("Expected providerError, got \(error)")
+                return
+            }
+            #expect(provider == .openAICompatible)
+            #expect(code == "server_error")
+            #expect(message == "Provider returned an error without a message")
+        }
     }
 }
 
@@ -431,30 +463,7 @@ struct StreamingChunkParsingTests {
     }
 
     @Test
-    func streamingChunkWithUsageOnlyEmitsFinished() throws {
-        let json = """
-        {
-            "usage": {
-                "prompt_tokens": 100,
-                "completion_tokens": 50
-            }
-        }
-        """
-        let client = OpenAIClient(apiKey: "test", model: "test", baseURL: OpenAIClient.openRouterBaseURL)
-        let chunk = try client.parseStreamingChunk(Data(json.utf8))
-        let deltas = try client.extractDeltas(from: chunk)
-
-        #expect(deltas.count == 1)
-        if case let .finished(usage) = deltas.first {
-            #expect(usage?.input == 100)
-            #expect(usage?.output == 50)
-        } else {
-            Issue.record("Expected .finished delta with usage")
-        }
-    }
-
-    @Test
-    func streamingFinishedDeltaMapsUsageFromChunk() throws {
+    func extractDeltasYieldsNoSemanticDeltasForFinishAndUsageChunks() throws {
         let json = """
         {
             "choices": [{
@@ -463,10 +472,7 @@ struct StreamingChunkParsingTests {
             }],
             "usage": {
                 "prompt_tokens": 11,
-                "completion_tokens": 12,
-                "completion_tokens_details": {
-                    "reasoning_tokens": 5
-                }
+                "completion_tokens": 12
             }
         }
         """
@@ -474,7 +480,7 @@ struct StreamingChunkParsingTests {
         let chunk = try client.parseStreamingChunk(Data(json.utf8))
         let deltas = try client.extractDeltas(from: chunk)
 
-        #expect(deltas == [.finished(usage: TokenUsage(input: 11, output: 7, reasoning: 5))])
+        #expect(deltas.isEmpty)
     }
 }
 

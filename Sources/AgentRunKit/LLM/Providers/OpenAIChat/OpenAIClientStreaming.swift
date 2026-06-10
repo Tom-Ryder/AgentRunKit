@@ -22,38 +22,68 @@ extension OpenAIClient {
             urlRequest: urlRequest, session: session, retryPolicy: retryPolicy
         )
         onResponse?(httpResponse)
-        try await processSSEStream(
+        let state = OpenAIChatStreamState()
+        let completion = try await processSSEStream(
             bytes: bytes,
+            provider: providerIdentifier,
             stallTimeout: retryPolicy.streamStallTimeout
-        ) { [self] event, _ in
-            try handleSSEEvent(event, continuation: continuation)
+        ) { [self] event, diagnostics in
+            try await handleSSEEvent(event, state: state, diagnostics: diagnostics, continuation: continuation)
         }
+        guard completion.diagnostics.finishSignalSeen else {
+            throw AgentError.llmError(.streamFailed(.finishedDeltaMissing(
+                diagnostics: completion.diagnostics
+            )))
+        }
+        await continuation.yield(.finished(usage: state.usage))
+        continuation.yield(.streamClosed(terminalMarkerSeen: completion.terminalMarkerSeen))
         continuation.finish()
     }
 
     private func handleSSEEvent(
         _ event: SSEEvent,
+        state: OpenAIChatStreamState,
+        diagnostics: StreamFailureDiagnostics,
         continuation: AsyncThrowingStream<StreamDelta, Error>.Continuation
-    ) throws -> Bool {
-        try handleSSEPayload(event.data, continuation: continuation)
+    ) async throws -> SSEDisposition {
+        try await handleSSEPayload(event.data, state: state, diagnostics: diagnostics, continuation: continuation)
     }
 
     private func handleSSEPayload(
         _ payload: String,
+        state: OpenAIChatStreamState,
+        diagnostics: StreamFailureDiagnostics,
         continuation: AsyncThrowingStream<StreamDelta, Error>.Continuation
-    ) throws -> Bool {
+    ) async throws -> SSEDisposition {
         if payload == "[DONE]" {
-            return true
+            return .complete
         }
         let chunkData = Data(payload.utf8)
         let chunk = try parseStreamingChunk(chunkData)
+        if let error = chunk.error {
+            throw AgentError.llmError(.streamFailed(.providerError(
+                code: error.code,
+                message: error.resolvedMessage,
+                diagnostics: diagnostics
+            )))
+        }
+        if chunk.choices?.contains(where: { $0.finishReason == "error" }) == true {
+            throw AgentError.llmError(.streamFailed(.providerError(
+                code: nil,
+                message: "Stream terminated with finish_reason 'error' and no error payload",
+                diagnostics: diagnostics
+            )))
+        }
         if let details = try JSONValue.extractReasoningDetails(from: chunkData) {
             continuation.yield(.reasoningDetails(details))
         }
         for delta in try extractDeltas(from: chunk) {
             continuation.yield(delta)
         }
-        return false
+        if let usage = chunk.usage {
+            await state.recordUsage(usage.tokenUsage)
+        }
+        return chunk.choices?.contains(where: { $0.finishReason != nil }) == true ? .completeOnEOF : .continue
     }
 
     func performUploadWithRetry<T>(
@@ -126,7 +156,6 @@ extension OpenAIClient {
 
     func extractDeltas(from chunk: StreamingChunk) throws -> [StreamDelta] {
         var deltas: [StreamDelta] = []
-        var emittedFinished = false
         for choice in chunk.choices ?? [] {
             if let reasoning = choice.delta.reasoning ?? choice.delta.reasoningContent, !reasoning.isEmpty {
                 deltas.append(.reasoning(reasoning))
@@ -136,13 +165,6 @@ extension OpenAIClient {
             }
             try extractToolCallDeltas(from: choice.delta, into: &deltas)
             try extractAudioDeltas(from: choice.delta, into: &deltas)
-            if choice.finishReason != nil {
-                deltas.append(.finished(usage: chunk.usage.map(\.tokenUsage)))
-                emittedFinished = true
-            }
-        }
-        if !emittedFinished, let usage = chunk.usage {
-            deltas.append(.finished(usage: usage.tokenUsage))
         }
         return deltas
     }
@@ -194,5 +216,13 @@ extension OpenAIClient {
         if let transcript = audio.transcript, !transcript.isEmpty {
             deltas.append(.audioTranscript(transcript))
         }
+    }
+}
+
+actor OpenAIChatStreamState {
+    private(set) var usage: TokenUsage?
+
+    func recordUsage(_ usage: TokenUsage) {
+        self.usage = usage
     }
 }

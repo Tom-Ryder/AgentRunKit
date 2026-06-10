@@ -58,7 +58,7 @@ public struct GeminiClient: LLMClient, Sendable {
             urlRequest: urlRequest, session: session, retryPolicy: retryPolicy
         )
         requestContext?.onResponse?(httpResponse)
-        return try parseResponse(data)
+        return try parseResponse(data, provider: providerIdentifier)
     }
 
     public func stream(
@@ -250,9 +250,13 @@ extension GeminiClient {
         return str
     }
 
-    func parseResponse(_ data: Data) throws -> AssistantMessage {
+    func parseResponse(_ data: Data, provider: ProviderIdentifier) throws -> AssistantMessage {
         if let err = try? JSONDecoder().decode(GeminiErrorResponse.self, from: data) {
-            throw AgentError.llmError(.other("\(err.error.status): \(err.error.message)"))
+            throw AgentError.llmError(.providerError(
+                provider: provider,
+                code: err.error.status,
+                message: err.error.message
+            ))
         }
 
         let response: GeminiResponse

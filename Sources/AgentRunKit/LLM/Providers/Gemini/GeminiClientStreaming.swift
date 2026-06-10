@@ -28,10 +28,11 @@ extension GeminiClient {
 
         try await processSSEStream(
             bytes: bytes,
+            provider: providerIdentifier,
             stallTimeout: retryPolicy.streamStallTimeout
-        ) { event, _ in
+        ) { event, diagnostics in
             try await self.handleSSEEvent(
-                event, state: state, providerIdentifier: self.providerIdentifier, continuation: continuation
+                event, state: state, diagnostics: diagnostics, continuation: continuation
             )
         }
         continuation.finish()
@@ -40,28 +41,28 @@ extension GeminiClient {
     func handleSSEEvent(
         _ event: SSEEvent,
         state: GeminiStreamState,
-        providerIdentifier: ProviderIdentifier = .gemini,
+        diagnostics: StreamFailureDiagnostics,
         continuation: AsyncThrowingStream<StreamDelta, Error>.Continuation
-    ) async throws -> Bool {
+    ) async throws -> SSEDisposition {
         try await handleSSEPayload(
-            event.data, state: state, providerIdentifier: providerIdentifier, continuation: continuation
+            event.data, state: state, diagnostics: diagnostics, continuation: continuation
         )
     }
 
     private func handleSSEPayload(
         _ payload: String,
         state: GeminiStreamState,
-        providerIdentifier: ProviderIdentifier,
+        diagnostics: StreamFailureDiagnostics,
         continuation: AsyncThrowingStream<StreamDelta, Error>.Continuation
-    ) async throws -> Bool {
+    ) async throws -> SSEDisposition {
         let data = Data(payload.utf8)
 
         if let errorResponse = try? JSONDecoder().decode(GeminiErrorResponse.self, from: data) {
             throw AgentError.llmError(
                 .streamFailed(.providerError(
-                    provider: providerIdentifier,
                     code: errorResponse.error.status,
-                    message: errorResponse.error.message
+                    message: errorResponse.error.message,
+                    diagnostics: diagnostics
                 ))
             )
         }
@@ -73,7 +74,7 @@ extension GeminiClient {
             throw AgentError.llmError(.decodingFailed(error))
         }
 
-        guard let candidate = response.candidates?.first else { return false }
+        guard let candidate = response.candidates?.first else { return .continue }
 
         for part in candidate.content?.parts ?? [] {
             if let functionCall = part.functionCall {
@@ -120,10 +121,10 @@ extension GeminiClient {
             }
 
             continuation.yield(.finished(usage: response.usageMetadata?.tokenUsage))
-            return true
+            return .complete
         }
 
-        return false
+        return .continue
     }
 }
 
