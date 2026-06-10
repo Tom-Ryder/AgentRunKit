@@ -22,7 +22,7 @@ package let reservedFinishToolDefinition = ToolDefinition(
     name: "finish",
     description: """
     Call this tool when you have completed the task. Pass the final result as content. \
-    IMPORTANT: If called alongside other tools, those tools will NOT be executed.
+    IMPORTANT: finish must be the only tool call in your message. Never combine it with other tool calls.
     """,
     parametersSchema: .object(
         properties: [
