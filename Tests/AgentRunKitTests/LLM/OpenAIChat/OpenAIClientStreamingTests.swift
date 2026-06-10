@@ -92,9 +92,11 @@ struct OpenAIChatStreamingReasoningTests {
         )
         let (_, continuation) = AsyncThrowingStream<StreamEvent, Error>.makeStream()
         var totalUsage = TokenUsage()
+        var emittedOutput = false
         let iteration = try await processor.process(
             messages: [.user("Hi")],
             totalUsage: &totalUsage,
+            emittedOutput: &emittedOutput,
             continuation: continuation
         )
 

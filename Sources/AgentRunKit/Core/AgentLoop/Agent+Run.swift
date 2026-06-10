@@ -41,34 +41,25 @@ extension Agent {
         historyWasRewrittenLocally: inout Bool,
         requestContext: RequestContext?
     ) async throws -> AssistantMessage {
-        var attemptedReactiveRecovery = false
-
-        while true {
-            do {
-                let response = try await client.generateForRun(
-                    messages: messages,
-                    tools: toolDefinitions,
-                    responseFormat: nil,
-                    requestContext: requestContext,
-                    requestMode: requestMode(for: historyWasRewrittenLocally)
-                )
-                historyWasRewrittenLocally = false
-                return response
-            } catch let AgentError.llmError(transport) where transport.isPromptTooLong {
-                guard !attemptedReactiveRecovery else {
-                    throw AgentError.llmError(transport)
-                }
-                attemptedReactiveRecovery = true
-                let reactiveOutcome = try await compactor.reactiveCompact(
-                    &messages,
-                    totalUsage: &totalUsage,
-                    summaryGenerator: makeSummaryGenerator(for: historyWasRewrittenLocally)
-                )
-                guard reactiveOutcome.didRewriteHistory else {
-                    throw AgentError.llmError(transport)
-                }
-                historyWasRewrittenLocally = true
-            }
+        try await withPromptTooLongRecovery {
+            let response = try await client.generateForRun(
+                messages: messages,
+                tools: toolDefinitions,
+                responseFormat: nil,
+                requestContext: requestContext,
+                requestMode: requestMode(for: historyWasRewrittenLocally)
+            )
+            historyWasRewrittenLocally = false
+            return response
+        } recover: {
+            let reactiveOutcome = try await compactor.reactiveCompact(
+                &messages,
+                totalUsage: &totalUsage,
+                summaryGenerator: makeSummaryGenerator(for: historyWasRewrittenLocally)
+            )
+            guard reactiveOutcome.didRewriteHistory else { return false }
+            historyWasRewrittenLocally = true
+            return true
         }
     }
 

@@ -66,7 +66,7 @@ extension Agent {
         approvalHandler: ToolApprovalHandler? = nil, allowlist: inout Set<String>
     ) async throws -> [IndexedToolResult] {
         guard !calls.isEmpty else { return [] }
-        let executionContext = context.withParentHistory(messages.resolvedPrefixForInheritance())
+        let executionContext = try context.withParentHistory(messages.resolvedPrefixForInheritance())
 
         guard let handler = approvalHandler, configuration.approvalPolicy != .none else {
             return try await executeIndexedCalls(
@@ -100,7 +100,7 @@ extension Agent {
         allowlist: inout Set<String>
     ) async throws -> [IndexedToolResult] {
         guard !calls.isEmpty else { return [] }
-        let executionContext = context.withParentHistory(messages.resolvedPrefixForInheritance())
+        let executionContext = try context.withParentHistory(messages.resolvedPrefixForInheritance())
         let approvalHandler = options.approvalHandler
         let emit = StreamEmitter(factory: options.eventFactory, continuation: continuation)
 

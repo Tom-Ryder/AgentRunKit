@@ -69,13 +69,17 @@ struct ChatTimeoutTests {
                 return NoopOutput()
             }
         )
-        let childClient = MockLLMClient(responses: [
-            AssistantMessage(content: "", toolCalls: [ToolCall(id: "c0", name: "delay", arguments: "{}")]),
-            AssistantMessage(
-                content: "",
-                toolCalls: [ToolCall(id: "c1", name: "finish", arguments: #"{"content": "child done"}"#)]
-            ),
-        ])
+        let childDeltas1: [StreamDelta] = [
+            .toolCallStart(index: 0, id: "c0", name: "delay", kind: .function),
+            .toolCallDelta(index: 0, arguments: "{}"),
+            .finished(usage: nil),
+        ]
+        let childDeltas2: [StreamDelta] = [
+            .toolCallStart(index: 0, id: "c1", name: "finish", kind: .function),
+            .toolCallDelta(index: 0, arguments: #"{"content": "child done"}"#),
+            .finished(usage: nil),
+        ]
+        let childClient = StreamingMockLLMClient(streamSequences: [childDeltas1, childDeltas2])
         let childAgent = Agent<SubAgentContext<EmptyContext>>(client: childClient, tools: [delayTool])
 
         let slowSub = try SubAgentTool<EchoParams, EmptyContext>(

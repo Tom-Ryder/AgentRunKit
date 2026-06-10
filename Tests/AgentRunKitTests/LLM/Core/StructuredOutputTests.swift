@@ -112,6 +112,7 @@ struct ChatCompletionRequestResponseFormatTests {
 actor StructuredOutputMockLLMClient: LLMClient {
     nonisolated let providerIdentifier: ProviderIdentifier = .custom("StructuredOutputMockLLMClient")
     private let jsonContent: String
+    private(set) var capturedTools: [[ToolDefinition]] = []
 
     init(jsonContent: String) {
         self.jsonContent = jsonContent
@@ -119,11 +120,12 @@ actor StructuredOutputMockLLMClient: LLMClient {
 
     func generate(
         messages _: [ChatMessage],
-        tools _: [ToolDefinition],
+        tools: [ToolDefinition],
         responseFormat _: ResponseFormat?,
         requestContext _: RequestContext?
     ) async throws -> AssistantMessage {
-        AssistantMessage(content: jsonContent)
+        capturedTools.append(tools)
+        return AssistantMessage(content: jsonContent)
     }
 
     nonisolated func stream(
@@ -134,6 +136,14 @@ actor StructuredOutputMockLLMClient: LLMClient {
         AsyncThrowingStream { $0.finish() }
     }
 }
+
+private struct NoopParams: Codable, SchemaProviding {
+    static var jsonSchema: JSONSchema {
+        .object(properties: [:], required: [])
+    }
+}
+
+private struct NoopOutput: Codable {}
 
 struct ChatStructuredOutputTests {
     @Test
@@ -146,6 +156,23 @@ struct ChatStructuredOutputTests {
         #expect(result.name == "test")
         #expect(result.count == 42)
         #expect(history.count == 2)
+    }
+
+    @Test
+    func structuredSendSuppressesTools() async throws {
+        let client = StructuredOutputMockLLMClient(jsonContent: "{\"name\":\"test\",\"count\":42}")
+        let noopTool = try Tool<NoopParams, NoopOutput, EmptyContext>(
+            name: "noop",
+            description: "Does nothing",
+            executor: { _, _ in NoopOutput() }
+        )
+        let chat = Chat<EmptyContext>(client: client, tools: [noopTool])
+
+        _ = try await chat.send("Extract", returning: TestStructuredOutput.self)
+
+        let capturedTools = await client.capturedTools
+        #expect(capturedTools.count == 1)
+        #expect(capturedTools[0].isEmpty)
     }
 
     @Test

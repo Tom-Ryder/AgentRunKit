@@ -92,7 +92,7 @@ When a sub-agent executes, ``SubAgentTool`` calls `descending()` to increment th
 
 **System prompt override.** `systemPromptBuilder` receives the decoded `P` and returns a system prompt that replaces the child agent's configured prompt for that invocation. Use this to specialize the child based on the parent's request.
 
-**Parent message inheritance.** When `inheritParentMessages` is `true`, the parent's conversation history (excluding system messages) is forwarded to the child. This gives the child agent conversational context without re-prompting.
+**Parent message inheritance.** When `inheritParentMessages` is `true`, the parent's conversation history (excluding system messages) is forwarded to the child. This gives the child agent conversational context without re-prompting. Inheritance works under both entry points: ``Agent`` and ``Chat`` each snapshot their history up to the last resolved tool-call boundary before dispatching the child. A ``Chat`` parent may legally define its own tool named `finish`; an inherited prefix containing non-exclusive `finish` calls fails the child agent's stricter history validation and surfaces as a tool-error result on the sub-agent call.
 
 **Tool timeout.** `toolTimeout` overrides the parent agent's default tool timeout for this sub-agent invocation. `nil` (the default) inherits the parent's ``AgentConfiguration/toolTimeout``.
 
@@ -100,7 +100,7 @@ When a sub-agent executes, ``SubAgentTool`` calls `descending()` to increment th
 
 ## Streaming Propagation
 
-When the parent agent streams via `stream()`, sub-agent events propagate through the hierarchy as ``StreamEvent`` cases:
+When the parent streams, whether through ``Agent`` or ``Chat``, sub-agent events propagate through the hierarchy as ``StreamEvent`` cases:
 
 | Event | When |
 |---|---|
@@ -109,6 +109,8 @@ When the parent agent streams via `stream()`, sub-agent events propagate through
 | ``StreamEvent/Kind/subAgentCompleted(toolCallId:toolName:result:)`` | Child agent finishes |
 
 The `subAgentEvent` case is `indirect`, so a three-level hierarchy produces nested events: the grandchild's deltas appear wrapped twice. The nested child event preserves its own envelope metadata, including its own `id` and `timestamp`. See <doc:StreamingAndSwiftUI> for consuming these events in SwiftUI.
+
+Under ``Chat``, the wrapping envelopes follow Chat's identity contract: `subAgentStarted`, `subAgentEvent`, and `subAgentCompleted` carry nil ``StreamEvent/sessionID`` and ``StreamEvent/runID``, while each nested child event carries the child's own minted session identity.
 
 ## Error Propagation
 

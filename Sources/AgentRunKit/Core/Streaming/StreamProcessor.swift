@@ -258,24 +258,6 @@ struct StreamProcessor {
     func process(
         messages: [ChatMessage],
         totalUsage: inout TokenUsage,
-        continuation: AsyncThrowingStream<StreamEvent, Error>.Continuation,
-        requestContext: RequestContext? = nil,
-        requestMode: RunRequestMode = .auto
-    ) async throws -> StreamIteration {
-        var emittedOutput = false
-        return try await process(
-            messages: messages,
-            totalUsage: &totalUsage,
-            emittedOutput: &emittedOutput,
-            continuation: continuation,
-            requestContext: requestContext,
-            requestMode: requestMode
-        )
-    }
-
-    func process(
-        messages: [ChatMessage],
-        totalUsage: inout TokenUsage,
         emittedOutput: inout Bool,
         continuation: AsyncThrowingStream<StreamEvent, Error>.Continuation,
         requestContext: RequestContext? = nil,

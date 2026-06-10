@@ -185,10 +185,12 @@ struct StreamProcessorToolCallAccumulationTests {
         let processor = StreamProcessor(client: client, toolDefinitions: [], policy: .chat, eventFactory: testFactory)
         let (_, eventContinuation) = AsyncThrowingStream<StreamEvent, Error>.makeStream()
         var totalUsage = TokenUsage()
+        var emittedOutput = false
 
         let iteration = try await processor.process(
             messages: [.user("Hi")],
             totalUsage: &totalUsage,
+            emittedOutput: &emittedOutput,
             continuation: eventContinuation
         )
 
@@ -217,10 +219,12 @@ struct StreamProcessorContinuityTests {
         let processor = StreamProcessor(client: client, toolDefinitions: [], policy: .chat, eventFactory: testFactory)
         let (_, eventContinuation) = AsyncThrowingStream<StreamEvent, Error>.makeStream()
         var totalUsage = TokenUsage()
+        var emittedOutput = false
 
         let iteration = try await processor.process(
             messages: [.user("Hi")],
             totalUsage: &totalUsage,
+            emittedOutput: &emittedOutput,
             continuation: eventContinuation
         )
 
@@ -236,10 +240,12 @@ struct StreamProcessorContinuityTests {
         let processor = StreamProcessor(client: client, toolDefinitions: [], policy: .chat, eventFactory: testFactory)
         let (_, eventContinuation) = AsyncThrowingStream<StreamEvent, Error>.makeStream()
         var totalUsage = TokenUsage()
+        var emittedOutput = false
 
         let iteration = try await processor.process(
             messages: [.user("Hi")],
             totalUsage: &totalUsage,
+            emittedOutput: &emittedOutput,
             continuation: eventContinuation
         )
 
@@ -263,11 +269,13 @@ struct StreamProcessorContinuityTests {
         let processor = StreamProcessor(client: client, toolDefinitions: [], policy: .chat, eventFactory: testFactory)
         let (_, eventContinuation) = AsyncThrowingStream<StreamEvent, Error>.makeStream()
         var totalUsage = TokenUsage()
+        var emittedOutput = false
 
         do {
             _ = try await processor.process(
                 messages: [.user("Hi")],
                 totalUsage: &totalUsage,
+                emittedOutput: &emittedOutput,
                 continuation: eventContinuation
             )
             Issue.record("Expected conflicting assistant continuity")

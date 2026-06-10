@@ -121,3 +121,39 @@ func awaitApprovalDecision(
         }
     }
 }
+
+enum ApprovalOutcome {
+    case approved(ToolCall)
+    case denied(ToolResult)
+}
+
+func resolveApproval(
+    for call: ToolCall,
+    toolDescription: String,
+    handler: @escaping ToolApprovalHandler,
+    allowlist: inout Set<String>,
+    emit: StreamEmitter?
+) async throws -> ApprovalOutcome {
+    let request = ToolApprovalRequest(
+        toolCallId: call.id,
+        toolName: call.name,
+        arguments: call.arguments,
+        toolDescription: toolDescription
+    )
+    emit?.yield(.toolApprovalRequested(request))
+    let decision = try await awaitApprovalDecision(for: request, using: handler)
+    emit?.yield(.toolApprovalResolved(toolCallId: call.id, decision: decision))
+    try Task.checkCancellation()
+
+    switch decision {
+    case .approve:
+        return .approved(call)
+    case .approveAlways:
+        allowlist.insert(call.name)
+        return .approved(call)
+    case let .approveWithModifiedArguments(newArgs):
+        return .approved(ToolCall(id: call.id, name: call.name, arguments: newArgs, kind: call.kind))
+    case let .deny(reason):
+        return .denied(.error(reason ?? ToolFeedback.denied))
+    }
+}

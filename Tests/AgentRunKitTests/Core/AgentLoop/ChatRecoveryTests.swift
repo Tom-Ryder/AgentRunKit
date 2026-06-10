@@ -40,6 +40,10 @@ private actor ChatRecoveryMockClient: LLMClient {
         }
     }
 
+    var streamRequestCount: Int {
+        streamIndex
+    }
+
     func nextStreamStep() -> StreamStep {
         let step = streamIndex < streamSteps.count ? streamSteps[streamIndex] : .deltas([])
         streamIndex += 1
@@ -156,6 +160,12 @@ struct ChatStreamRecoveryTests {
         }
 
         #expect(events.contains { $0.kind == .delta("recovered") })
+        guard case let .finished(_, _, _, finalHistory) = events.last?.kind else {
+            Issue.record("Expected finished event")
+            return
+        }
+        #expect(finalHistory.count == 3)
+        #expect(finalHistory.first == .assistant(AssistantMessage(content: "another")))
     }
 
     @Test
@@ -168,6 +178,29 @@ struct ChatStreamRecoveryTests {
         await #expect(throws: AgentError.self) {
             for try await _ in chat.stream("Go", context: EmptyContext()) {}
         }
+    }
+
+    @Test
+    func streamNoRetryAfterOutputEmittedEvenWhenHistoryIsReducible() async throws {
+        let client = ChatRecoveryMockClient(streamSteps: [
+            .deltasThenError([.content("partial")], promptTooLongError),
+            .deltas([
+                .content("recovered"),
+                .finished(usage: TokenUsage(input: 10, output: 5)),
+            ]),
+        ])
+        let chat = Chat<EmptyContext>(client: client)
+        let history: [ChatMessage] = [
+            .user("old"),
+            .assistant(AssistantMessage(content: "reply")),
+            .user("more"),
+            .assistant(AssistantMessage(content: "another")),
+        ]
+
+        await #expect(throws: promptTooLongError) {
+            for try await _ in chat.stream("Go", history: history, context: EmptyContext()) {}
+        }
+        #expect(await client.streamRequestCount == 1)
     }
 
     @Test

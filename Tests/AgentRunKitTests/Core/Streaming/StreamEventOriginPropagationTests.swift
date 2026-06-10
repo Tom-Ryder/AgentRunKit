@@ -70,13 +70,7 @@ struct StreamEventOriginPropagationTests {
             origin: .replayed(from: checkpointID),
             kind: .subAgentEvent(toolCallId: "tc", toolName: "delegate", event: nested)
         )
-        let configuration = AgentConfiguration(historyEmissionDepthLimit: 0)
-        let agent = Agent<EmptyContext>(
-            client: StreamingMockLLMClient(streamSequences: []),
-            tools: [],
-            configuration: configuration
-        )
-        let processed = agent.applyHistoryEmissionLimitToSubAgentEvent(outer, parentDepth: 0)
+        let processed = applyHistoryEmissionLimitToSubAgentEvent(outer, parentDepth: 0, limit: 0)
         #expect(processed.origin == .replayed(from: checkpointID))
         if case let .subAgentEvent(_, _, rewrittenNested) = processed.kind {
             #expect(rewrittenNested.origin == .replayed(from: checkpointID))

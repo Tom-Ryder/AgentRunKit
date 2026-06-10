@@ -42,6 +42,10 @@ private actor ErrorInjectingStreamClient: LLMClient {
         return generateResponses[generateIndex]
     }
 
+    var streamRequestCount: Int {
+        stepIndex
+    }
+
     func nextStep() -> StreamStep {
         let step = stepIndex < steps.count ? steps[stepIndex] : .deltas([])
         stepIndex += 1
@@ -133,6 +137,42 @@ struct AgentStreamingRecoveryTests {
         await #expect(throws: AgentError.self) {
             for try await _ in agent.stream(userMessage: "Go", context: EmptyContext()) {}
         }
+    }
+
+    @Test
+    func streamingNoRetryAfterOutputEmittedEvenWhenRecoveryIsAvailable() async throws {
+        let finishDeltas: [StreamDelta] = [
+            .toolCallStart(index: 0, id: "call_1", name: "finish", kind: .function),
+            .toolCallDelta(index: 0, arguments: #"{"content":"recovered"}"#),
+            .finished(usage: TokenUsage(input: 10, output: 5)),
+        ]
+        let summaryResponse = AssistantMessage(
+            content: "Summary of earlier work",
+            tokenUsage: TokenUsage(input: 20, output: 10)
+        )
+        let client = ErrorInjectingStreamClient(
+            steps: [.deltasThenError([.content("partial")], promptTooLongError), .deltas(finishDeltas)],
+            generateResponses: [summaryResponse],
+            contextWindowSize: 1000
+        )
+        let agent = Agent<EmptyContext>(
+            client: client,
+            tools: [],
+            configuration: AgentConfiguration(compactionThreshold: 0.5)
+        )
+        let history: [ChatMessage] = [
+            .user("earlier"),
+            .assistant(AssistantMessage(content: "reply")),
+            .user("more"),
+            .assistant(AssistantMessage(content: "another")),
+        ]
+
+        await #expect(throws: promptTooLongError) {
+            for try await _ in agent.stream(
+                userMessage: "Go", history: history, context: EmptyContext()
+            ) {}
+        }
+        #expect(await client.streamRequestCount == 1)
     }
 
     @Test

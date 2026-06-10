@@ -417,6 +417,59 @@ actor ControllableStreamingMockLLMClient: LLMClient {
     }
 }
 
+func containsNestedApprovalRequested(_ events: [StreamEvent], toolName: String) -> Bool {
+    events.contains { event in
+        if case let .subAgentEvent(_, innerToolName, innerEvent) = event.kind,
+           innerToolName == toolName,
+           case .toolApprovalRequested = innerEvent.kind {
+            return true
+        }
+        return false
+    }
+}
+
+func containsNestedApprovalResolved(_ events: [StreamEvent], toolName: String) -> Bool {
+    events.contains { event in
+        if case let .subAgentEvent(_, innerToolName, innerEvent) = event.kind,
+           innerToolName == toolName,
+           case .toolApprovalResolved = innerEvent.kind {
+            return true
+        }
+        return false
+    }
+}
+
+struct BlockingSubAgentTool: AnyTool, SubAgentExecutableTool {
+    typealias Context = SubAgentContext<EmptyContext>
+
+    let name = "blocking"
+    let description = "Blocks until cancelled"
+    let parametersSchema: JSONSchema = .object(properties: ["query": .string()], required: ["query"])
+
+    func execute(arguments _: Data, context _: Context) async throws -> ToolResult {
+        throw AgentError.toolExecutionFailed(tool: name, message: "ordinary execute path used")
+    }
+
+    func executeSubAgent(
+        arguments _: Data,
+        context _: Context,
+        approvalHandler _: ToolApprovalHandler?
+    ) async throws -> ToolResult {
+        throw AgentError.toolExecutionFailed(tool: name, message: "non-streaming sub-agent path used")
+    }
+
+    func executeSubAgentStreaming(
+        arguments _: Data,
+        context _: Context,
+        parentSessionID _: SessionID?,
+        eventHandler _: @Sendable (StreamEvent) -> Void,
+        approvalHandler _: ToolApprovalHandler?
+    ) async throws -> ToolResult {
+        try await Task.sleep(for: .seconds(60))
+        return .error("streaming path completed without cancellation")
+    }
+}
+
 struct MultipartTestPart {
     let headers: [String: String]
     let body: String

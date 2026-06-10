@@ -75,36 +75,28 @@ extension Agent {
         continuation: AsyncThrowingStream<StreamEvent, Error>.Continuation,
         options: InvocationOptions
     ) async throws -> StreamIteration {
-        var attemptedReactiveRecovery = false
-
-        while true {
-            var emittedOutput = false
-            do {
-                let iteration = try await processor.process(
-                    messages: messages,
-                    totalUsage: &totalUsage,
-                    emittedOutput: &emittedOutput,
-                    continuation: continuation,
-                    requestContext: options.requestContext,
-                    requestMode: requestMode(for: historyWasRewrittenLocally)
-                )
-                historyWasRewrittenLocally = false
-                return iteration
-            } catch let AgentError.llmError(transport) where transport.isPromptTooLong {
-                guard !emittedOutput, !attemptedReactiveRecovery else {
-                    throw AgentError.llmError(transport)
-                }
-                attemptedReactiveRecovery = true
-                let reactiveOutcome = try await compactor.reactiveCompact(
-                    &messages,
-                    totalUsage: &totalUsage,
-                    summaryGenerator: makeSummaryGenerator(for: historyWasRewrittenLocally)
-                )
-                guard reactiveOutcome.didRewriteHistory else {
-                    throw AgentError.llmError(transport)
-                }
-                historyWasRewrittenLocally = true
-            }
+        var emittedOutput = false
+        return try await withPromptTooLongRecovery {
+            let iteration = try await processor.process(
+                messages: messages,
+                totalUsage: &totalUsage,
+                emittedOutput: &emittedOutput,
+                continuation: continuation,
+                requestContext: options.requestContext,
+                requestMode: requestMode(for: historyWasRewrittenLocally)
+            )
+            historyWasRewrittenLocally = false
+            return iteration
+        } recover: {
+            guard !emittedOutput else { return false }
+            let reactiveOutcome = try await compactor.reactiveCompact(
+                &messages,
+                totalUsage: &totalUsage,
+                summaryGenerator: makeSummaryGenerator(for: historyWasRewrittenLocally)
+            )
+            guard reactiveOutcome.didRewriteHistory else { return false }
+            historyWasRewrittenLocally = true
+            return true
         }
     }
 }

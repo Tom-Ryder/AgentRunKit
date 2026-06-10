@@ -75,7 +75,7 @@ Every event includes:
 | ``StreamEvent/origin`` | ``EventOrigin/live`` or ``EventOrigin/replayed(from:)`` (set on resume) |
 | ``StreamEvent/kind`` | The semantic payload |
 
-Pass `sessionID:` to ``Agent/stream(userMessage:history:context:tokenBudget:requestContext:approvalHandler:sessionID:checkpointer:)-(String,_,_,_,_,_,_,_)`` to thread an explicit session through events; otherwise a fresh ``SessionID`` is minted per stream. ``Chat`` continues to leave identity envelope fields unset.
+Pass `sessionID:` to ``Agent/stream(userMessage:history:context:tokenBudget:requestContext:approvalHandler:sessionID:checkpointer:)-(String,_,_,_,_,_,_,_)`` to thread an explicit session through events; otherwise a fresh ``SessionID`` is minted per stream. ``Chat`` continues to leave identity envelope fields unset on its own events, while nested child events inside ``StreamEvent/Kind/subAgentEvent(toolCallId:toolName:event:)`` carry the child's own minted session identity.
 
 ## StreamEvent Kinds
 

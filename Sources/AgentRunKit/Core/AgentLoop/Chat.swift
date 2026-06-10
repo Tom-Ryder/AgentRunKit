@@ -62,32 +62,23 @@ public struct Chat<C: ToolContext>: Sendable {
         history: [ChatMessage] = [],
         requestContext: RequestContext? = nil
     ) async throws -> (response: AssistantMessage, history: [ChatMessage]) {
-        var messages = buildMessages(userMessage: message, history: history)
+        var messages = initialMessages(systemPrompt: systemPrompt, history: history, userMessage: message)
         var truncatedMessages = truncateIfNeeded(messages)
         try truncatedMessages.validateForLLMRequest()
-        do {
-            let response = try await client.generate(
+        let response = try await withPromptTooLongRecovery {
+            try await client.generate(
                 messages: truncatedMessages,
                 tools: toolDefinitions,
                 responseFormat: nil,
                 requestContext: requestContext
             )
-            messages.append(.assistant(response))
-            return (response, messages)
-        } catch let AgentError.llmError(transport) where transport.isPromptTooLong {
-            guard reactivelyTruncate(&truncatedMessages) else {
-                throw AgentError.llmError(transport)
-            }
-            let response = try await client.generate(
-                messages: truncatedMessages,
-                tools: toolDefinitions,
-                responseFormat: nil,
-                requestContext: requestContext
-            )
+        } recover: {
+            guard reactivelyTruncate(&truncatedMessages) else { return false }
             messages = truncatedMessages
-            messages.append(.assistant(response))
-            return (response, messages)
+            return true
         }
+        messages.append(.assistant(response))
+        return (response, messages)
     }
 
     public func send<T: Decodable & SchemaProviding>(
@@ -119,34 +110,24 @@ public struct Chat<C: ToolContext>: Sendable {
         requestContext: RequestContext?
     ) async throws -> (result: T, history: [ChatMessage]) {
         try T.validateSchema()
-        var messages = buildMessages(userMessage: message, history: history)
+        var messages = initialMessages(systemPrompt: systemPrompt, history: history, userMessage: message)
         var truncatedMessages = truncateIfNeeded(messages)
         try truncatedMessages.validateForLLMRequest()
-        do {
-            let response = try await client.generate(
+        let response = try await withPromptTooLongRecovery {
+            try await client.generate(
                 messages: truncatedMessages,
                 tools: [],
                 responseFormat: .jsonSchema(T.self),
                 requestContext: requestContext
             )
-            messages.append(.assistant(response))
-            let result: T = try decodeStructuredOutput(response.content)
-            return (result, messages)
-        } catch let AgentError.llmError(transport) where transport.isPromptTooLong {
-            guard reactivelyTruncate(&truncatedMessages) else {
-                throw AgentError.llmError(transport)
-            }
-            let response = try await client.generate(
-                messages: truncatedMessages,
-                tools: [],
-                responseFormat: .jsonSchema(T.self),
-                requestContext: requestContext
-            )
+        } recover: {
+            guard reactivelyTruncate(&truncatedMessages) else { return false }
             messages = truncatedMessages
-            messages.append(.assistant(response))
-            let result: T = try decodeStructuredOutput(response.content)
-            return (result, messages)
+            return true
         }
+        messages.append(.assistant(response))
+        let result: T = try decodeStructuredOutput(response.content)
+        return (result, messages)
     }
 
     private func decodeStructuredOutput<T: Decodable>(_ content: String) throws -> T {
@@ -225,14 +206,16 @@ private extension Chat {
         approvalHandler: ToolApprovalHandler?,
         continuation: AsyncThrowingStream<StreamEvent, Error>.Continuation
     ) async throws {
-        var messages = buildMessages(userMessage: userMessage, history: history)
+        var messages = initialMessages(systemPrompt: systemPrompt, history: history, userMessage: userMessage)
         var totalUsage = TokenUsage()
         var sessionAllowlist: Set<String> = []
         let policy = StreamPolicy.chat
+        let eventFactory = StreamEventFactory(sessionID: nil, runID: nil, origin: .live)
         let processor = StreamProcessor(
             client: client, toolDefinitions: toolDefinitions, policy: policy,
-            eventFactory: StreamEventFactory(sessionID: nil, runID: nil, origin: .live)
+            eventFactory: eventFactory
         )
+        let emit = StreamEmitter(factory: eventFactory, continuation: continuation)
 
         for _ in 0 ..< maxToolRounds {
             try Task.checkCancellation()
@@ -240,42 +223,41 @@ private extension Chat {
             var truncatedMessages = truncateIfNeeded(messages)
             try truncatedMessages.validateForLLMRequest()
             var emittedOutput = false
-            let iteration: StreamIteration
-            do {
-                iteration = try await processor.process(
+            let iteration = try await withPromptTooLongRecovery {
+                try await processor.process(
                     messages: truncatedMessages,
                     totalUsage: &totalUsage,
                     emittedOutput: &emittedOutput,
                     continuation: continuation,
-                    requestContext: requestContext,
+                    requestContext: requestContext
                 )
-            } catch let AgentError.llmError(transport) where transport.isPromptTooLong {
-                guard !emittedOutput, reactivelyTruncate(&truncatedMessages) else {
-                    throw AgentError.llmError(transport)
-                }
-                iteration = try await processor.process(
-                    messages: truncatedMessages,
-                    totalUsage: &totalUsage,
-                    continuation: continuation,
-                    requestContext: requestContext,
-                )
+            } recover: {
+                guard !emittedOutput, reactivelyTruncate(&truncatedMessages) else { return false }
                 messages = truncatedMessages
+                return true
             }
 
             messages.append(.assistant(iteration.toAssistantMessage()))
 
             if policy.shouldTerminateAfterIteration(toolCalls: iteration.toolCalls) {
-                continuation.yield(.make(.finished(
+                emit.yield(.finished(
                     tokenUsage: totalUsage, content: nil, reason: nil, history: messages
-                )))
+                ))
                 continuation.finish()
                 return
             }
 
+            let runner = try makeToolRunner(
+                for: iteration.toolCalls,
+                messages: messages,
+                context: context,
+                approvalHandler: approvalHandler,
+                emit: emit
+            )
+
             for call in iteration.toolCalls {
                 let result = try await resolveAndExecuteTool(
-                    call, context: context, approvalHandler: approvalHandler,
-                    allowlist: &sessionAllowlist, continuation: continuation
+                    call, runner: runner, allowlist: &sessionAllowlist, emit: emit
                 )
                 let truncatedResult = truncatedToolResult(
                     result,
@@ -283,28 +265,18 @@ private extension Chat {
                     tools: tools,
                     fallbackLimit: maxToolResultCharacters
                 )
-                continuation.yield(.make(.toolCallCompleted(id: call.id, name: call.name, result: truncatedResult)))
+                emit.yield(.toolCallCompleted(id: call.id, name: call.name, result: truncatedResult))
                 messages.append(.tool(id: call.id, name: call.name, content: truncatedResult.content))
             }
         }
 
-        continuation.yield(.make(.finished(
+        emit.yield(.finished(
             tokenUsage: totalUsage,
             content: nil,
             reason: .maxIterationsReached(limit: maxToolRounds),
             history: messages
-        )))
+        ))
         continuation.finish()
-    }
-
-    func buildMessages(userMessage: ChatMessage, history: [ChatMessage]) -> [ChatMessage] {
-        var messages: [ChatMessage] = []
-        if let systemPrompt {
-            messages.append(.system(systemPrompt))
-        }
-        messages.append(contentsOf: history)
-        messages.append(userMessage)
-        return messages
     }
 
     func truncateIfNeeded(_ messages: [ChatMessage]) -> [ChatMessage] {
@@ -321,112 +293,56 @@ private extension Chat {
         return true
     }
 
-    func resolveTimeout(for tool: any AnyTool<C>) -> Duration {
-        resolvedToolTimeout(for: tool, default: toolTimeout)
+    func makeToolRunner(
+        for toolCalls: [ToolCall],
+        messages: [ChatMessage],
+        context: C,
+        approvalHandler: ToolApprovalHandler?,
+        emit: StreamEmitter
+    ) throws -> ToolCallRunner<C> {
+        let hasSubAgentCalls = toolCalls.contains {
+            firstTool(named: $0.name, in: tools) is any SubAgentExecutableTool<C>
+        }
+        let executionContext = hasSubAgentCalls
+            ? try context.withParentHistory(messages.resolvedPrefixForInheritance())
+            : context
+        return ToolCallRunner(
+            context: executionContext,
+            defaultTimeout: toolTimeout,
+            approvalHandler: approvalHandler,
+            subAgentDispatch: .streaming(SubAgentStreamWiring(
+                emit: emit,
+                parentSessionID: nil,
+                parentDepth: currentDepth(of: context),
+                historyEmissionDepthLimit: nil
+            ))
+        )
     }
 
     func resolveAndExecuteTool(
         _ call: ToolCall,
-        context: C,
-        approvalHandler: ToolApprovalHandler?,
+        runner: ToolCallRunner<C>,
         allowlist: inout Set<String>,
-        continuation: AsyncThrowingStream<StreamEvent, Error>.Continuation
+        emit: StreamEmitter
     ) async throws -> ToolResult {
         guard let tool = firstTool(named: call.name, in: tools) else {
             return .error(AgentError.toolNotFound(name: call.name).feedbackMessage)
         }
 
-        guard let handler = approvalHandler,
+        guard let handler = runner.approvalHandler,
               approvalPolicy.requiresApproval(toolName: call.name, allowlist: allowlist)
         else {
-            return try await executeToolSafely(
-                call,
-                resolvedTool: tool,
-                context: context,
-                approvalHandler: approvalHandler
-            )
+            return try await runner.run(call, tool: tool)
         }
 
-        let request = ToolApprovalRequest(
-            toolCallId: call.id, toolName: call.name,
-            arguments: call.arguments, toolDescription: tool.description
-        )
-        continuation.yield(.make(.toolApprovalRequested(request)))
-        let decision = try await awaitApprovalDecision(for: request, using: handler)
-        continuation.yield(.make(.toolApprovalResolved(toolCallId: call.id, decision: decision)))
-        try Task.checkCancellation()
-
-        switch decision {
-        case .approve:
-            return try await executeToolSafely(
-                call,
-                resolvedTool: tool,
-                context: context,
-                approvalHandler: approvalHandler
-            )
-        case .approveAlways:
-            allowlist.insert(call.name)
-            return try await executeToolSafely(
-                call,
-                resolvedTool: tool,
-                context: context,
-                approvalHandler: approvalHandler
-            )
-        case let .approveWithModifiedArguments(newArgs):
-            let modified = ToolCall(
-                id: call.id,
-                name: call.name,
-                arguments: newArgs,
-                kind: call.kind
-            )
-            return try await executeToolSafely(
-                modified,
-                resolvedTool: tool,
-                context: context,
-                approvalHandler: approvalHandler
-            )
-        case let .deny(reason):
-            return .error(reason ?? ToolFeedback.denied)
+        switch try await resolveApproval(
+            for: call, toolDescription: tool.description,
+            handler: handler, allowlist: &allowlist, emit: emit
+        ) {
+        case let .approved(approvedCall):
+            return try await runner.run(approvedCall, tool: tool)
+        case let .denied(result):
+            return result
         }
-    }
-
-    func executeToolSafely(
-        _ call: ToolCall,
-        resolvedTool: any AnyTool<C>,
-        context: C,
-        approvalHandler: ToolApprovalHandler? = nil
-    ) async throws -> ToolResult {
-        do {
-            return try await withToolTimeout(resolveTimeout(for: resolvedTool), toolName: call.name) {
-                try await self.executeTool(
-                    call,
-                    with: resolvedTool,
-                    context: context,
-                    approvalHandler: approvalHandler
-                )
-            }
-        } catch is CancellationError {
-            throw CancellationError()
-        } catch let error as AgentError {
-            return .error(error.feedbackMessage)
-        } catch {
-            return .error(ToolFeedback.failed(error))
-        }
-    }
-
-    func executeTool(
-        _ call: ToolCall,
-        with tool: any AnyTool<C>,
-        context: C,
-        approvalHandler: ToolApprovalHandler?
-    ) async throws -> ToolResult {
-        if let subAgentTool = tool as? any SubAgentExecutableTool<C> {
-            return try await subAgentTool.executeSubAgent(
-                arguments: call.argumentsData,
-                context: context,
-                approvalHandler: approvalHandler
-            )
-        }
-        return try await tool.execute(arguments: call.argumentsData, context: context)
     }
 }

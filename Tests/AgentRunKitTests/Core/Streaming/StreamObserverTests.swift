@@ -160,10 +160,12 @@ struct StreamObserverTests {
         )
         let (_, continuation) = AsyncThrowingStream<StreamEvent, Error>.makeStream()
         var totalUsage = TokenUsage()
+        var emittedOutput = false
 
         _ = try await processor.process(
             messages: [.user("Hi")],
             totalUsage: &totalUsage,
+            emittedOutput: &emittedOutput,
             continuation: continuation,
             requestContext: recorder.requestContext
         )
@@ -206,11 +208,13 @@ struct StreamObserverTests {
             )
             let (_, continuation) = AsyncThrowingStream<StreamEvent, Error>.makeStream()
             var totalUsage = TokenUsage()
+            var emittedOutput = false
 
             do {
                 _ = try await processor.process(
                     messages: [.user("Hi")],
                     totalUsage: &totalUsage,
+                    emittedOutput: &emittedOutput,
                     continuation: continuation,
                     requestContext: recorder.completionOnlyRequestContext
                 )
@@ -236,11 +240,13 @@ struct StreamObserverTests {
         )
         let (_, continuation) = AsyncThrowingStream<StreamEvent, Error>.makeStream()
         var totalUsage = TokenUsage()
+        var emittedOutput = false
 
         do {
             _ = try await processor.process(
                 messages: [.user("Hi")],
                 totalUsage: &totalUsage,
+                emittedOutput: &emittedOutput,
                 continuation: continuation,
                 requestContext: recorder.completionOnlyRequestContext
             )
@@ -271,11 +277,13 @@ struct StreamObserverTests {
         )
         let (_, continuation) = AsyncThrowingStream<StreamEvent, Error>.makeStream()
         var totalUsage = TokenUsage()
+        var emittedOutput = false
 
         do {
             _ = try await processor.process(
                 messages: [.user("Hi")],
                 totalUsage: &totalUsage,
+                emittedOutput: &emittedOutput,
                 continuation: continuation,
                 requestContext: recorder.completionOnlyRequestContext
             )
@@ -304,11 +312,13 @@ struct StreamObserverTests {
         )
         let (_, continuation) = AsyncThrowingStream<StreamEvent, Error>.makeStream()
         var totalUsage = TokenUsage()
+        var emittedOutput = false
 
         do {
             _ = try await processor.process(
                 messages: [.user("Hi")],
                 totalUsage: &totalUsage,
+                emittedOutput: &emittedOutput,
                 continuation: continuation,
                 requestContext: recorder.completionOnlyRequestContext
             )
@@ -332,11 +342,13 @@ struct StreamObserverTests {
         )
         let (_, continuation) = AsyncThrowingStream<StreamEvent, Error>.makeStream()
         var totalUsage = TokenUsage()
+        var emittedOutput = false
 
         do {
             _ = try await processor.process(
                 messages: [.user("Hi")],
                 totalUsage: &totalUsage,
+                emittedOutput: &emittedOutput,
                 continuation: continuation,
                 requestContext: recorder.completionOnlyRequestContext
             )

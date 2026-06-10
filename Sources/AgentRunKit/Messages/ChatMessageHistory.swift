@@ -1,5 +1,19 @@
 import Foundation
 
+func initialMessages(
+    systemPrompt: String?,
+    history: [ChatMessage],
+    userMessage: ChatMessage
+) -> [ChatMessage] {
+    var messages: [ChatMessage] = []
+    if let systemPrompt {
+        messages.append(.system(systemPrompt))
+    }
+    messages.append(contentsOf: history)
+    messages.append(userMessage)
+    return messages
+}
+
 package extension [ChatMessage] {
     func validateForLLMRequest() throws {
         try validateHistory(using: .llmRequest)
@@ -32,7 +46,7 @@ package extension [ChatMessage] {
         return sanitized
     }
 
-    func resolvedPrefixForInheritance() -> [ChatMessage] {
+    func resolvedPrefixForInheritance() throws -> [ChatMessage] {
         let validation = toolCallHistoryValidation(using: .llmRequest)
         switch validation.problem {
         case nil:
@@ -40,10 +54,10 @@ package extension [ChatMessage] {
         case let .unfinishedToolCallBatch(_, boundary):
             return Array(prefix(boundary))
         case let .unexpectedToolResult(id, _):
-            preconditionFailure("Unexpected tool result '\(id)' in parent history")
+            throw AgentError.malformedHistory(.unexpectedToolResult(id: id))
         case let .toolResultOrderMismatch(expectedID, actualID, _):
-            preconditionFailure(
-                "Expected tool result '\(expectedID)' but received '\(actualID)' in parent history"
+            throw AgentError.malformedHistory(
+                .toolResultOrderMismatch(expectedID: expectedID, actualID: actualID)
             )
         case .finishMustBeExclusive:
             preconditionFailure("finish must be exclusive in parent history")

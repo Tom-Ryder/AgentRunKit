@@ -163,9 +163,9 @@ extension Agent {
         options: InvocationOptions
     ) async throws -> AgentResult {
         validateInvocation(options)
-        var state = AgentLoopState(messages: buildInitialMessages(
-            userMessage: userMessage, history: history,
-            systemPromptOverride: options.systemPromptOverride
+        var state = AgentLoopState(messages: initialMessages(
+            systemPrompt: options.systemPromptOverride ?? configuration.systemPrompt,
+            history: history, userMessage: userMessage
         ))
         try state.messages.validateForAgentHistory()
 
@@ -327,8 +327,9 @@ extension Agent {
         options: InvocationOptions,
         continuation: AsyncThrowingStream<StreamEvent, Error>.Continuation
     ) async throws {
-        var state = AgentLoopState(messages: buildInitialMessages(
-            userMessage: userMessage, history: history, systemPromptOverride: options.systemPromptOverride
+        var state = AgentLoopState(messages: initialMessages(
+            systemPrompt: options.systemPromptOverride ?? configuration.systemPrompt,
+            history: history, userMessage: userMessage
         ))
         try state.messages.validateForAgentHistory()
         state.budgetPhase = try makeBudgetPhase()
@@ -458,20 +459,6 @@ extension Agent {
         }
         lastTotalTokens = iteration.usage?.total
         return false
-    }
-
-    func buildInitialMessages(
-        userMessage: ChatMessage,
-        history: [ChatMessage],
-        systemPromptOverride: String? = nil
-    ) -> [ChatMessage] {
-        var messages: [ChatMessage] = []
-        if let systemPrompt = systemPromptOverride ?? configuration.systemPrompt {
-            messages.append(.system(systemPrompt))
-        }
-        messages.append(contentsOf: history)
-        messages.append(userMessage)
-        return messages
     }
 
     func indexedExecutableToolCalls(from toolCalls: [ToolCall]) -> [IndexedToolCall] {

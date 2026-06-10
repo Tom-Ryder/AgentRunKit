@@ -299,7 +299,7 @@ struct ChatMessageTerminalHistoryTests {
     }
 
     @Test
-    func inheritanceDropsTrailingUnresolvedToolBatch() {
+    func inheritanceDropsTrailingUnresolvedToolBatch() throws {
         let history: [ChatMessage] = [
             .user("Hi"),
             .assistant(AssistantMessage(
@@ -308,11 +308,41 @@ struct ChatMessageTerminalHistoryTests {
             )),
         ]
 
-        #expect(history.resolvedPrefixForInheritance() == [.user("Hi")])
+        #expect(try history.resolvedPrefixForInheritance() == [.user("Hi")])
     }
 
     @Test
-    func inheritancePreservesContinuityOnUntouchedAssistantTurns() {
+    func inheritanceThrowsOnStrayToolResult() {
+        let history: [ChatMessage] = [
+            .user("Hi"),
+            .tool(id: "call_1", name: "lookup", content: "done"),
+        ]
+
+        #expect(throws: AgentError.malformedHistory(.unexpectedToolResult(id: "call_1"))) {
+            try history.resolvedPrefixForInheritance()
+        }
+    }
+
+    @Test
+    func inheritanceThrowsOnOutOfOrderToolResults() {
+        let history: [ChatMessage] = [
+            .assistant(AssistantMessage(content: "", toolCalls: [
+                ToolCall(id: "call_1", name: "first", arguments: "{}"),
+                ToolCall(id: "call_2", name: "second", arguments: "{}"),
+            ])),
+            .tool(id: "call_2", name: "second", content: "two"),
+            .tool(id: "call_1", name: "first", content: "one"),
+        ]
+
+        #expect(throws: AgentError.malformedHistory(
+            .toolResultOrderMismatch(expectedID: "call_1", actualID: "call_2")
+        )) {
+            try history.resolvedPrefixForInheritance()
+        }
+    }
+
+    @Test
+    func inheritancePreservesContinuityOnUntouchedAssistantTurns() throws {
         let continuity = AssistantContinuity(
             substrate: .responses,
             payload: .object([
@@ -329,7 +359,7 @@ struct ChatMessageTerminalHistoryTests {
             )),
         ]
 
-        let inherited = history.resolvedPrefixForInheritance()
+        let inherited = try history.resolvedPrefixForInheritance()
 
         #expect(inherited.count == 3)
         guard case let .assistant(message) = inherited[1] else {
