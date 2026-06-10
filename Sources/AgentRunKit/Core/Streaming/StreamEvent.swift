@@ -28,22 +28,6 @@ public struct StreamEvent: Sendable, Identifiable {
         self.kind = kind
     }
 
-    static func make(
-        _ kind: Kind,
-        sessionID: SessionID? = nil,
-        runID: RunID? = nil,
-        parentEventID: EventID? = nil,
-        origin: EventOrigin = .live
-    ) -> StreamEvent {
-        StreamEvent(
-            sessionID: sessionID,
-            runID: runID,
-            parentEventID: parentEventID,
-            origin: origin,
-            kind: kind
-        )
-    }
-
     func with(origin: EventOrigin) -> StreamEvent {
         StreamEvent(
             id: id,

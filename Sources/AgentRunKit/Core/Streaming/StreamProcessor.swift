@@ -30,10 +30,6 @@ struct StreamPolicy {
         return executeTerminalTool
     }
 
-    func executableToolCalls(from toolCalls: [ToolCall]) -> [ToolCall] {
-        toolCalls.filter { shouldExecuteTool(name: $0.name) }
-    }
-
     func shouldTerminateAfterIteration(toolCalls: [ToolCall]) -> Bool {
         if let terminalToolName, toolCalls.contains(where: { $0.name == terminalToolName }) {
             return true
