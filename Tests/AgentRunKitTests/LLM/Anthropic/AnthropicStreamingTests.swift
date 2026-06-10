@@ -285,6 +285,48 @@ struct AnthropicStreamingTests {
     }
 
     @Test
+    func toolUseBlockStartMissingIdThrows() async throws {
+        let blockStart = #"{"type":"content_block_start","index":2,"content_block":"#
+            + #"{"type":"tool_use","name":"search"}}"#
+        let lines = [
+            sseLine(blockStart)
+        ]
+
+        do {
+            _ = try await collectStreamDeltas(client: makeClient(), lines: lines)
+            Issue.record("Expected malformed stream")
+        } catch let error as AgentError {
+            guard case let .llmError(.streamFailed(.malformedStream(reason, diagnostics))) = error else {
+                Issue.record("Expected malformed stream, got \(error)")
+                return
+            }
+            #expect(reason == .missingToolCallId(index: 2))
+            #expect(diagnostics.provider == .anthropic)
+        }
+    }
+
+    @Test
+    func toolUseBlockStartMissingNameThrows() async throws {
+        let blockStart = #"{"type":"content_block_start","index":2,"content_block":"#
+            + #"{"type":"tool_use","id":"toolu_01"}}"#
+        let lines = [
+            sseLine(blockStart)
+        ]
+
+        do {
+            _ = try await collectStreamDeltas(client: makeClient(), lines: lines)
+            Issue.record("Expected malformed stream")
+        } catch let error as AgentError {
+            guard case let .llmError(.streamFailed(.malformedStream(reason, diagnostics))) = error else {
+                Issue.record("Expected malformed stream, got \(error)")
+                return
+            }
+            #expect(reason == .missingToolCallName(index: 2))
+            #expect(diagnostics.provider == .anthropic)
+        }
+    }
+
+    @Test
     func unknownEventTypesIgnored() async throws {
         let msgStart = #"{"type":"message_start","message":"#
             + #"{"id":"msg_01","type":"message","role":"assistant","#

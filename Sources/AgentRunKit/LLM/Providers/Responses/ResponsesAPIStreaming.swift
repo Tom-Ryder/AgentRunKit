@@ -111,6 +111,7 @@ extension ResponsesAPIClient {
             try await handleOutputItemAdded(
                 data: data,
                 semanticState: semanticState,
+                diagnostics: diagnostics,
                 continuation: continuation
             )
         case "response.function_call_arguments.delta",
@@ -169,6 +170,7 @@ extension ResponsesAPIClient {
     private func handleOutputItemAdded(
         data: Data,
         semanticState: ResponsesStreamState,
+        diagnostics: StreamFailureDiagnostics,
         continuation: AsyncThrowingStream<RunStreamElement, Error>.Continuation
     ) async throws {
         let event = try Self.sseDecoder.decode(
@@ -188,7 +190,18 @@ extension ResponsesAPIClient {
         default:
             return
         }
-        guard let callId = event.item.callId, let name = event.item.name else { return }
+        guard let callId = event.item.callId else {
+            throw AgentError.llmError(.streamFailed(.malformedStream(
+                reason: .missingToolCallId(index: event.outputIndex),
+                diagnostics: diagnostics
+            )))
+        }
+        guard let name = event.item.name else {
+            throw AgentError.llmError(.streamFailed(.malformedStream(
+                reason: .missingToolCallName(index: event.outputIndex),
+                diagnostics: diagnostics
+            )))
+        }
         let delta = StreamDelta.toolCallStart(
             index: event.outputIndex,
             id: callId,

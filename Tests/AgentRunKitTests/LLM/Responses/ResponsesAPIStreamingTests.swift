@@ -219,6 +219,50 @@ struct ResponsesStreamingTests {
     }
 
     @Test
+    func functionCallItemMissingCallIdThrows() async throws {
+        let addedJSON =
+            #"{"type":"response.output_item.added","output_index":3,"#
+                + #""item":{"type":"function_call","name":"search"}}"#
+        let lines = [
+            responsesSSELine(addedJSON)
+        ]
+
+        do {
+            _ = try await collectResponsesStreamDeltas(client: makeResponsesStreamingClient(), lines: lines)
+            Issue.record("Expected malformed stream")
+        } catch let error as AgentError {
+            guard case let .llmError(.streamFailed(.malformedStream(reason, diagnostics))) = error else {
+                Issue.record("Expected malformed stream, got \(error)")
+                return
+            }
+            #expect(reason == .missingToolCallId(index: 3))
+            #expect(diagnostics.eventsObserved == 1)
+        }
+    }
+
+    @Test
+    func functionCallItemMissingNameThrows() async throws {
+        let addedJSON =
+            #"{"type":"response.output_item.added","output_index":3,"#
+                + #""item":{"type":"function_call","call_id":"call_9"}}"#
+        let lines = [
+            responsesSSELine(addedJSON)
+        ]
+
+        do {
+            _ = try await collectResponsesStreamDeltas(client: makeResponsesStreamingClient(), lines: lines)
+            Issue.record("Expected malformed stream")
+        } catch let error as AgentError {
+            guard case let .llmError(.streamFailed(.malformedStream(reason, diagnostics))) = error else {
+                Issue.record("Expected malformed stream, got \(error)")
+                return
+            }
+            #expect(reason == .missingToolCallName(index: 3))
+            #expect(diagnostics.eventsObserved == 1)
+        }
+    }
+
+    @Test
     func customToolCallStreamYieldsCustomKindDeltas() async throws {
         let addedJSON =
             #"{"type":"response.output_item.added","output_index":0,"#

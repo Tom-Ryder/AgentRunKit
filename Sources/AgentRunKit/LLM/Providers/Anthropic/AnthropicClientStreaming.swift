@@ -131,7 +131,7 @@ extension AnthropicClient {
             break
         case .contentBlockStart:
             try await handleBlockStart(
-                data: data, state: state, yield: yield
+                data: data, state: state, diagnostics: diagnostics, yield: yield
             )
         case .contentBlockDelta:
             try await handleBlockDelta(
@@ -156,6 +156,7 @@ extension AnthropicClient {
     private func handleBlockStart(
         data: Data,
         state: AnthropicStreamState,
+        diagnostics: StreamFailureDiagnostics,
         yield: @Sendable (StreamDelta) -> Void
     ) async throws {
         let event = try decodeEvent(AnthropicBlockStartEvent.self, from: data)
@@ -172,14 +173,24 @@ extension AnthropicClient {
         case .text:
             await state.setBlockType(event.index, .text)
         case .toolUse:
+            guard let id = block.id else {
+                throw AgentError.llmError(.streamFailed(.malformedStream(
+                    reason: .missingToolCallId(index: event.index),
+                    diagnostics: diagnostics
+                )))
+            }
+            guard let name = block.name else {
+                throw AgentError.llmError(.streamFailed(.malformedStream(
+                    reason: .missingToolCallName(index: event.index),
+                    diagnostics: diagnostics
+                )))
+            }
             let toolIndex = await state.registerToolCall(event.index)
             await state.setBlockType(event.index, .toolUse)
-            if let id = block.id, let name = block.name {
-                await state.setToolInfo(event.index, id: id, name: name)
-                yield(.toolCallStart(
-                    index: toolIndex, id: id, name: name, kind: .function
-                ))
-            }
+            await state.setToolInfo(event.index, id: id, name: name)
+            yield(.toolCallStart(
+                index: toolIndex, id: id, name: name, kind: .function
+            ))
         }
     }
 
