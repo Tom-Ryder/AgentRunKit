@@ -38,6 +38,8 @@ Key behaviors:
 
 ``Chat`` handles multi-turn conversations without requiring a finish tool. Each `send()` call makes one LLM request and returns the response with updated history. Tool calls in the response are not automatically executed; use `stream()` for tool execution.
 
+When the model does call tools in a `send()` response, the returned history ends with an unexecuted tool-call batch. Passing that history straight back to `send()` throws `AgentError.malformedHistory` with reason `.unfinishedToolCallBatch`: execute the calls yourself and append a `.tool` message for each call id before the next turn, or use `stream()`, which runs the tool loop for you.
+
 ```swift
 let chat = Chat<EmptyContext>(client: client, systemPrompt: "You are a helpful assistant.")
 let (response, history) = try await chat.send("What is 2 + 2?")
@@ -51,6 +53,8 @@ struct Sentiment: Codable, SchemaProviding { let score: Double; let label: Strin
 let (result, _) = try await chat.send("Analyze: 'Great product!'", returning: Sentiment.self)
 print(result.score) // 0.95
 ```
+
+Structured sends suppress tools for that turn: the request carries an empty tool list so the model produces the JSON payload instead of tool calls.
 
 ``Chat`` also supports streaming via `stream()` and tool execution (up to `maxToolRounds` per send). When `stream()` exhausts `maxToolRounds`, it emits `.finished(reason: .maxIterationsReached(limit: maxToolRounds))` and completes normally. ``Chat`` does not perform compaction or manage token budgets.
 

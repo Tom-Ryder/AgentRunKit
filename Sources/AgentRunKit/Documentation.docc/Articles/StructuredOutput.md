@@ -25,6 +25,8 @@ let (report, history) = try await chat.send(
 print(report.conditions) // "Partly cloudy"
 ```
 
+A structured send carries an empty tool list, suppressing the chat's tools for that turn so the model returns the JSON payload rather than calling them. Decoding failures throw `AgentError.structuredOutputDecodingFailed`.
+
 ### LLMClient (Manual Decoding)
 
 Use ``LLMClient/generate(messages:tools:responseFormat:requestContext:)`` directly when you need full control:
