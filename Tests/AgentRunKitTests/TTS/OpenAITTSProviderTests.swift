@@ -4,7 +4,7 @@ import Testing
 
 private func makeContext(text: String = "Hi", format: TTSAudioFormat = .mp3) -> TTSChunkContext {
     TTSChunkContext(
-        chunk: TTSChunk(index: 0, total: 1, text: text, sourceRange: 0 ..< text.utf8.count),
+        chunk: TTSChunk(index: 0, total: 1, text: text, sourceRange: 0 ..< text.utf8.count, trailingBoundary: .end),
         encoding: TTSAudioEncoding(format)
     )
 }
@@ -225,9 +225,9 @@ struct OpenAITTSProviderTests {
     }
 
     @Test
-    func resolvedEncodingForPCMLeavesChannelsNilUntilSpeechEndpointDocumentsIt() {
+    func resolvedEncodingForPCMReportsMonoChannel() {
         let encoding = provider.resolvedEncoding(for: .pcm, options: TTSOptions())
-        #expect(encoding.channels == nil)
+        #expect(encoding.channels == 1)
     }
 
     @Test
@@ -247,7 +247,7 @@ struct OpenAITTSProviderTests {
         let encoding = provider.resolvedEncoding(for: .pcm, options: opts)
         #expect(encoding.format == .pcm)
         #expect(encoding.sampleRate == 24000)
-        #expect(encoding.channels == nil)
+        #expect(encoding.channels == 1)
         #expect(encoding.bitsPerSample == 16)
     }
 

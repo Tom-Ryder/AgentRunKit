@@ -29,7 +29,8 @@ public struct TTSClient<P: TTSProvider>: Sendable {
             index: 0,
             total: 1,
             text: trimmed,
-            sourceRange: leadingShift ..< (leadingShift + trimmed.utf8.count)
+            sourceRange: leadingShift ..< (leadingShift + trimmed.utf8.count),
+            trailingBoundary: .end
         )
         let context = TTSChunkContext(chunk: chunk, encoding: encoding)
         return try await provider.generate(
@@ -54,22 +55,109 @@ public struct TTSClient<P: TTSProvider>: Sendable {
         voice: String? = nil,
         options: TTSOptions = TTSOptions()
     ) -> AsyncThrowingStream<TTSSegment, Error> {
-        let resolvedVoice = voice ?? provider.config.defaultVoice
         let internalChunks = SentenceChunker.chunk(
             text: text,
             maxCharacters: provider.config.maxChunkCharacters
         )
-
         guard !internalChunks.isEmpty else {
             return AsyncThrowingStream { $0.finish(throwing: TTSError.emptyText) }
         }
+        return segmentStream(
+            plan: Self.makePublicChunks(internalChunks),
+            voice: voice ?? provider.config.defaultVoice,
+            options: options,
+            encoding: provider.resolvedEncoding(
+                for: options.responseFormat ?? provider.config.defaultFormat,
+                options: options
+            )
+        )
+    }
 
-        let publicChunks = Self.makePublicChunks(internalChunks)
-        let format = options.responseFormat ?? provider.config.defaultFormat
-        let encoding = provider.resolvedEncoding(for: format, options: options)
+    public func generateAll(
+        text: String,
+        voice: String? = nil,
+        options: TTSOptions = TTSOptions()
+    ) async throws -> Data {
+        try await generateWithManifest(text: text, voice: voice, options: options).audio
+    }
+
+    /// Synthesizes the input and returns concatenated audio plus a per-segment manifest; chunk failure throws.
+    ///
+    /// Pass a ``TTSStitchPolicy`` to assemble 16-bit PCM segments with boundary-keyed pauses and
+    /// click-safe fades; without one, segments are concatenated raw.
+    public func generateWithManifest(
+        text: String,
+        voice: String? = nil,
+        options: TTSOptions = TTSOptions(),
+        stitch: TTSStitchPolicy? = nil
+    ) async throws -> TTSConcatenationResult {
+        let encoding = provider.resolvedEncoding(
+            for: options.responseFormat ?? provider.config.defaultFormat,
+            options: options
+        )
+        let stitchFormat = try stitch.map { _ -> PCMFormat in
+            guard let format = PCMFormat(encoding) else {
+                throw TTSError.invalidConfiguration(
+                    "stitching requires 16-bit PCM output with a known sample rate and channel count"
+                )
+            }
+            return format
+        }
+        let internalChunks = SentenceChunker.chunk(
+            text: text,
+            maxCharacters: provider.config.maxChunkCharacters,
+            targetCharacters: stitch?.targetCharacters,
+            preferParagraphBoundaries: stitch?.preferParagraphBoundaries ?? false
+        )
+        guard !internalChunks.isEmpty else {
+            throw TTSError.emptyText
+        }
+
+        var segments: [TTSSegment] = []
+        for try await segment in segmentStream(
+            plan: Self.makePublicChunks(internalChunks),
+            voice: voice ?? provider.config.defaultVoice,
+            options: options,
+            encoding: encoding
+        ) {
+            segments.append(segment)
+        }
+
+        if let stitch, let stitchFormat {
+            guard segments.allSatisfy({ $0.audio.count.isMultiple(of: stitchFormat.bytesPerFrame) }) else {
+                throw TTSError.invalidConfiguration(
+                    "stitching requires PCM segments aligned to whole 16-bit frames"
+                )
+            }
+            return Self.stitched(segments: segments, format: stitchFormat, policy: stitch)
+        }
+
+        let (audio, byteRanges) = Self.concatenate(segments.map(\.audio), format: encoding.format)
+        var manifest: [TTSManifestEntry] = []
+        manifest.reserveCapacity(segments.count)
+        for (segment, range) in zip(segments, byteRanges) {
+            manifest.append(TTSManifestEntry(
+                chunk: segment.chunk,
+                encoding: segment.encoding,
+                timing: TTSSegmentTiming(
+                    byteRangeInConcatenatedAudio: range,
+                    durationSeconds: Self.durationSeconds(forSegment: segment)
+                )
+            ))
+        }
+        return TTSConcatenationResult(audio: audio, manifest: manifest)
+    }
+}
+
+private extension TTSClient {
+    func segmentStream(
+        plan publicChunks: [TTSChunk],
+        voice resolvedVoice: String,
+        options: TTSOptions,
+        encoding: TTSAudioEncoding
+    ) -> AsyncThrowingStream<TTSSegment, Error> {
         let provider = provider
         let maxConcurrent = maxConcurrent
-
         return AsyncThrowingStream { continuation in
             let task = Task {
                 do {
@@ -91,50 +179,35 @@ public struct TTSClient<P: TTSProvider>: Sendable {
         }
     }
 
-    public func generateAll(
-        text: String,
-        voice: String? = nil,
-        options: TTSOptions = TTSOptions()
-    ) async throws -> Data {
-        try await generateWithManifest(text: text, voice: voice, options: options).audio
-    }
+    static func stitched(
+        segments: [TTSSegment],
+        format: PCMFormat,
+        policy: TTSStitchPolicy
+    ) -> TTSConcatenationResult {
+        let result = PCMStitcher.stitch(
+            segments: segments.map(\.audio),
+            boundaries: segments.map(\.chunk.trailingBoundary),
+            policy: policy,
+            format: format
+        )
 
-    /// Synthesizes the input and returns concatenated audio plus a per-segment manifest; chunk failure throws.
-    public func generateWithManifest(
-        text: String,
-        voice: String? = nil,
-        options: TTSOptions = TTSOptions()
-    ) async throws -> TTSConcatenationResult {
-        var segments: [TTSSegment] = []
-        for try await segment in stream(text: text, voice: voice, options: options) {
-            segments.append(segment)
-        }
-
-        guard let firstFormat = segments.first?.encoding.format else {
-            return TTSConcatenationResult(audio: Data(), manifest: [])
-        }
-
-        let audioSegments = segments.map(\.audio)
-        let (audio, byteRanges) = Self.concatenate(audioSegments, format: firstFormat)
-
+        let bytesPerSecond = Double(format.bytesPerSecond)
         var manifest: [TTSManifestEntry] = []
         manifest.reserveCapacity(segments.count)
-        for (segment, range) in zip(segments, byteRanges) {
-            let duration = Self.durationSeconds(forSegment: segment)
+        for (segment, range) in zip(segments, result.ranges) {
             manifest.append(TTSManifestEntry(
                 chunk: segment.chunk,
                 encoding: segment.encoding,
                 timing: TTSSegmentTiming(
                     byteRangeInConcatenatedAudio: range,
-                    durationSeconds: duration
+                    durationSeconds: Double(range.count) / bytesPerSecond
                 )
             ))
         }
-
-        return TTSConcatenationResult(audio: audio, manifest: manifest)
+        return TTSConcatenationResult(audio: result.audio, manifest: manifest)
     }
 
-    private static func durationSeconds(forSegment segment: TTSSegment) -> Double? {
+    static func durationSeconds(forSegment segment: TTSSegment) -> Double? {
         guard segment.encoding.format == .pcm,
               let sampleRate = segment.encoding.sampleRate,
               let channels = segment.encoding.channels,
@@ -150,7 +223,7 @@ public struct TTSClient<P: TTSProvider>: Sendable {
         return Double(segment.audio.count) / Double(bytesPerSecond)
     }
 
-    private static func concatenate(
+    static func concatenate(
         _ audioSegments: [Data],
         format: TTSAudioFormat
     ) -> (audio: Data, byteRanges: [Range<Int>?]) {
@@ -175,7 +248,7 @@ public struct TTSClient<P: TTSProvider>: Sendable {
         }
     }
 
-    private static func appendingConcatenation(_ audioSegments: [Data]) -> Data {
+    static func appendingConcatenation(_ audioSegments: [Data]) -> Data {
         var result = Data()
         result.reserveCapacity(audioSegments.reduce(0) { $0 + $1.count })
         for audioSegment in audioSegments {
@@ -184,14 +257,20 @@ public struct TTSClient<P: TTSProvider>: Sendable {
         return result
     }
 
-    private static func makePublicChunks(_ internalChunks: [SentenceChunker.Chunk]) -> [TTSChunk] {
+    static func makePublicChunks(_ internalChunks: [SentenceChunker.Chunk]) -> [TTSChunk] {
         let total = internalChunks.count
         return internalChunks.enumerated().map { index, chunk in
-            TTSChunk(index: index, total: total, text: chunk.text, sourceRange: chunk.sourceRange)
+            TTSChunk(
+                index: index,
+                total: total,
+                text: chunk.text,
+                sourceRange: chunk.sourceRange,
+                trailingBoundary: chunk.trailingBoundary
+            )
         }
     }
 
-    private static func executeChunks(
+    static func executeChunks(
         _ chunks: [TTSChunk],
         voice: String,
         options: TTSOptions,

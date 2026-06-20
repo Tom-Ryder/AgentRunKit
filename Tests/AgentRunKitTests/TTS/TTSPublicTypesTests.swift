@@ -83,7 +83,13 @@ struct TTSAudioEncodingTests {
 struct TTSChunkTests {
     @Test
     func codableRoundTripPreservesAllFields() throws {
-        let chunk = TTSChunk(index: 2, total: 5, text: "Hello world.", sourceRange: 4 ..< 16)
+        let chunk = TTSChunk(
+            index: 2,
+            total: 5,
+            text: "Hello world.",
+            sourceRange: 4 ..< 16,
+            trailingBoundary: .sentence
+        )
         let data = try JSONEncoder().encode(chunk)
         let decoded = try JSONDecoder().decode(TTSChunk.self, from: data)
         #expect(decoded == chunk)
@@ -91,9 +97,9 @@ struct TTSChunkTests {
 
     @Test
     func hashableUsableAsDictionaryKey() {
-        let firstChunk = TTSChunk(index: 0, total: 1, text: "x", sourceRange: 0 ..< 1)
-        let firstDuplicate = TTSChunk(index: 0, total: 1, text: "x", sourceRange: 0 ..< 1)
-        let secondChunk = TTSChunk(index: 1, total: 2, text: "y", sourceRange: 1 ..< 2)
+        let firstChunk = TTSChunk(index: 0, total: 1, text: "x", sourceRange: 0 ..< 1, trailingBoundary: .end)
+        let firstDuplicate = TTSChunk(index: 0, total: 1, text: "x", sourceRange: 0 ..< 1, trailingBoundary: .end)
+        let secondChunk = TTSChunk(index: 1, total: 2, text: "y", sourceRange: 1 ..< 2, trailingBoundary: .sentence)
         var counts: [TTSChunk: Int] = [:]
         counts[firstChunk, default: 0] += 1
         counts[firstDuplicate, default: 0] += 1
@@ -132,7 +138,7 @@ struct TTSChunkContextTests {
     @Test
     func codableRoundTripPreservesAllFields() throws {
         let context = TTSChunkContext(
-            chunk: TTSChunk(index: 1, total: 3, text: "middle", sourceRange: 7 ..< 13),
+            chunk: TTSChunk(index: 1, total: 3, text: "middle", sourceRange: 7 ..< 13, trailingBoundary: .sentence),
             encoding: TTSAudioEncoding(.mp3)
         )
         let data = try JSONEncoder().encode(context)
@@ -145,7 +151,7 @@ struct TTSManifestEntryTests {
     @Test
     func codableRoundTripPreservesAllFields() throws {
         let entry = TTSManifestEntry(
-            chunk: TTSChunk(index: 0, total: 2, text: "first", sourceRange: 0 ..< 5),
+            chunk: TTSChunk(index: 0, total: 2, text: "first", sourceRange: 0 ..< 5, trailingBoundary: .sentence),
             encoding: TTSAudioEncoding(
                 format: .pcm,
                 mimeType: "audio/L16",
@@ -164,7 +170,7 @@ struct TTSManifestEntryTests {
     @Test
     func wireFormatLocksJSONKeysWithPopulatedFields() throws {
         let entry = TTSManifestEntry(
-            chunk: TTSChunk(index: 0, total: 2, text: "Hi.", sourceRange: 0 ..< 3),
+            chunk: TTSChunk(index: 0, total: 2, text: "Hi.", sourceRange: 0 ..< 3, trailingBoundary: .sentence),
             encoding: TTSAudioEncoding(
                 format: .pcm,
                 mimeType: "audio/L16",
@@ -180,7 +186,7 @@ struct TTSManifestEntryTests {
         let data = try encoder.encode(entry)
         let json = try #require(String(data: data, encoding: .utf8))
         let expected =
-            #"{"chunk":{"index":0,"sourceRange":[0,3],"text":"Hi.","total":2},"#
+            #"{"chunk":{"index":0,"sourceRange":[0,3],"text":"Hi.","total":2,"trailingBoundary":"sentence"},"#
                 + #""encoding":{"bitsPerSample":16,"channels":1,"fileExtension":"pcm","#
                 + #""format":"pcm","mimeType":"audio\/L16","sampleRate":24000},"#
                 + #""timing":{"byteRangeInConcatenatedAudio":[0,12],"durationSeconds":0.5}}"#
@@ -190,7 +196,7 @@ struct TTSManifestEntryTests {
     @Test
     func wireFormatOmitsNilOptionalFields() throws {
         let entry = TTSManifestEntry(
-            chunk: TTSChunk(index: 0, total: 1, text: "Hi.", sourceRange: 0 ..< 3),
+            chunk: TTSChunk(index: 0, total: 1, text: "Hi.", sourceRange: 0 ..< 3, trailingBoundary: .end),
             encoding: TTSAudioEncoding(.mp3),
             timing: .uncomputed
         )
@@ -199,7 +205,7 @@ struct TTSManifestEntryTests {
         let data = try encoder.encode(entry)
         let json = try #require(String(data: data, encoding: .utf8))
         let expected =
-            #"{"chunk":{"index":0,"sourceRange":[0,3],"text":"Hi.","total":1},"#
+            #"{"chunk":{"index":0,"sourceRange":[0,3],"text":"Hi.","total":1,"trailingBoundary":"end"},"#
                 + #""encoding":{"fileExtension":"mp3","format":"mp3","mimeType":"audio\/mpeg"},"#
                 + #""timing":{}}"#
         #expect(json == expected)
@@ -210,7 +216,7 @@ struct TTSConcatenationResultTests {
     @Test
     func memberwiseInitPreservesFields() {
         let entry = TTSManifestEntry(
-            chunk: TTSChunk(index: 0, total: 1, text: "x", sourceRange: 0 ..< 1),
+            chunk: TTSChunk(index: 0, total: 1, text: "x", sourceRange: 0 ..< 1, trailingBoundary: .end),
             encoding: TTSAudioEncoding(.wav),
             timing: .uncomputed
         )
@@ -262,5 +268,41 @@ struct TTSProviderResolvedEncodingDefaultTests {
         #expect(viaMP3.format == .mp3)
         #expect(viaPCM.sampleRate == nil)
         #expect(viaMP3.sampleRate == nil)
+    }
+}
+
+struct TTSBoundaryTests {
+    @Test
+    func rawValuesLockWireFormat() {
+        #expect(TTSBoundary.sentence.rawValue == "sentence")
+        #expect(TTSBoundary.paragraph.rawValue == "paragraph")
+        #expect(TTSBoundary.withinSentence.rawValue == "withinSentence")
+        #expect(TTSBoundary.end.rawValue == "end")
+    }
+}
+
+struct TTSStitchPolicyTests {
+    @Test
+    func codableRoundTripPreservesAllFields() throws {
+        let policy = TTSStitchPolicy(
+            targetCharacters: 240,
+            preferParagraphBoundaries: true,
+            sentencePause: .milliseconds(200),
+            paragraphPause: .milliseconds(600),
+            joinFade: .milliseconds(6)
+        )
+        let data = try JSONEncoder().encode(policy)
+        let decoded = try JSONDecoder().decode(TTSStitchPolicy.self, from: data)
+        #expect(decoded == policy)
+    }
+
+    @Test
+    func defaultsAreGreedyWithNoPausesOrFade() {
+        let policy = TTSStitchPolicy()
+        #expect(policy.targetCharacters == nil)
+        #expect(policy.preferParagraphBoundaries == false)
+        #expect(policy.sentencePause == .zero)
+        #expect(policy.paragraphPause == .zero)
+        #expect(policy.joinFade == .zero)
     }
 }

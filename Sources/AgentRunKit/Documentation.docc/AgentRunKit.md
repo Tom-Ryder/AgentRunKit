@@ -170,9 +170,11 @@ For a complete walkthrough, see <doc:GettingStarted>.
 - ``TTSSegment``
 - ``TTSSegmentTiming``
 - ``TTSChunk``
+- ``TTSBoundary``
 - ``TTSChunkContext``
 - ``TTSManifestEntry``
 - ``TTSConcatenationResult``
+- ``TTSStitchPolicy``
 - ``TTSOptions``
 
 ### MCP Integration

@@ -5,55 +5,156 @@ enum SentenceChunker {
     struct Chunk: Equatable {
         let text: String
         let sourceRange: Range<Int>
+        let trailingBoundary: TTSBoundary
     }
 
-    static func chunk(text: String, maxCharacters: Int) -> [Chunk] {
+    static func chunk(
+        text: String,
+        maxCharacters: Int,
+        targetCharacters: Int? = nil,
+        preferParagraphBoundaries: Bool = false
+    ) -> [Chunk] {
         precondition(maxCharacters >= 1, "maxCharacters must be at least 1")
+        if let targetCharacters {
+            precondition(targetCharacters >= 1, "targetCharacters must be at least 1")
+        }
 
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return [] }
 
         let trimShift = trimByteOffset(in: text)
-        let sentenceRanges = enumerateSentences(trimmed)
+        let pieces = rawPieces(
+            in: trimmed,
+            maxCharacters: maxCharacters,
+            targetCharacters: targetCharacters,
+            preferParagraphBoundaries: preferParagraphBoundaries
+        )
 
-        var chunks: [Chunk] = []
+        return pieces.enumerated().map { index, piece in
+            let boundary: TTSBoundary =
+                if index == pieces.count - 1 {
+                    .end
+                } else if piece.withinSentence {
+                    .withinSentence
+                } else {
+                    classifySeam(in: trimmed, at: piece.upper)
+                }
+            return Chunk(
+                text: piece.text,
+                sourceRange: sourceRange(lower: piece.lower, upper: piece.upper, in: trimmed, shiftedBy: trimShift),
+                trailingBoundary: boundary
+            )
+        }
+    }
+
+    private static func rawPieces(
+        in trimmed: String,
+        maxCharacters: Int,
+        targetCharacters: Int?,
+        preferParagraphBoundaries: Bool
+    ) -> [RawPiece] {
+        var pieces: [RawPiece] = []
         var accumulator = ChunkAccumulator()
 
-        for range in sentenceRanges {
+        for range in enumerateSentences(trimmed) {
             let sentence = trimmed[range]
+
             if sentence.count > maxCharacters {
-                if let chunk = accumulator.flush(in: trimmed, shiftedBy: trimShift) {
-                    chunks.append(chunk)
+                if let piece = accumulator.flush() { pieces.append(piece) }
+                let split = splitOversized(sentence, maxCharacters: maxCharacters)
+                for (offset, piece) in split.enumerated() {
+                    pieces.append(RawPiece(
+                        text: piece.text,
+                        lower: piece.lower,
+                        upper: piece.upper,
+                        withinSentence: offset < split.count - 1
+                    ))
                 }
-                chunks.append(contentsOf: splitOversized(
-                    sentence,
-                    maxCharacters: maxCharacters,
-                    trimmed: trimmed,
-                    shiftedBy: trimShift
-                ))
-            } else if accumulator.text.count + sentence.count <= maxCharacters {
-                accumulator.extend(
-                    with: String(sentence),
-                    lower: range.lowerBound,
-                    upper: range.upperBound
-                )
+                continue
+            }
+
+            if sentence.allSatisfy(\.isWhitespace) {
+                absorbWhitespace(sentence, range: range, into: &accumulator, pieces: &pieces)
+                continue
+            }
+
+            if accumulator.isEmpty {
+                accumulator.reset(to: String(sentence), lower: range.lowerBound, upper: range.upperBound)
+            } else if accumulator.count + sentence.count > maxCharacters {
+                if let piece = accumulator.flush() { pieces.append(piece) }
+                accumulator.reset(to: String(sentence), lower: range.lowerBound, upper: range.upperBound)
+            } else if let targetCharacters, accumulator.count >= targetCharacters,
+                      shouldCut(accumulator, in: trimmed, preferParagraphBoundaries: preferParagraphBoundaries) {
+                if let piece = accumulator.flush() { pieces.append(piece) }
+                accumulator.reset(to: String(sentence), lower: range.lowerBound, upper: range.upperBound)
             } else {
-                if let chunk = accumulator.flush(in: trimmed, shiftedBy: trimShift) {
-                    chunks.append(chunk)
-                }
-                accumulator.reset(
-                    to: String(sentence),
-                    lower: range.lowerBound,
-                    upper: range.upperBound
-                )
+                accumulator.extend(with: String(sentence), upper: range.upperBound)
             }
         }
 
-        if let chunk = accumulator.flush(in: trimmed, shiftedBy: trimShift) {
-            chunks.append(chunk)
-        }
+        if let piece = accumulator.flush() { pieces.append(piece) }
+        return pieces
+    }
 
-        return chunks
+    private static func absorbWhitespace(
+        _ sentence: Substring,
+        range: Range<String.Index>,
+        into accumulator: inout ChunkAccumulator,
+        pieces: inout [RawPiece]
+    ) {
+        if !accumulator.isEmpty {
+            accumulator.extend(with: String(sentence), upper: range.upperBound)
+        } else if !pieces.isEmpty {
+            pieces[pieces.count - 1].text += String(sentence)
+            pieces[pieces.count - 1].upper = range.upperBound
+        } else {
+            preconditionFailure("the trimmed input cannot begin with a whitespace-only token")
+        }
+    }
+
+    private static func shouldCut(
+        _ accumulator: ChunkAccumulator,
+        in trimmed: String,
+        preferParagraphBoundaries: Bool
+    ) -> Bool {
+        guard preferParagraphBoundaries, let upper = accumulator.upperIndex else { return true }
+        return classifySeam(in: trimmed, at: upper) == .paragraph
+    }
+
+    private static let paragraphSeparator: Character = "\u{2029}"
+
+    private static func classifySeam(in trimmed: String, at seam: String.Index) -> TTSBoundary {
+        var newlines = 0
+        var idx = seam
+        while idx > trimmed.startIndex {
+            let prev = trimmed.index(before: idx)
+            let character = trimmed[prev]
+            if character == paragraphSeparator {
+                return .paragraph
+            }
+            if character.isNewline {
+                newlines += 1
+                if newlines >= 2 { return .paragraph }
+            } else if !character.isWhitespace {
+                break
+            }
+            idx = prev
+        }
+        idx = seam
+        while idx < trimmed.endIndex {
+            let character = trimmed[idx]
+            if character == paragraphSeparator {
+                return .paragraph
+            }
+            if character.isNewline {
+                newlines += 1
+                if newlines >= 2 { return .paragraph }
+            } else if !character.isWhitespace {
+                break
+            }
+            idx = trimmed.index(after: idx)
+        }
+        return newlines >= 2 ? .paragraph : .sentence
     }
 
     private static func enumerateSentences(_ text: String) -> [Range<String.Index>] {
@@ -67,76 +168,52 @@ enum SentenceChunker {
         return ranges
     }
 
-    private static func splitOversized(
-        _ sentence: Substring,
-        maxCharacters: Int,
-        trimmed: String,
-        shiftedBy trimShift: Int
-    ) -> [Chunk] {
+    private static func splitOversized(_ sentence: Substring, maxCharacters: Int) -> [RawPiece] {
         let words = sentence.split(separator: " ", omittingEmptySubsequences: true)
-        var chunks: [Chunk] = []
+        var pieces: [RawPiece] = []
         var accumulator = ChunkAccumulator()
 
         for word in words {
             if word.count > maxCharacters {
-                if let chunk = accumulator.flush(in: trimmed, shiftedBy: trimShift) {
-                    chunks.append(chunk)
-                }
-                chunks.append(contentsOf: splitAtCharacterBoundaries(
-                    word,
-                    maxCharacters: maxCharacters,
-                    trimmed: trimmed,
-                    shiftedBy: trimShift
-                ))
+                if let piece = accumulator.flush() { pieces.append(piece) }
+                pieces.append(contentsOf: splitAtCharacterBoundaries(word, maxCharacters: maxCharacters))
                 continue
             }
 
-            let separator = accumulator.text.isEmpty ? "" : " "
-            if accumulator.text.count + separator.count + word.count <= maxCharacters {
-                accumulator.extend(
-                    with: separator + word,
-                    lower: word.startIndex,
-                    upper: word.endIndex
-                )
-            } else {
-                if let chunk = accumulator.flush(in: trimmed, shiftedBy: trimShift) {
-                    chunks.append(chunk)
+            let separator = accumulator.isEmpty ? "" : " "
+            if accumulator.count + separator.count + word.count <= maxCharacters {
+                if accumulator.isEmpty {
+                    accumulator.reset(to: String(word), lower: word.startIndex, upper: word.endIndex)
+                } else {
+                    accumulator.extend(with: separator + word, upper: word.endIndex)
                 }
-                accumulator.reset(
-                    to: String(word),
-                    lower: word.startIndex,
-                    upper: word.endIndex
-                )
+            } else {
+                if let piece = accumulator.flush() { pieces.append(piece) }
+                accumulator.reset(to: String(word), lower: word.startIndex, upper: word.endIndex)
             }
         }
 
-        if let chunk = accumulator.flush(in: trimmed, shiftedBy: trimShift) {
-            chunks.append(chunk)
-        }
-
-        return chunks
+        if let piece = accumulator.flush() { pieces.append(piece) }
+        return pieces
     }
 
-    private static func splitAtCharacterBoundaries(
-        _ word: Substring,
-        maxCharacters: Int,
-        trimmed: String,
-        shiftedBy trimShift: Int
-    ) -> [Chunk] {
-        var chunks: [Chunk] = []
+    private static func splitAtCharacterBoundaries(_ word: Substring, maxCharacters: Int) -> [RawPiece] {
+        var pieces: [RawPiece] = []
         var startIndex = word.startIndex
         while startIndex < word.endIndex {
             let endIndex = word.index(startIndex, offsetBy: maxCharacters, limitedBy: word.endIndex) ?? word.endIndex
-            chunks.append(Chunk(
+            pieces.append(RawPiece(
                 text: String(word[startIndex ..< endIndex]),
-                sourceRange: sourceRange(lower: startIndex, upper: endIndex, in: trimmed, shiftedBy: trimShift)
+                lower: startIndex,
+                upper: endIndex,
+                withinSentence: false
             ))
             startIndex = endIndex
         }
-        return chunks
+        return pieces
     }
 
-    fileprivate static func sourceRange(
+    private static func sourceRange(
         lower: String.Index,
         upper: String.Index,
         in trimmed: String,
@@ -155,13 +232,31 @@ enum SentenceChunker {
     }
 }
 
+private struct RawPiece {
+    var text: String
+    var lower: String.Index
+    var upper: String.Index
+    var withinSentence: Bool
+}
+
 private struct ChunkAccumulator {
     private(set) var text: String = ""
     private var lower: String.Index?
     private var upper: String.Index?
 
-    mutating func extend(with addition: String, lower newLower: String.Index, upper newUpper: String.Index) {
-        if text.isEmpty { lower = newLower }
+    var isEmpty: Bool {
+        text.isEmpty
+    }
+
+    var count: Int {
+        text.count
+    }
+
+    var upperIndex: String.Index? {
+        upper
+    }
+
+    mutating func extend(with addition: String, upper newUpper: String.Index) {
         text += addition
         upper = newUpper
     }
@@ -172,18 +267,13 @@ private struct ChunkAccumulator {
         upper = newUpper
     }
 
-    mutating func flush(in trimmed: String, shiftedBy trimShift: Int) -> SentenceChunker.Chunk? {
+    mutating func flush() -> RawPiece? {
         defer {
             text = ""
             lower = nil
             upper = nil
         }
         guard !text.isEmpty, let lower, let upper else { return nil }
-        return SentenceChunker.Chunk(
-            text: text,
-            sourceRange: SentenceChunker.sourceRange(
-                lower: lower, upper: upper, in: trimmed, shiftedBy: trimShift
-            )
-        )
+        return RawPiece(text: text, lower: lower, upper: upper, withinSentence: false)
     }
 }

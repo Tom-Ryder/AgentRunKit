@@ -7,6 +7,11 @@ private func manifestTestPCMData(for text: String) -> Data {
     return Data(repeating: marker, count: text.utf8.count * 3)
 }
 
+private func alignedPCMData(for text: String) -> Data {
+    let marker = UInt8(text.utf8.reduce(0) { ($0 + Int($1)) % 251 })
+    return Data(repeating: marker, count: text.utf8.count * 4)
+}
+
 struct TTSClientManifestTests {
     @Test
     func generateWithManifestProducesEntryPerChunkInOrder() async throws {
@@ -322,12 +327,13 @@ private struct PCMEncodingScenario {
     let bitsPerSample: Int
 }
 
-private struct EncodingAwarePCMProvider: TTSProvider {
+private actor EncodingAwarePCMProvider: TTSProvider {
     let config: TTSProviderConfig
     let sampleRate: Int
     let channels: Int
     let bitsPerSample: Int
     let dataFactory: @Sendable (String) -> Data
+    private(set) var generateCallCount = 0
 
     init(
         sampleRate: Int = 24000,
@@ -348,7 +354,7 @@ private struct EncodingAwarePCMProvider: TTSProvider {
         self.dataFactory = dataFactory
     }
 
-    func resolvedEncoding(for format: TTSAudioFormat, options _: TTSOptions) -> TTSAudioEncoding {
+    nonisolated func resolvedEncoding(for format: TTSAudioFormat, options _: TTSOptions) -> TTSAudioEncoding {
         switch format {
         case .pcm:
             TTSAudioEncoding(format, sampleRate: sampleRate, channels: channels, bitsPerSample: bitsPerSample)
@@ -363,7 +369,8 @@ private struct EncodingAwarePCMProvider: TTSProvider {
         options _: TTSOptions,
         context _: TTSChunkContext
     ) async -> Data {
-        dataFactory(text)
+        generateCallCount += 1
+        return dataFactory(text)
     }
 }
 
@@ -611,5 +618,145 @@ struct TTSClientSingleShotEncodingTests {
         #expect(context.encoding.sampleRate == 24000)
         #expect(context.encoding.channels == 1)
         #expect(context.encoding.bitsPerSample == 16)
+    }
+}
+
+struct TTSClientStitchTests {
+    @Test
+    func stitchOnNonPCMOutputThrowsBeforeSynthesis() async {
+        let provider = MockTTSProvider(
+            config: TTSProviderConfig(maxChunkCharacters: 20, defaultVoice: "alloy", defaultFormat: .wav)
+        )
+        let client = TTSClient(provider: provider)
+        do {
+            _ = try await client.generateWithManifest(
+                text: "First sentence. Second sentence.",
+                stitch: TTSStitchPolicy(sentencePause: .milliseconds(100))
+            )
+            Issue.record("Expected invalidConfiguration")
+        } catch let error as TTSError {
+            guard case .invalidConfiguration = error else {
+                Issue.record("Expected invalidConfiguration, got \(error)")
+                return
+            }
+        } catch {
+            Issue.record("Expected TTSError, got \(type(of: error)): \(error)")
+        }
+        let calls = await provider.getCallCount()
+        #expect(calls == 0)
+    }
+
+    @Test
+    func stitchOnNon16BitPCMThrowsBeforeSynthesis() async {
+        let provider = EncodingAwarePCMProvider(bitsPerSample: 24)
+        let client = TTSClient(provider: provider)
+        do {
+            _ = try await client.generateWithManifest(
+                text: "First sentence. Second sentence.",
+                stitch: TTSStitchPolicy(sentencePause: .milliseconds(100))
+            )
+            Issue.record("Expected invalidConfiguration")
+        } catch let error as TTSError {
+            guard case .invalidConfiguration = error else {
+                Issue.record("Expected invalidConfiguration, got \(error)")
+                return
+            }
+        } catch {
+            Issue.record("Expected TTSError, got \(type(of: error)): \(error)")
+        }
+        let calls = await provider.generateCallCount
+        #expect(calls == 0)
+    }
+
+    @Test
+    func stitchRejectsMisalignedPCMSegment() async {
+        let provider = EncodingAwarePCMProvider(
+            maxChunkCharacters: 200,
+            dataFactory: { _ in Data([0x01, 0x02, 0x03]) }
+        )
+        let client = TTSClient(provider: provider)
+        do {
+            _ = try await client.generateWithManifest(
+                text: "Hello there.",
+                stitch: TTSStitchPolicy(sentencePause: .milliseconds(50))
+            )
+            Issue.record("Expected invalidConfiguration")
+        } catch let error as TTSError {
+            guard case .invalidConfiguration = error else {
+                Issue.record("Expected invalidConfiguration, got \(error)")
+                return
+            }
+        } catch {
+            Issue.record("Expected TTSError, got \(type(of: error)): \(error)")
+        }
+    }
+
+    @Test
+    func allZeroPolicyMatchesRawConcatenation() async throws {
+        let provider = EncodingAwarePCMProvider(maxChunkCharacters: 20, dataFactory: alignedPCMData(for:))
+        let client = TTSClient(provider: provider)
+        let text = "First sentence. Second sentence. Third sentence."
+        let raw = try await client.generateWithManifest(text: text)
+        let zeroStitch = try await client.generateWithManifest(text: text, stitch: TTSStitchPolicy())
+        #expect(raw.audio == zeroStitch.audio)
+        #expect(
+            raw.manifest.map(\.timing.byteRangeInConcatenatedAudio)
+                == zeroStitch.manifest.map(\.timing.byteRangeInConcatenatedAudio)
+        )
+    }
+
+    @Test
+    func stitchedManifestRangesSliceToSegmentsAndGapsAreSilence() async throws {
+        let provider = EncodingAwarePCMProvider(maxChunkCharacters: 200, dataFactory: alignedPCMData(for:))
+        let client = TTSClient(provider: provider)
+        let text = "First sentence here. Second sentence here. Third sentence here."
+        let policy = TTSStitchPolicy(targetCharacters: 15, sentencePause: .milliseconds(100))
+        let result = try await client.generateWithManifest(text: text, stitch: policy)
+
+        #expect(result.manifest.count >= 2)
+        var cursor = 0
+        for entry in result.manifest {
+            let range = try #require(entry.timing.byteRangeInConcatenatedAudio)
+            if range.lowerBound > cursor {
+                let gap = result.audio.subdata(in: cursor ..< range.lowerBound)
+                #expect(gap.allSatisfy { $0 == 0 })
+            }
+            #expect(result.audio.subdata(in: range) == alignedPCMData(for: entry.chunk.text))
+            #expect(entry.timing.durationSeconds == Double(range.count) / 48000.0)
+            cursor = range.upperBound
+        }
+        #expect(cursor == result.audio.count)
+
+        let segmentBytes = result.manifest.reduce(0) { $0 + ($1.timing.byteRangeInConcatenatedAudio?.count ?? 0) }
+        #expect(result.audio.count > segmentBytes)
+    }
+
+    @Test
+    func stitchedGapsMatchPreviousBoundaryPause() async throws {
+        let provider = EncodingAwarePCMProvider(maxChunkCharacters: 200, dataFactory: alignedPCMData(for:))
+        let client = TTSClient(provider: provider)
+        let text = "Alpha line one. Beta line two.\n\nGamma line three. Delta line four."
+        let policy = TTSStitchPolicy(
+            targetCharacters: 14,
+            sentencePause: .milliseconds(100),
+            paragraphPause: .milliseconds(400)
+        )
+        let result = try await client.generateWithManifest(text: text, stitch: policy)
+        #expect(result.manifest.contains { $0.chunk.trailingBoundary == .paragraph })
+
+        var cursor = 0
+        var previousBoundary: TTSBoundary?
+        for entry in result.manifest {
+            let range = try #require(entry.timing.byteRangeInConcatenatedAudio)
+            let gap = range.lowerBound - cursor
+            switch previousBoundary {
+            case .sentence: #expect(gap == 4800)
+            case .paragraph: #expect(gap == 19200)
+            case .withinSentence, .end, .none: #expect(gap == 0)
+            }
+            cursor = range.upperBound
+            previousBoundary = entry.chunk.trailingBoundary
+        }
+        #expect(cursor == result.audio.count)
     }
 }

@@ -118,7 +118,7 @@ These methods cover different use cases:
 | `generate(text:voice:options:)` | `Data` | Single request, no chunking |
 | `stream(text:voice:options:)` | `AsyncThrowingStream<TTSSegment, Error>` | Chunked, yields ordered ``TTSSegment`` values as they complete |
 | `generateAll(text:voice:options:)` | `Data` | Chunked, concatenates all segments into one `Data` |
-| `generateWithManifest(text:voice:options:)` | ``TTSConcatenationResult`` | Like `generateAll` but also returns a per-segment manifest of chunk, encoding, and timing |
+| `generateWithManifest(text:voice:options:stitch:)` | ``TTSConcatenationResult`` | Like `generateAll` but also returns a per-segment manifest; an optional ``TTSStitchPolicy`` stitches PCM with boundary-keyed pauses |
 | `chunks(for:)` | `[TTSChunk]` | The chunk plan this client will use, without invoking the provider |
 
 ```swift
@@ -167,10 +167,10 @@ Unsupported values are reported as `nil` rather than guessed. Duration for `pcm`
 `bytes / (sampleRate * channels * (bitsPerSample / 8))` when the provider's
 ``TTSProvider/resolvedEncoding(for:options:)`` returns a fully populated ``TTSAudioEncoding``.
 Built-in providers override the hook only with values they have published documentation for.
-``OpenAITTSProvider`` populates `pcm` `sampleRate` and `bitsPerSample` from OpenAI's
-`/v1/audio/speech` documentation but leaves `channels` `nil` until the speech endpoint's channel
-count is documented separately, so OpenAI `pcm` `durationSeconds` remains `nil`. Custom providers
-using the protocol's default implementation report `nil` PCM fields and therefore `nil` duration.
+``OpenAITTSProvider`` populates `pcm` `sampleRate` (24000), `channels` (1, mono), and `bitsPerSample`
+(16) from OpenAI's `/v1/audio/speech` documentation, so OpenAI `pcm` segments carry a computed
+`durationSeconds`. Custom providers using the protocol's default implementation report `nil` PCM
+fields and therefore `nil` duration.
 
 ### TTSOptions
 
@@ -183,7 +183,10 @@ using the protocol's default implementation report `nil` PCM fields and therefor
 
 The chunker splits input text on sentence boundaries using `NLTokenizer`. Sentences are packed up to
 the provider's `maxChunkCharacters` limit. Oversized sentences fall back to word-level, then
-character-level splitting.
+character-level splitting. Every ``TTSChunk`` records the ``TTSBoundary`` immediately following it
+(sentence, paragraph, within-sentence, or end), classified from the original text so callers and the
+stitcher can tell where one sentence or paragraph ends and the next begins. Blank-line whitespace is
+folded into the adjacent chunk, so a chunk is never pure whitespace.
 
 ``TTSClient`` dispatches up to `maxConcurrent` chunk requests in parallel. Results are buffered and
 yielded in original order.
@@ -203,6 +206,43 @@ the provider. Use it to forecast chunk identity before generation or to drive of
 manifest of chunk, encoding, and timing.
 
 For MP3 output, the concatenator strips ID3v2 headers, Xing/Info frames, and ID3v1 tails from interior segments for clean concatenation.
+
+### Stitching PCM
+
+Long narration assembled from short chunks has audible seams: independent draws joined with no gap,
+and no end-of-sentence or end-of-paragraph pause, because each chunk was synthesized without the
+surrounding structure. Pass a ``TTSStitchPolicy`` to
+``TTSClient/generateWithManifest(text:voice:options:stitch:)`` to assemble 16-bit PCM into one stream
+with boundary-keyed pauses and edge fades.
+
+```swift
+let policy = TTSStitchPolicy(
+    targetCharacters: 240,
+    preferParagraphBoundaries: true,
+    sentencePause: .milliseconds(220),
+    paragraphPause: .milliseconds(600),
+    joinFade: .milliseconds(6)
+)
+let result = try await tts.generateWithManifest(
+    text: script,
+    options: TTSOptions(responseFormat: .pcm),
+    stitch: policy
+)
+```
+
+The policy couples two decisions. `targetCharacters` and `preferParagraphBoundaries` steer the chunker
+to fill toward a soft size target and cut on a sentence or, when one is near, a paragraph boundary, so
+each cut lands where the model already placed its own pause. `sentencePause`, `paragraphPause`, and
+`joinFade` then insert silence of the boundary-appropriate length and fade each segment edge into it.
+Within-sentence seams, from an oversized sentence, are joined directly with no pause.
+
+The manifest stays truthful: each ``TTSSegmentTiming/byteRangeInConcatenatedAudio`` still covers that
+segment's audio, inserted pauses are the gaps between consecutive ranges, and `durationSeconds`
+reflects the stitched output. Stitching is deterministic for a given chunk plan and policy. It
+requires 16-bit PCM with a known sample rate and channel count; any other output throws
+``TTSError/invalidConfiguration(_:)``. Without a policy,
+``TTSClient/generateWithManifest(text:voice:options:stitch:)`` concatenates the segments raw, exactly
+as ``TTSClient/generateAll(text:voice:options:)`` does.
 
 ### Custom Providers
 
@@ -276,9 +316,11 @@ let (data, response) = try await HTTPDataRetry.perform(
 - ``TTSSegment``
 - ``TTSSegmentTiming``
 - ``TTSChunk``
+- ``TTSBoundary``
 - ``TTSChunkContext``
 - ``TTSAudioEncoding``
 - ``TTSManifestEntry``
 - ``TTSConcatenationResult``
+- ``TTSStitchPolicy``
 - ``TTSOptions``
 - ``HTTPDataRetry``

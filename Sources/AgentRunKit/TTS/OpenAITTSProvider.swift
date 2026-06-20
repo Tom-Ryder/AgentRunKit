@@ -37,7 +37,7 @@ public struct OpenAITTSProvider: TTSProvider, Sendable {
     ) -> TTSAudioEncoding {
         switch format {
         case .pcm:
-            TTSAudioEncoding(format, sampleRate: 24000, bitsPerSample: 16)
+            TTSAudioEncoding(format, sampleRate: 24000, channels: 1, bitsPerSample: 16)
         case .mp3, .opus, .aac, .flac, .wav:
             TTSAudioEncoding(format)
         }
