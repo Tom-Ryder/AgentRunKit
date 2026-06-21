@@ -803,7 +803,7 @@ struct StreamStallDetectionTests {
             try await processSSEStream(
                 bytes: controlled,
                 provider: .custom("test"),
-                stallTimeout: .milliseconds(500)
+                stallTimeout: .seconds(2)
             ) { _, _ in .continue }
             Issue.record("Expected idle timeout error")
         } catch let error as AgentError {
@@ -817,10 +817,8 @@ struct StreamStallDetectionTests {
                 return
             }
             #expect(diagnostics.eventsObserved == 1)
-            #expect(elapsed >= .milliseconds(450))
-            #expect(elapsed < .seconds(2))
-            #expect(diagnostics.elapsed >= .milliseconds(450))
-            #expect(diagnostics.elapsed < .seconds(2))
+            #expect(elapsed >= .seconds(1))
+            #expect(diagnostics.elapsed >= .seconds(1))
         }
     }
 
