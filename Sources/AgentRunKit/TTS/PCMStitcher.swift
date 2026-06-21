@@ -10,18 +10,22 @@ enum PCMStitcher {
         precondition(segments.count == boundaries.count, "segments and boundaries must be aligned")
 
         let bytesPerFrame = format.bytesPerFrame
-        let sentencePause = frameCount(policy.sentencePause, sampleRate: format.sampleRate) * bytesPerFrame
-        let paragraphPause = frameCount(policy.paragraphPause, sampleRate: format.sampleRate) * bytesPerFrame
-        let fadeFrames = frameCount(policy.joinFade, sampleRate: format.sampleRate)
+        let sentencePause = PCMSeam.frameCount(policy.sentencePause, sampleRate: format.sampleRate)
+        let paragraphPause = PCMSeam.frameCount(policy.paragraphPause, sampleRate: format.sampleRate)
+        let fadeFrames = PCMSeam.frameCount(policy.joinFade, sampleRate: format.sampleRate)
 
         var audio = Data()
         var ranges: [Range<Int>] = []
         ranges.reserveCapacity(segments.count)
 
         for index in segments.indices {
-            let trailingPause = pauseBytes(for: boundaries[index], sentence: sentencePause, paragraph: paragraphPause)
+            let trailingPause = PCMSeam.pauseFrames(
+                for: boundaries[index],
+                sentence: sentencePause,
+                paragraph: paragraphPause
+            )
             let leadingPause = index > 0
-                ? pauseBytes(for: boundaries[index - 1], sentence: sentencePause, paragraph: paragraphPause)
+                ? PCMSeam.pauseFrames(for: boundaries[index - 1], sentence: sentencePause, paragraph: paragraphPause)
                 : 0
 
             var segment = segments[index]
@@ -39,27 +43,11 @@ enum PCMStitcher {
             audio.append(segment)
             ranges.append(lower ..< audio.count)
             if trailingPause > 0 {
-                audio.append(Data(count: trailingPause))
+                audio.append(Data(count: trailingPause * bytesPerFrame))
             }
         }
 
         return (audio, ranges)
-    }
-
-    private static func pauseBytes(for boundary: TTSBoundary, sentence: Int, paragraph: Int) -> Int {
-        switch boundary {
-        case .sentence: sentence
-        case .paragraph: paragraph
-        case .withinSentence, .end: 0
-        }
-    }
-
-    private static func frameCount(_ duration: Duration, sampleRate: Int) -> Int {
-        guard duration > .zero else { return 0 }
-        let seconds = Double(duration.components.seconds) + Double(duration.components.attoseconds) / 1e18
-        let frames = (seconds * Double(sampleRate)).rounded()
-        guard frames >= 1 else { return 0 }
-        return Int(min(frames, Double(Int.max / 4)))
     }
 
     private static func applyEdgeFades(
@@ -84,7 +72,7 @@ enum PCMStitcher {
                 scaleFrame(
                     &bytes,
                     frame: frame,
-                    gain: gain(step: frame, fade: fade),
+                    gain: PCMSeam.fadeGain(step: frame, fade: fade),
                     channels: channels,
                     bytesPerFrame: bytesPerFrame
                 )
@@ -95,7 +83,7 @@ enum PCMStitcher {
                 scaleFrame(
                     &bytes,
                     frame: totalFrames - 1 - offset,
-                    gain: gain(step: offset, fade: fade),
+                    gain: PCMSeam.fadeGain(step: offset, fade: fade),
                     channels: channels,
                     bytesPerFrame: bytesPerFrame
                 )
@@ -120,10 +108,5 @@ enum PCMStitcher {
             bytes[low] = UInt8(bits & 0x00FF)
             bytes[low + 1] = UInt8(bits >> 8)
         }
-    }
-
-    private static func gain(step: Int, fade: Int) -> Double {
-        let position = (Double(step) + 0.5) / Double(fade)
-        return position * position * (3 - 2 * position)
     }
 }

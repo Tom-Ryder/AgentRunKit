@@ -175,6 +175,9 @@ For a complete walkthrough, see <doc:GettingStarted>.
 - ``TTSManifestEntry``
 - ``TTSConcatenationResult``
 - ``TTSStitchPolicy``
+- ``TTSLoudnessMatch``
+- ``TTSLoudnessMeasurement``
+- ``TTSLoudnessSummary``
 - ``TTSOptions``
 
 ### MCP Integration

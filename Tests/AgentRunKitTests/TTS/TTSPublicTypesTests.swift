@@ -210,6 +210,33 @@ struct TTSManifestEntryTests {
                 + #""timing":{}}"#
         #expect(json == expected)
     }
+
+    @Test
+    func wireFormatLocksLoudnessKeysWhenPopulated() throws {
+        let entry = TTSManifestEntry(
+            chunk: TTSChunk(index: 0, total: 1, text: "Hi.", sourceRange: 0 ..< 3, trailingBoundary: .end),
+            encoding: TTSAudioEncoding(
+                format: .pcm,
+                mimeType: "audio/L16",
+                fileExtension: "pcm",
+                sampleRate: 24000,
+                channels: 1,
+                bitsPerSample: 16
+            ),
+            timing: TTSSegmentTiming(byteRangeInConcatenatedAudio: 0 ..< 12, durationSeconds: 0.5),
+            loudness: TTSLoudnessMeasurement(integratedLUFS: -18.5, appliedGainDB: 1.25)
+        )
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        let json = try #require(try String(data: encoder.encode(entry), encoding: .utf8))
+        let expected =
+            #"{"chunk":{"index":0,"sourceRange":[0,3],"text":"Hi.","total":1,"trailingBoundary":"end"},"#
+                + #""encoding":{"bitsPerSample":16,"channels":1,"fileExtension":"pcm","#
+                + #""format":"pcm","mimeType":"audio\/L16","sampleRate":24000},"#
+                + #""loudness":{"appliedGainDB":1.25,"integratedLUFS":-18.5},"#
+                + #""timing":{"byteRangeInConcatenatedAudio":[0,12],"durationSeconds":0.5}}"#
+        #expect(json == expected)
+    }
 }
 
 struct TTSConcatenationResultTests {
@@ -289,7 +316,8 @@ struct TTSStitchPolicyTests {
             preferParagraphBoundaries: true,
             sentencePause: .milliseconds(200),
             paragraphPause: .milliseconds(600),
-            joinFade: .milliseconds(6)
+            joinFade: .milliseconds(6),
+            loudness: TTSLoudnessMatch(target: .lufs(-16), maxCorrectionDB: 2, truePeakCeilingDBTP: -2)
         )
         let data = try JSONEncoder().encode(policy)
         let decoded = try JSONDecoder().decode(TTSStitchPolicy.self, from: data)
@@ -304,5 +332,101 @@ struct TTSStitchPolicyTests {
         #expect(policy.sentencePause == .zero)
         #expect(policy.paragraphPause == .zero)
         #expect(policy.joinFade == .zero)
+        #expect(policy.loudness == nil)
+    }
+}
+
+struct TTSLoudnessMatchTests {
+    @Test
+    func defaultsAreProgramMedianWithStandardClampAndCeiling() {
+        let match = TTSLoudnessMatch()
+        #expect(match.target == .programMedian)
+        #expect(match.maxCorrectionDB == 3.0)
+        #expect(match.truePeakCeilingDBTP == -1.0)
+    }
+
+    @Test
+    func codableRoundTripPreservesTargetAndKnobs() throws {
+        for target in [TTSLoudnessMatch.Target.programMedian, .lufs(-16)] {
+            let match = TTSLoudnessMatch(target: target, maxCorrectionDB: 2, truePeakCeilingDBTP: -2)
+            let data = try JSONEncoder().encode(match)
+            #expect(try JSONDecoder().decode(TTSLoudnessMatch.self, from: data) == match)
+        }
+    }
+
+    @Test
+    func wireFormatLocksMatchKeys() throws {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        let median = TTSLoudnessMatch(maxCorrectionDB: 3, truePeakCeilingDBTP: -1)
+        #expect(try String(data: encoder.encode(median), encoding: .utf8) ==
+            #"{"maxCorrectionDB":3,"target":{"programMedian":{}},"truePeakCeilingDBTP":-1}"#)
+        let absolute = TTSLoudnessMatch(target: .lufs(-16), maxCorrectionDB: 2, truePeakCeilingDBTP: -2)
+        #expect(try String(data: encoder.encode(absolute), encoding: .utf8) ==
+            #"{"maxCorrectionDB":2,"target":{"lufs":{"_0":-16}},"truePeakCeilingDBTP":-2}"#)
+    }
+
+    @Test
+    func decodingRejectsOutOfDomainKnobs() {
+        let decoder = JSONDecoder()
+        let negativeClamp = #"{"maxCorrectionDB":-3,"target":{"programMedian":{}},"truePeakCeilingDBTP":-1}"#
+        #expect(throws: DecodingError.self) {
+            try decoder.decode(TTSLoudnessMatch.self, from: Data(negativeClamp.utf8))
+        }
+        let positiveTarget = #"{"maxCorrectionDB":3,"target":{"lufs":{"_0":5}},"truePeakCeilingDBTP":-1}"#
+        #expect(throws: DecodingError.self) {
+            try decoder.decode(TTSLoudnessMatch.self, from: Data(positiveTarget.utf8))
+        }
+    }
+}
+
+struct TTSLoudnessMeasurementTests {
+    @Test
+    func measurementCodableRoundTripPreservesMeasuredAndUnmeasuredFields() throws {
+        for lufs in [Double?.none, -18.5] {
+            let measurement = TTSLoudnessMeasurement(integratedLUFS: lufs, appliedGainDB: 1.25)
+            let data = try JSONEncoder().encode(measurement)
+            #expect(try JSONDecoder().decode(TTSLoudnessMeasurement.self, from: data) == measurement)
+        }
+    }
+
+    @Test
+    func summaryCodableRoundTripPreservesFields() throws {
+        let summary = TTSLoudnessSummary(
+            achievedLUFS: -16.1,
+            requestedTargetLUFS: -16,
+            appliedTrimDB: -0.4,
+            truePeakDBTP: -1.0
+        )
+        let data = try JSONEncoder().encode(summary)
+        #expect(try JSONDecoder().decode(TTSLoudnessSummary.self, from: data) == summary)
+    }
+
+    @Test
+    func wireFormatLocksMeasurementKeysAndOmitsNilLUFS() throws {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        let measured = TTSLoudnessMeasurement(integratedLUFS: -18.5, appliedGainDB: 1.25)
+        #expect(try String(data: encoder.encode(measured), encoding: .utf8) ==
+            #"{"appliedGainDB":1.25,"integratedLUFS":-18.5}"#)
+        let unmeasured = TTSLoudnessMeasurement(integratedLUFS: nil, appliedGainDB: 0.5)
+        #expect(try String(data: encoder.encode(unmeasured), encoding: .utf8) ==
+            #"{"appliedGainDB":0.5}"#)
+    }
+
+    @Test
+    func wireFormatLocksSummaryKeysAndOmitsNilFields() throws {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        let summary = TTSLoudnessSummary(
+            achievedLUFS: -16.1, requestedTargetLUFS: -16, appliedTrimDB: -0.4, truePeakDBTP: -1.0
+        )
+        #expect(try String(data: encoder.encode(summary), encoding: .utf8) ==
+            #"{"achievedLUFS":-16.1,"appliedTrimDB":-0.4,"requestedTargetLUFS":-16,"truePeakDBTP":-1}"#)
+        let bare = TTSLoudnessSummary(
+            achievedLUFS: nil, requestedTargetLUFS: nil, appliedTrimDB: 0, truePeakDBTP: nil
+        )
+        #expect(try String(data: encoder.encode(bare), encoding: .utf8) ==
+            #"{"appliedTrimDB":0}"#)
     }
 }

@@ -13,13 +13,16 @@ public struct TTSStitchPolicy: Sendable, Equatable, Hashable, Codable {
     public let paragraphPause: Duration
     /// Edge fade applied into and out of each inserted pause to suppress clicks.
     public let joinFade: Duration
+    /// Loudness matching applied across the assembled PCM chunks, or nil to leave levels untouched.
+    public let loudness: TTSLoudnessMatch?
 
     public init(
         targetCharacters: Int? = nil,
         preferParagraphBoundaries: Bool = false,
         sentencePause: Duration = .zero,
         paragraphPause: Duration = .zero,
-        joinFade: Duration = .zero
+        joinFade: Duration = .zero,
+        loudness: TTSLoudnessMatch? = nil
     ) {
         if let targetCharacters {
             precondition(targetCharacters >= 1, "targetCharacters must be at least 1")
@@ -32,5 +35,6 @@ public struct TTSStitchPolicy: Sendable, Equatable, Hashable, Codable {
         self.sentencePause = sentencePause
         self.paragraphPause = paragraphPause
         self.joinFade = joinFade
+        self.loudness = loudness
     }
 }

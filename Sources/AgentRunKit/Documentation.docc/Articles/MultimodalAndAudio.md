@@ -244,6 +244,51 @@ requires 16-bit PCM with a known sample rate and channel count; any other output
 ``TTSClient/generateWithManifest(text:voice:options:stitch:)`` concatenates the segments raw, exactly
 as ``TTSClient/generateAll(text:voice:options:)`` does.
 
+### Matching Loudness
+
+Each chunk is an independent draw, so loudness can wander from one to the next. Set
+``TTSStitchPolicy/loudness`` to level the chunks to a consistent loudness without flattening the
+performance.
+
+```swift
+let policy = TTSStitchPolicy(
+    sentencePause: .milliseconds(220),
+    loudness: TTSLoudnessMatch(maxCorrectionDB: 3)
+)
+let result = try await tts.generateWithManifest(
+    text: script,
+    options: TTSOptions(responseFormat: .pcm),
+    stitch: policy
+)
+if let achievedLUFS = result.loudness?.achievedLUFS {
+    print("program loudness: \(achievedLUFS) LUFS")
+}
+```
+
+The pass measures each chunk's gated integrated loudness (ITU-R BS.1770), anchors to the program
+median, and applies one scalar gain per chunk bounded by `maxCorrectionDB`. A single per-chunk gain
+corrects the per-draw offset while leaving the chunk's own dynamics intact, and the clamp keeps every
+correction small enough that a genuinely soft chunk is never forced up to match a loud one. A
+true-peak guard then attenuates the whole program if its oversampled true peak would exceed
+`truePeakCeilingDBTP`. All correction happens in floating point and is quantized to 16-bit once, so no
+intermediate stage clips.
+
+``TTSLoudnessMatch/target`` selects the anchor. `.programMedian` levels the chunks to each other and
+imposes no absolute level. `.lufs(_:)` additionally shifts the whole program to an absolute loudness,
+for example -16 LUFS for podcast delivery. Because the program is mono, that figure is the one-channel
+file's loudness; a player that renders it as dual-mono stereo reads it about 3 dB louder. When the
+true-peak ceiling forces the program below an absolute target the shortfall is reported, never hidden:
+``TTSLoudnessSummary/achievedLUFS`` is where the program actually landed and
+``TTSLoudnessSummary/appliedTrimDB`` is how far the guard pulled it down.
+
+Loudness matching populates the manifest with its own measurements. Each ``TTSManifestEntry/loudness``
+carries the segment's measured loudness and the gain applied, and ``TTSConcatenationResult/loudness``
+carries the program-level outcome, so the correction is auditable from the result alone. The pass
+requires mono 16-bit PCM and runs only through
+``TTSClient/generateWithManifest(text:voice:options:stitch:)``; streaming cannot match loudness because
+it has no lookahead over chunks not yet synthesized. The default ceiling is the EBU R128 production
+value of -1 dBTP.
+
 ### Custom Providers
 
 Conform to ``TTSProvider`` to use any speech synthesis backend. ``TTSClient`` delivers a
@@ -322,5 +367,8 @@ let (data, response) = try await HTTPDataRetry.perform(
 - ``TTSManifestEntry``
 - ``TTSConcatenationResult``
 - ``TTSStitchPolicy``
+- ``TTSLoudnessMatch``
+- ``TTSLoudnessMeasurement``
+- ``TTSLoudnessSummary``
 - ``TTSOptions``
 - ``HTTPDataRetry``

@@ -760,3 +760,91 @@ struct TTSClientStitchTests {
         #expect(cursor == result.audio.count)
     }
 }
+
+private func tonePCM(for text: String) -> Data {
+    let hash = text.utf8.reduce(0) { $0 &+ Int($1) }
+    let amplitude = 0.15 + Double(hash % 5) * 0.05
+    let count = 24000
+    var data = Data(capacity: count * 2)
+    for index in 0 ..< count {
+        let sample = amplitude * sin(2 * .pi * 1000 * Double(index) / 24000)
+        let bits = UInt16(bitPattern: Int16((sample * 32767.0).rounded()))
+        data.append(UInt8(bits & 0x00FF))
+        data.append(UInt8(bits >> 8))
+    }
+    return data
+}
+
+struct TTSClientLoudnessTests {
+    @Test
+    func loudnessMatchingPopulatesManifestAndDoesNotWidenSpread() async throws {
+        let provider = EncodingAwarePCMProvider(maxChunkCharacters: 200, dataFactory: tonePCM(for:))
+        let client = TTSClient(provider: provider)
+        let text = "First sentence here. Second one here. Third sentence here. Fourth one here."
+        let policy = TTSStitchPolicy(
+            targetCharacters: 18,
+            sentencePause: .milliseconds(120),
+            loudness: TTSLoudnessMatch(maxCorrectionDB: 6)
+        )
+        let result = try await client.generateWithManifest(text: text, stitch: policy)
+
+        #expect(result.loudness != nil)
+        #expect(result.loudness?.achievedLUFS != nil)
+        #expect(result.manifest.allSatisfy { $0.loudness != nil })
+
+        let measured = try result.manifest.map { try #require($0.loudness?.integratedLUFS) }
+        #expect(measured.count >= 2)
+        let corrected = try result.manifest.map { entry in
+            try #require(entry.loudness?.integratedLUFS) + #require(entry.loudness?.appliedGainDB)
+        }
+        let measuredSpread = try #require(measured.max()) - (try #require(measured.min()))
+        let correctedSpread = try #require(corrected.max()) - (try #require(corrected.min()))
+        #expect(correctedSpread <= measuredSpread + 1e-9)
+        for entry in result.manifest {
+            #expect(try abs(#require(entry.loudness?.appliedGainDB)) <= 6.0 + 1e-9)
+        }
+    }
+
+    @Test
+    func loudnessOnNonMonoThrowsBeforeSynthesis() async {
+        let provider = EncodingAwarePCMProvider(channels: 2)
+        let client = TTSClient(provider: provider)
+        do {
+            _ = try await client.generateWithManifest(
+                text: "First sentence. Second sentence.",
+                stitch: TTSStitchPolicy(loudness: TTSLoudnessMatch())
+            )
+            Issue.record("Expected invalidConfiguration")
+        } catch let error as TTSError {
+            guard case .invalidConfiguration = error else {
+                Issue.record("Expected invalidConfiguration, got \(error)")
+                return
+            }
+        } catch {
+            Issue.record("Expected TTSError, got \(type(of: error)): \(error)")
+        }
+        let calls = await provider.generateCallCount
+        #expect(calls == 0)
+    }
+
+    @Test
+    func loudnessWithoutPausesProducesAudioAndSummary() async throws {
+        let provider = EncodingAwarePCMProvider(maxChunkCharacters: 200, dataFactory: tonePCM(for:))
+        let client = TTSClient(provider: provider)
+        let text = "First sentence here. Second sentence here."
+        let result = try await client.generateWithManifest(
+            text: text,
+            stitch: TTSStitchPolicy(loudness: TTSLoudnessMatch())
+        )
+        #expect(!result.audio.isEmpty)
+        #expect(result.loudness != nil)
+        #expect(result.manifest.allSatisfy { $0.loudness != nil })
+        var cursor = 0
+        for entry in result.manifest {
+            let range = try #require(entry.timing.byteRangeInConcatenatedAudio)
+            #expect(range.lowerBound == cursor)
+            cursor = range.upperBound
+        }
+        #expect(cursor == result.audio.count)
+    }
+}

@@ -95,11 +95,14 @@ public struct TTSClient<P: TTSProvider>: Sendable {
             for: options.responseFormat ?? provider.config.defaultFormat,
             options: options
         )
-        let stitchFormat = try stitch.map { _ -> PCMFormat in
+        let stitchFormat = try stitch.map { policy -> PCMFormat in
             guard let format = PCMFormat(encoding) else {
                 throw TTSError.invalidConfiguration(
                     "stitching requires 16-bit PCM output with a known sample rate and channel count"
                 )
+            }
+            if policy.loudness != nil, format.channels != 1 {
+                throw TTSError.invalidConfiguration("loudness matching requires mono (1-channel) 16-bit PCM")
             }
             return format
         }
@@ -129,7 +132,7 @@ public struct TTSClient<P: TTSProvider>: Sendable {
                     "stitching requires PCM segments aligned to whole 16-bit frames"
                 )
             }
-            return Self.stitched(segments: segments, format: stitchFormat, policy: stitch)
+            return try Self.stitched(segments: segments, format: stitchFormat, policy: stitch)
         }
 
         let (audio, byteRanges) = Self.concatenate(segments.map(\.audio), format: encoding.format)
@@ -183,28 +186,56 @@ private extension TTSClient {
         segments: [TTSSegment],
         format: PCMFormat,
         policy: TTSStitchPolicy
-    ) -> TTSConcatenationResult {
+    ) throws -> TTSConcatenationResult {
+        if let loudness = policy.loudness {
+            let output = try TTSLoudnessMatcher.match(
+                segments: segments.map(\.audio),
+                boundaries: segments.map(\.chunk.trailingBoundary),
+                policy: policy,
+                loudness: loudness,
+                format: format
+            )
+            let entries = makeManifest(
+                segments: segments,
+                ranges: output.ranges,
+                measurements: output.measurements,
+                format: format
+            )
+            return TTSConcatenationResult(audio: output.audio, manifest: entries, loudness: output.summary)
+        }
+
         let result = PCMStitcher.stitch(
             segments: segments.map(\.audio),
             boundaries: segments.map(\.chunk.trailingBoundary),
             policy: policy,
             format: format
         )
+        let entries = makeManifest(segments: segments, ranges: result.ranges, measurements: nil, format: format)
+        return TTSConcatenationResult(audio: result.audio, manifest: entries)
+    }
 
+    static func makeManifest(
+        segments: [TTSSegment],
+        ranges: [Range<Int>],
+        measurements: [TTSLoudnessMeasurement]?,
+        format: PCMFormat
+    ) -> [TTSManifestEntry] {
         let bytesPerSecond = Double(format.bytesPerSecond)
-        var manifest: [TTSManifestEntry] = []
-        manifest.reserveCapacity(segments.count)
-        for (segment, range) in zip(segments, result.ranges) {
-            manifest.append(TTSManifestEntry(
+        var entries: [TTSManifestEntry] = []
+        entries.reserveCapacity(segments.count)
+        for (index, segment) in segments.enumerated() {
+            let range = ranges[index]
+            entries.append(TTSManifestEntry(
                 chunk: segment.chunk,
                 encoding: segment.encoding,
                 timing: TTSSegmentTiming(
                     byteRangeInConcatenatedAudio: range,
                     durationSeconds: Double(range.count) / bytesPerSecond
-                )
+                ),
+                loudness: measurements?[index]
             ))
         }
-        return TTSConcatenationResult(audio: result.audio, manifest: manifest)
+        return entries
     }
 
     static func durationSeconds(forSegment segment: TTSSegment) -> Double? {
