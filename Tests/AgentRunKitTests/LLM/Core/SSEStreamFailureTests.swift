@@ -196,7 +196,7 @@ struct SSEStreamFailureTests {
             try await processSSEStream(
                 bytes: bytes,
                 provider: .custom("test"),
-                stallTimeout: .milliseconds(250)
+                stallTimeout: .seconds(1)
             ) { event, _ in
                 event.data == "finish" ? .completeOnEOF : .continue
             }
