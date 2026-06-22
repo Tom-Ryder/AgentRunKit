@@ -74,7 +74,7 @@ Add to your `Package.swift`:
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/Tom-Ryder/AgentRunKit.git", from: "5.2.0")
+    .package(url: "https://github.com/Tom-Ryder/AgentRunKit.git", from: "5.3.0")
 ]
 ```
 
