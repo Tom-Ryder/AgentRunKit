@@ -202,7 +202,7 @@ struct ChatTests {
     }
 
     @Test
-    func respectsCancellation() async throws {
+    func respectsCancellation() async {
         let client = ControllableStreamingMockLLMClient()
         let chat = Chat<EmptyContext>(client: client)
 
@@ -226,13 +226,7 @@ struct ChatTests {
 
         task.cancel()
 
-        do {
-            try await task.value
-        } catch is CancellationError {
-            // Expected
-        } catch {
-            // Other errors during cancellation are acceptable
-        }
+        _ = try? await task.value
 
         let events = await collector.events
         #expect(events.count >= 1, "Should have received at least one event before cancellation")

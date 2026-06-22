@@ -152,9 +152,7 @@ struct MCPSessionTests {
         do {
             try await task.value
             Issue.record("Expected cancellation")
-        } catch is CancellationError {
-            // expected
-        } catch let error as MCPError {
+        } catch is CancellationError {} catch let error as MCPError {
             #expect(error == .transportClosed)
         }
     }

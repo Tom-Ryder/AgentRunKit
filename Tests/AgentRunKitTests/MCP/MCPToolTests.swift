@@ -167,11 +167,7 @@ struct MCPToolTests {
         do {
             _ = try await task.value
             Issue.record("Expected error")
-        } catch is CancellationError {
-            // expected
-        } catch is AgentError {
-            // expected: MCPTool wraps errors as toolExecutionFailed
-        }
+        } catch is CancellationError {} catch is AgentError {}
         await client.shutdown()
     }
 

@@ -152,10 +152,9 @@ struct HandleErrorStatusTests {
             Issue.record("Expected .stop, got .continue")
             return
         }
-        if case .rateLimited = error as? TransportError {
-            // expected
-        } else {
+        guard case .rateLimited = error as? TransportError else {
             Issue.record("Expected .rateLimited, got \(error)")
+            return
         }
     }
 }

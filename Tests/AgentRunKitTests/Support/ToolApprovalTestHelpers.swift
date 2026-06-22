@@ -27,8 +27,11 @@ actor CountingApprovalHandler {
 }
 
 actor BlockingApprovalHandler {
-    private var continuation: CheckedContinuation<Void, Never>?
+    private var releaseContinuation: CheckedContinuation<Void, Never>?
     private var isReleased = false
+
+    private var requestedContinuation: CheckedContinuation<Void, Never>?
+    private var wasRequested = false
 
     private(set) var requestCount = 0
     private(set) var requests: [ToolApprovalRequest] = []
@@ -37,19 +40,31 @@ actor BlockingApprovalHandler {
         requests.append(request)
         requestCount += 1
 
+        wasRequested = true
+        requestedContinuation?.resume()
+        requestedContinuation = nil
+
         if !isReleased {
             await withCheckedContinuation { continuation in
-                self.continuation = continuation
+                releaseContinuation = continuation
             }
         }
 
         return .approve
     }
 
+    func awaitRequested() async {
+        guard !wasRequested else { return }
+        precondition(requestedContinuation == nil, "awaitRequested supports a single waiter")
+        await withCheckedContinuation { continuation in
+            requestedContinuation = continuation
+        }
+    }
+
     func resume() {
         isReleased = true
-        continuation?.resume()
-        continuation = nil
+        releaseContinuation?.resume()
+        releaseContinuation = nil
     }
 
     nonisolated var handler: ToolApprovalHandler {

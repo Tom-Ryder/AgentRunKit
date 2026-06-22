@@ -318,9 +318,7 @@ struct MCPClientTests {
         do {
             _ = try await task.value
             Issue.record("Expected error from cancellation or timeout")
-        } catch is CancellationError {
-            // expected
-        } catch let error as MCPError {
+        } catch is CancellationError {} catch let error as MCPError {
             switch error {
             case .transportClosed, .requestTimeout:
                 break
@@ -348,9 +346,7 @@ struct MCPClientTests {
             Issue.record("Expected error after shutdown")
         } catch let error as MCPError {
             #expect(error == .transportClosed)
-        } catch is CancellationError {
-            // expected
-        }
+        } catch is CancellationError {}
     }
 
     @Test
@@ -528,9 +524,7 @@ struct MCPClientEdgeCaseTests {
         do {
             try await client.connectAndInitialize()
             Issue.record("Expected DecodingError for missing name")
-        } catch is DecodingError {
-            // Expected: MCPToolInfo Decodable requires "name" field
-        }
+        } catch is DecodingError {}
         await client.shutdown()
     }
 
@@ -542,9 +536,7 @@ struct MCPClientEdgeCaseTests {
         do {
             _ = try await client.callTool(name: "test", arguments: Data("not json".utf8))
             Issue.record("Expected decoding error")
-        } catch is DecodingError {
-            // Expected: invalid JSON fails to decode as JSONValue
-        }
+        } catch is DecodingError {}
         await client.shutdown()
     }
 }

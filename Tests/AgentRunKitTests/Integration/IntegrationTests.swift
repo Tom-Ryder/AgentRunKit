@@ -306,14 +306,13 @@ struct ParallelExecutionIntegrationTests {
 
         let executionTimes = await tracker.getTimes()
 
-        // If parallel, 3 x 100ms tasks should take ~100-200ms not 300ms+
-        // Allow generous margin for LLM response time
         #expect(executionTimes.count >= 2, "Expected at least 2 tool executions")
 
         if executionTimes.count >= 2 {
             let times = executionTimes.values.sorted()
-            let timeDiff = try #require(times.last) - times.first!
-            // If truly parallel, start times should be within 150ms of each other
+            let earliest = try #require(times.first)
+            let latest = try #require(times.last)
+            let timeDiff = latest - earliest
             #expect(timeDiff < 0.15, "Tools should start within 150ms of each other if parallel")
         }
     }

@@ -160,9 +160,7 @@ struct AgentTests {
         do {
             _ = try await task.value
             Issue.record("Expected cancellation")
-        } catch is CancellationError {
-            // Expected
-        }
+        } catch is CancellationError {}
     }
 
     @Test

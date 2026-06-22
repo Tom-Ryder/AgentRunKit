@@ -29,19 +29,10 @@ private func awaitStreamCompletion(_ stream: AgentStream<some ToolContext>) asyn
 }
 
 @MainActor
-private func waitForStreamCondition(
-    timeout: Duration = .seconds(1),
-    condition: @MainActor () -> Bool
-) async -> Bool {
-    let clock = ContinuousClock()
-    let deadline = clock.now + timeout
-    while clock.now < deadline {
-        if condition() {
-            return true
-        }
+private func awaitStreamCondition(_ condition: @MainActor () -> Bool) async {
+    while !condition() {
         await Task.yield()
     }
-    return condition()
 }
 
 struct AgentStreamTests {
@@ -537,7 +528,8 @@ struct AgentStreamApprovalTests {
 
         stream.send("Echo hello", context: EmptyContext(), approvalHandler: handler.handler)
 
-        let sawAwaitingApproval = await waitForStreamCondition {
+        await handler.awaitRequested()
+        await awaitStreamCondition {
             if let echoCall = stream.toolCalls.first(where: { $0.name == "echo" }),
                case .awaitingApproval = echoCall.state {
                 return true
@@ -547,8 +539,6 @@ struct AgentStreamApprovalTests {
 
         await handler.resume()
         await awaitStreamCompletion(stream)
-
-        #expect(sawAwaitingApproval)
 
         let requestCount = await handler.requestCount
         #expect(requestCount == 1)
@@ -611,14 +601,14 @@ struct AgentStreamApprovalTests {
             approvalHandler: handler.handler
         )
 
-        let sawNestedAwaitingApproval = await waitForStreamCondition {
+        await handler.awaitRequested()
+        await awaitStreamCondition {
             if let nestedCall = stream.toolCalls.first(where: { $0.name == "delegate > echo" }),
                case .awaitingApproval = nestedCall.state {
                 return true
             }
             return false
         }
-        #expect(sawNestedAwaitingApproval)
 
         await handler.resume()
         await awaitStreamCompletion(stream)
