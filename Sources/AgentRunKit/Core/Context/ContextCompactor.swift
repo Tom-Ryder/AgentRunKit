@@ -158,7 +158,7 @@ struct ContextCompactor {
         }
 
         if let firstRewriteIndex {
-            result.stripResponsesContinuationAnchorsOnAssistants(after: firstRewriteIndex)
+            result.dropServerContinuationAnchorsOnAssistants(after: firstRewriteIndex)
         }
 
         let ratio: Double = originalChars > 0
@@ -192,7 +192,7 @@ struct ContextCompactor {
 
     func compactedMessages(from messages: [ChatMessage], summary: String) -> [ChatMessage] {
         let taskContext = extractTaskContext(messages)
-        let recentContext = extractRecentContext(messages).map { $0.strippingResponsesContinuationAnchorIfAssistant() }
+        let recentContext = extractRecentContext(messages).map { $0.droppingServerContinuationAnchorIfAssistant() }
         let bridge = Self.bridgeMessage(summary: summary)
         let acknowledgment = AssistantMessage(content: "Understood. Resuming from the checkpoint.")
 

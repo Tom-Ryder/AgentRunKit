@@ -21,3 +21,23 @@ public struct AssistantContinuity: Sendable, Equatable, Codable {
         self.payload = payload
     }
 }
+
+extension AssistantContinuity {
+    func droppingServerContinuationAnchor() -> AssistantContinuity {
+        switch substrate {
+        case .responses:
+            serverContinuationAnchorRemoved()
+        case .anthropicMessages, .openAIChatCompletions, .geminiContents:
+            self
+        }
+    }
+
+    func removingTerminalFinishTool() -> AssistantContinuity {
+        switch substrate {
+        case .responses:
+            terminalFinishToolRemoved()
+        case .anthropicMessages, .openAIChatCompletions, .geminiContents:
+            self
+        }
+    }
+}

@@ -185,7 +185,7 @@ private extension AssistantMessage {
             tokenUsage: tokenUsage,
             reasoning: reasoning,
             reasoningDetails: reasoningDetails,
-            continuity: continuity?.removingResponsesTerminalFinishTool()
+            continuity: continuity?.removingTerminalFinishTool()
         )
     }
 
@@ -194,36 +194,5 @@ private extension AssistantMessage {
             && toolCalls.isEmpty
             && reasoning == nil
             && (reasoningDetails?.isEmpty ?? true)
-    }
-}
-
-private extension AssistantContinuity {
-    func removingResponsesTerminalFinishTool() -> AssistantContinuity {
-        guard substrate == .responses,
-              case let .object(payload) = payload,
-              case let .array(output) = payload["output"]
-        else {
-            return self
-        }
-
-        let filteredOutput = output.filter { item in
-            guard case let .object(object) = item,
-                  case let .string(type) = object["type"],
-                  type == "function_call",
-                  case let .string(name) = object["name"]
-            else {
-                return true
-            }
-            return name != "finish"
-        }
-
-        guard filteredOutput.count != output.count else {
-            return self
-        }
-
-        var updatedPayload = payload
-        updatedPayload["output"] = .array(filteredOutput)
-        return AssistantContinuity(substrate: substrate, payload: .object(updatedPayload))
-            .strippingResponsesContinuationAnchor()
     }
 }

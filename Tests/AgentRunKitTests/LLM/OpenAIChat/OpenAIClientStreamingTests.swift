@@ -56,17 +56,12 @@ struct OpenAIChatStreamingReasoningTests {
             guard case let .reasoningDetails(details) = delta else { return nil }
             return details
         }
-        #expect(reasoningDeltas.count == 3)
+        #expect(reasoningDeltas.count == 1)
         #expect(reasoningDeltas.first == [.object([
             "type": .string("reasoning.text"),
             "format": .string("anthropic-claude-v1"),
             "index": .int(0),
-            "text": .string("Hello"),
-        ])])
-        #expect(reasoningDeltas.last == [.object([
-            "type": .string("reasoning.text"),
-            "format": .string("anthropic-claude-v1"),
-            "index": .int(0),
+            "text": .string("Hello world"),
             "signature": .string("sig-abc"),
         ])])
     }

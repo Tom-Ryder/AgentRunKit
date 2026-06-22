@@ -609,33 +609,25 @@ struct StreamingReasoningTests {
     }
 
     @Test
-    func reasoningTextFragmentsConsolidatedInHistory() async throws {
+    func reasoningDetailDeltasAppendedVerbatimInHistory() async throws {
+        let first: JSONValue = .object([
+            "type": .string("reasoning.text"),
+            "index": .int(0),
+            "text": .string("Hello")
+        ])
+        let second: JSONValue = .object([
+            "type": .string("reasoning.text"),
+            "index": .int(0),
+            "text": .string(" world")
+        ])
+        let third: JSONValue = .object([
+            "type": .string("reasoning.text"),
+            "index": .int(0),
+            "signature": .string("real_sig")
+        ])
         let deltas: [StreamDelta] = [
-            .reasoningDetails([.object([
-                "type": .string("reasoning.text"),
-                "text": .string(""),
-                "signature": .string(""),
-                "format": .string("anthropic-claude-v1"),
-                "index": .int(0)
-            ])]),
-            .reasoningDetails([.object([
-                "type": .string("reasoning.text"),
-                "text": .string("Hello"),
-                "format": .string("anthropic-claude-v1"),
-                "index": .int(0)
-            ])]),
-            .reasoningDetails([.object([
-                "type": .string("reasoning.text"),
-                "text": .string(" world"),
-                "format": .string("anthropic-claude-v1"),
-                "index": .int(0)
-            ])]),
-            .reasoningDetails([.object([
-                "type": .string("reasoning.text"),
-                "signature": .string("real_sig"),
-                "format": .string("anthropic-claude-v1"),
-                "index": .int(0)
-            ])]),
+            .reasoningDetails([first]),
+            .reasoningDetails([second, third]),
             .content("Answer"),
             .toolCallStart(index: 0, id: "call_1", name: "finish", kind: .function),
             .toolCallDelta(index: 0, arguments: #"{"content": "Done"}"#),
@@ -656,14 +648,7 @@ struct StreamingReasoningTests {
             return nil
         }.first
 
-        #expect(assistantMessage?.reasoningDetails?.count == 1)
-        guard case let .object(obj) = assistantMessage?.reasoningDetails?.first else {
-            Issue.record("Expected consolidated reasoning_details object")
-            return
-        }
-        #expect(obj["text"] == .string("Hello world"))
-        #expect(obj["signature"] == .string("real_sig"))
-        #expect(obj["format"] == .string("anthropic-claude-v1"))
+        #expect(assistantMessage?.reasoningDetails == [first, second, third])
     }
 
     @Test

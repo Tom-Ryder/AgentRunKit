@@ -242,25 +242,6 @@ struct ResponsesReplayState: Equatable {
     }
 }
 
-extension AssistantContinuity {
-    func strippingResponsesContinuationAnchor() -> AssistantContinuity {
-        guard substrate == .responses else { return self }
-        if let replayState = try? ResponsesReplayState(continuity: self) {
-            return ResponsesReplayState(
-                output: replayState.output,
-                responseId: nil
-            ).continuity
-        }
-        guard case var .object(payload) = payload,
-              payload["response_id"] != nil
-        else {
-            return self
-        }
-        payload.removeValue(forKey: "response_id")
-        return AssistantContinuity(substrate: substrate, payload: .object(payload))
-    }
-}
-
 enum ResponsesReplayItem: Equatable {
     case message(JSONValue)
     case functionCall(JSONValue)

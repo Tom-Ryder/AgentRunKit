@@ -84,7 +84,7 @@ private struct StreamAccumulation {
     let started: ContinuousClock.Instant = .now
     var content = ""
     var reasoning = ""
-    var reasoningDetails = ReasoningDetailAccumulator()
+    var reasoningDetails: [JSONValue] = []
     var toolCalls: [Int: ToolCallAccumulator] = [:]
     var pendingArguments: [Int: String] = [:]
     var audio = AudioAccumulator()
@@ -133,7 +133,7 @@ private struct StreamAccumulation {
             reasoning += text
             yield(.reasoningDelta(text), continuation: continuation, eventObserver: eventObserver)
         case let .reasoningDetails(details):
-            reasoningDetails.append(details)
+            reasoningDetails.append(contentsOf: details)
         case let .toolCallStart(index, id, name, kind):
             startToolCall(
                 index: index, id: id, name: name, kind: kind, policy: policy,
@@ -187,7 +187,7 @@ private struct StreamAccumulation {
             content: content,
             toolCalls: finalizedToolCalls,
             reasoning: reasoning,
-            reasoningDetails: reasoningDetails.consolidated(),
+            reasoningDetails: reasoningDetails,
             audioTranscript: audio.transcript,
             usage: usage,
             continuity: continuity

@@ -35,7 +35,11 @@ extension OpenAIClient {
                 diagnostics: completion.diagnostics
             )))
         }
-        await continuation.yield(.finished(usage: state.usage))
+        let result = await state.result()
+        if !result.reasoningDetails.isEmpty {
+            continuation.yield(.reasoningDetails(result.reasoningDetails))
+        }
+        continuation.yield(.finished(usage: result.usage))
         continuation.yield(.streamClosed(terminalMarkerSeen: completion.terminalMarkerSeen))
         continuation.finish()
     }
@@ -74,8 +78,8 @@ extension OpenAIClient {
                 diagnostics: diagnostics
             )))
         }
-        if let details = try JSONValue.extractReasoningDetails(from: chunkData) {
-            continuation.yield(.reasoningDetails(details))
+        if let details = try OpenAIChatReasoningDetails.decode(from: chunkData) {
+            await state.appendReasoningDetails(details)
         }
         for delta in try extractDeltas(from: chunk) {
             continuation.yield(delta)
@@ -220,9 +224,18 @@ extension OpenAIClient {
 }
 
 actor OpenAIChatStreamState {
-    private(set) var usage: TokenUsage?
+    private var usage: TokenUsage?
+    private var reasoningDetails = ReasoningDetailAccumulator()
 
     func recordUsage(_ usage: TokenUsage) {
         self.usage = usage
+    }
+
+    func appendReasoningDetails(_ details: [JSONValue]) {
+        reasoningDetails.append(details)
+    }
+
+    func result() -> (usage: TokenUsage?, reasoningDetails: [JSONValue]) {
+        (usage, reasoningDetails.consolidated())
     }
 }

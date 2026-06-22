@@ -34,7 +34,7 @@ func executePruneContext(arguments: Data, messages: inout [ChatMessage]) throws 
     }
 
     if let firstRewriteIndex {
-        messages.stripResponsesContinuationAnchorsOnAssistants(after: firstRewriteIndex)
+        messages.dropServerContinuationAnchorsOnAssistants(after: firstRewriteIndex)
     }
 
     return PruneContextExecutionResult(

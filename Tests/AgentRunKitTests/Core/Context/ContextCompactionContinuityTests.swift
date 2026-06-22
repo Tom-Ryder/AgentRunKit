@@ -49,7 +49,7 @@ struct ContextCompactionContinuityTests {
         #expect(assistants[0].continuity == nil)
         #expect(assistants[1].content == "Working state")
         #expect(assistants[1].toolCalls == [compactionNoopCall])
-        #expect(assistants[1].continuity == recentContinuity.strippingResponsesContinuationAnchor())
+        #expect(assistants[1].continuity == recentContinuity.droppingServerContinuationAnchor())
     }
 
     @Test

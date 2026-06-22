@@ -109,7 +109,7 @@ extension [ChatMessage] {
         let cutIndex = findSafeCutIndex(in: nonSystemMessages, keeping: maxMessages)
         let kept = Array(nonSystemMessages[cutIndex...])
         let rewrittenKept = cutIndex > 0
-            ? kept.strippingResponsesContinuationAnchorsOnAssistants()
+            ? kept.droppingServerContinuationAnchorsOnAssistants()
             : kept
 
         if let systemPrompt {
@@ -146,34 +146,34 @@ extension [ChatMessage] {
 }
 
 extension AssistantMessage {
-    func strippingResponsesContinuationAnchor() -> AssistantMessage {
+    func droppingServerContinuationAnchor() -> AssistantMessage {
         AssistantMessage(
             content: content,
             toolCalls: toolCalls,
             tokenUsage: tokenUsage,
             reasoning: reasoning,
             reasoningDetails: reasoningDetails,
-            continuity: continuity?.strippingResponsesContinuationAnchor()
+            continuity: continuity?.droppingServerContinuationAnchor()
         )
     }
 }
 
 extension ChatMessage {
-    func strippingResponsesContinuationAnchorIfAssistant() -> ChatMessage {
+    func droppingServerContinuationAnchorIfAssistant() -> ChatMessage {
         guard case let .assistant(message) = self else { return self }
-        return .assistant(message.strippingResponsesContinuationAnchor())
+        return .assistant(message.droppingServerContinuationAnchor())
     }
 }
 
 extension [ChatMessage] {
-    func strippingResponsesContinuationAnchorsOnAssistants() -> [ChatMessage] {
-        map { $0.strippingResponsesContinuationAnchorIfAssistant() }
+    func droppingServerContinuationAnchorsOnAssistants() -> [ChatMessage] {
+        map { $0.droppingServerContinuationAnchorIfAssistant() }
     }
 
-    mutating func stripResponsesContinuationAnchorsOnAssistants(after index: Int) {
+    mutating func dropServerContinuationAnchorsOnAssistants(after index: Int) {
         guard !isEmpty else { return }
         for messageIndex in indices where messageIndex > index {
-            self[messageIndex] = self[messageIndex].strippingResponsesContinuationAnchorIfAssistant()
+            self[messageIndex] = self[messageIndex].droppingServerContinuationAnchorIfAssistant()
         }
     }
 }
