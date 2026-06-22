@@ -15,6 +15,7 @@ public struct OpenAIClient: LLMClient, Sendable {
     let retryPolicy: RetryPolicy
     let reasoningConfig: ReasoningConfig?
     let assistantReplayProfile: OpenAIChatAssistantReplayProfile
+    let extraFields: [String: JSONValue]
 
     public init(
         apiKey: String? = nil,
@@ -29,7 +30,8 @@ public struct OpenAIClient: LLMClient, Sendable {
         reasoningConfig: ReasoningConfig? = nil,
         profile: OpenAIChatProfile = .compatible,
         providerIdentifier: ProviderIdentifier? = nil,
-        assistantReplayProfile: OpenAIChatAssistantReplayProfile = .conservative
+        assistantReplayProfile: OpenAIChatAssistantReplayProfile = .conservative,
+        extraFields: [String: JSONValue] = [:]
     ) {
         self.apiKey = apiKey
         modelIdentifier = model
@@ -44,6 +46,7 @@ public struct OpenAIClient: LLMClient, Sendable {
         self.profile = profile
         self.providerIdentifier = providerIdentifier ?? profile.providerIdentifier
         self.assistantReplayProfile = assistantReplayProfile
+        self.extraFields = extraFields
     }
 
     public func generate(
@@ -161,6 +164,7 @@ extension OpenAIClient {
         options: OpenAIChatRequestOptions? = nil
     ) throws -> ChatCompletionRequest {
         let capabilities = OpenAIChatCapabilities.resolve(profile: profile)
+        let replayPolicy = OpenAIChatReplayPolicy.resolve(profile: assistantReplayProfile)
         let requestTools = try buildTools(functionTools: tools, options: options, capabilities: capabilities)
         let toolChoice = try resolveToolChoice(
             requestTools: requestTools,
@@ -170,7 +174,7 @@ extension OpenAIClient {
         )
         return try ChatCompletionRequest(
             model: modelIdentifier,
-            messages: messages.map { try RequestMessage($0, replayProfile: assistantReplayProfile) },
+            messages: messages.map { try RequestMessage($0, replayPolicy: replayPolicy) },
             tools: requestTools.isEmpty ? nil : requestTools,
             toolChoice: toolChoice,
             parallelToolCalls: options?.parallelToolCalls,
@@ -180,7 +184,7 @@ extension OpenAIClient {
             streamOptions: stream ? StreamOptions(includeUsage: true) : nil,
             responseFormat: responseFormat,
             reasoning: reasoningConfig.map(RequestReasoning.init),
-            extraFields: extraFields
+            extraFields: self.extraFields.merging(extraFields) { $1 }
         )
     }
 
@@ -340,9 +344,17 @@ public extension OpenAIClient {
     static let openAIBaseURL = URL(validStaticString: "https://api.openai.com/v1")
     static let openRouterBaseURL = URL(validStaticString: "https://openrouter.ai/api/v1")
     static let groqBaseURL = URL(validStaticString: "https://api.groq.com/openai/v1")
-    static let togetherBaseURL = URL(validStaticString: "https://api.together.xyz/v1")
+    static let togetherBaseURL = URL(validStaticString: "https://api.together.ai/v1")
     static let ollamaBaseURL = URL(validStaticString: "http://localhost:11434/v1")
 
+    private static let togetherReasoningKwargs: [String: JSONValue] = [
+        "chat_template_kwargs": .object([
+            "clear_thinking": .bool(false),
+            "thinking": .bool(true),
+        ]),
+    ]
+
+    /// A client for an arbitrary OpenAI-compatible Chat Completions endpoint.
     static func proxy(
         baseURL: URL,
         maxTokens: Int = 16384,
@@ -370,6 +382,7 @@ public extension OpenAIClient {
         )
     }
 
+    /// A client for OpenAI's first-party Chat Completions API.
     static func openAI(
         apiKey: String,
         model: String? = nil,
@@ -388,6 +401,7 @@ public extension OpenAIClient {
         )
     }
 
+    /// A client for OpenRouter's Chat Completions API, replaying reasoning as `reasoning_details` on assistant turns.
     static func openRouter(
         apiKey: String,
         model: String? = nil,
@@ -405,6 +419,27 @@ public extension OpenAIClient {
             reasoningConfig: reasoningConfig,
             profile: .openRouter,
             assistantReplayProfile: assistantReplayProfile
+        )
+    }
+
+    /// A client for Together's OpenAI-compatible API, replaying reasoning as `reasoning_content` on tool-call turns.
+    static func together(
+        apiKey: String,
+        model: String? = nil,
+        maxTokens: Int = 16384,
+        contextWindowSize: Int? = nil,
+        assistantReplayProfile: OpenAIChatAssistantReplayProfile = .reasoningContent
+    ) -> OpenAIClient {
+        OpenAIClient(
+            apiKey: apiKey,
+            model: model,
+            maxTokens: maxTokens,
+            contextWindowSize: contextWindowSize,
+            baseURL: togetherBaseURL,
+            profile: .compatible,
+            providerIdentifier: .together,
+            assistantReplayProfile: assistantReplayProfile,
+            extraFields: togetherReasoningKwargs
         )
     }
 }

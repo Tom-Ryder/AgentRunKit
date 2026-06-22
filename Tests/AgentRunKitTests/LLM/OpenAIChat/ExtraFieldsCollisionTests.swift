@@ -52,4 +52,22 @@ struct OpenAIChatExtraFieldsCollisionTests {
         let json = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
         #expect(json["temperature"] as? Double == 0.5)
     }
+
+    @Test
+    func requestExtraFieldsWinOverStoredFieldsOnCollision() throws {
+        let client = OpenAIClient(
+            apiKey: "k",
+            model: "gpt-5.4",
+            baseURL: OpenAIClient.openAIBaseURL,
+            extraFields: ["custom_field": .string("stored")]
+        )
+        let request = try client.buildRequest(
+            messages: [.user("Hi")],
+            tools: [],
+            extraFields: ["custom_field": .string("request")]
+        )
+        let data = try JSONEncoder().encode(request)
+        let json = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        #expect(json["custom_field"] as? String == "request")
+    }
 }

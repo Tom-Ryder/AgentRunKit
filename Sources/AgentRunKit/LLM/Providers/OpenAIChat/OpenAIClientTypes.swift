@@ -4,15 +4,7 @@ import Foundation
 public enum OpenAIChatAssistantReplayProfile: Sendable, Equatable {
     case conservative
     case openRouterReasoningDetails
-}
-
-extension OpenAIChatAssistantReplayProfile {
-    var emitsReasoningDetails: Bool {
-        switch self {
-        case .conservative: false
-        case .openRouterReasoningDetails: true
-        }
-    }
+    case reasoningContent
 }
 
 struct StreamOptions: Encodable {
@@ -134,7 +126,7 @@ struct RequestMessage: Encodable {
         }
     }
 
-    init(_ message: ChatMessage, replayProfile: OpenAIChatAssistantReplayProfile) throws {
+    init(_ message: ChatMessage, replayPolicy: OpenAIChatReplayPolicy) throws {
         switch message {
         case let .system(text):
             role = "system"
@@ -166,8 +158,9 @@ struct RequestMessage: Encodable {
             toolCalls = msg.toolCalls.isEmpty ? nil : try msg.toolCalls.map(RequestToolCall.init)
             toolCallId = nil
             name = nil
-            reasoningContent = nil
-            reasoningDetails = replayProfile.emitsReasoningDetails ? msg.reasoningDetails : nil
+            let replayed = replayPolicy.resolvedFields(for: msg)
+            reasoningContent = replayed.reasoningContent
+            reasoningDetails = replayed.reasoningDetails
         case let .tool(id, toolName, resultContent):
             role = "tool"
             content = .text(resultContent)

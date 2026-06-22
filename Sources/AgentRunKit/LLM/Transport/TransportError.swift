@@ -4,6 +4,7 @@ import Foundation
 public enum ProviderIdentifier: Sendable, Equatable, Hashable, CustomStringConvertible {
     case openAI
     case openRouter
+    case together
     case openAICompatible
     case openAIResponses
     case anthropic
@@ -18,6 +19,7 @@ public enum ProviderIdentifier: Sendable, Equatable, Hashable, CustomStringConve
         switch self {
         case .openAI: "openai"
         case .openRouter: "openrouter"
+        case .together: "together"
         case .openAICompatible: "openai-compatible"
         case .openAIResponses: "openai-responses"
         case .anthropic: "anthropic"

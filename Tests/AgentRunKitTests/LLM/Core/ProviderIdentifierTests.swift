@@ -30,6 +30,7 @@ struct ProviderIdentifierTests {
 
         #expect(openAI.providerIdentifier == .openAI)
         #expect(OpenAIClient.openRouter(apiKey: "key").providerIdentifier == .openRouter)
+        #expect(OpenAIClient.together(apiKey: "key").providerIdentifier == .together)
         #expect(OpenAIClient.proxy(baseURL: proxyURL).providerIdentifier == .openAICompatible)
         #expect(anthropic.providerIdentifier == .anthropic)
         #expect(gemini.providerIdentifier == .gemini)

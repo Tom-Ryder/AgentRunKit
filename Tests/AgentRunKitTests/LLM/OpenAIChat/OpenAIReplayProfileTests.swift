@@ -2,6 +2,12 @@
 import Foundation
 import Testing
 
+private let glmReasoningTrace = [
+    "The user wants to know the current weather in Paris.",
+    #"I'll call the get_weather function with "Paris" as the city parameter."#,
+].joined(separator: " ")
+private let weatherToolCall = ToolCall(id: "call_weather", name: "get_weather", arguments: #"{"city":"Paris"}"#)
+
 struct ReasoningMultiTurnTests {
     @Test
     func conservativeProfileOmitsReasoningContent() throws {
@@ -254,6 +260,102 @@ struct ReasoningMultiTurnTests {
         #expect(jsonToolCalls?.count == 1)
         #expect(jsonToolCalls?[0]["id"] as? String == "call_123")
     }
+
+    @Test
+    func reasoningContentProfileEmitsReasoningContentOnToolCallTurn() throws {
+        let assistantMsg = AssistantMessage(
+            content: "Checking",
+            toolCalls: [weatherToolCall],
+            reasoning: ReasoningContent(content: glmReasoningTrace)
+        )
+        let messages = try encodedMessages(
+            for: [.assistant(assistantMsg)],
+            assistantReplayProfile: .reasoningContent
+        )
+        let msg = messages[0]
+
+        #expect(msg["reasoning_content"] as? String == glmReasoningTrace)
+        #expect(msg["reasoning"] == nil)
+        #expect(msg["reasoning_details"] == nil)
+    }
+
+    @Test
+    func reasoningContentProfileOmitsReasoningContentOnNonToolTurn() throws {
+        let assistantMsg = AssistantMessage(
+            content: "Done",
+            reasoning: ReasoningContent(content: glmReasoningTrace)
+        )
+        let messages = try encodedMessages(
+            for: [.assistant(assistantMsg)],
+            assistantReplayProfile: .reasoningContent
+        )
+
+        #expect(messages[0]["reasoning_content"] == nil)
+    }
+
+    @Test
+    func reasoningContentProfileOmitsEmptyReasoningContent() throws {
+        let assistantMsg = AssistantMessage(
+            content: "Checking",
+            toolCalls: [weatherToolCall],
+            reasoning: ReasoningContent(content: "")
+        )
+        let messages = try encodedMessages(
+            for: [.assistant(assistantMsg)],
+            assistantReplayProfile: .reasoningContent
+        )
+
+        #expect(messages[0]["reasoning_content"] == nil)
+    }
+
+    @Test
+    func reasoningContentProfileNeverEmitsReasoningDetails() throws {
+        let details: [JSONValue] = [
+            .object([
+                "type": .string("reasoning.encrypted"),
+                "encrypted": .string("base64blob=="),
+            ]),
+        ]
+        let assistantMsg = AssistantMessage(
+            content: "Checking",
+            toolCalls: [weatherToolCall],
+            reasoning: ReasoningContent(content: glmReasoningTrace),
+            reasoningDetails: details
+        )
+        let messages = try encodedMessages(
+            for: [.assistant(assistantMsg)],
+            assistantReplayProfile: .reasoningContent
+        )
+
+        #expect(messages[0]["reasoning_details"] == nil)
+        #expect(messages[0]["reasoning"] == nil)
+    }
+
+    @Test
+    func reasoningContentReplaysOnEveryPriorToolCallTurnNotJustTheLast() throws {
+        let firstCall = ToolCall(id: "call_1", name: "get_weather", arguments: #"{"city":"Paris"}"#)
+        let secondCall = ToolCall(id: "call_2", name: "get_weather", arguments: #"{"city":"Berlin"}"#)
+        let messages: [ChatMessage] = [
+            .user("Weather in Paris, then Berlin?"),
+            .assistant(AssistantMessage(
+                content: "Checking Paris",
+                toolCalls: [firstCall],
+                reasoning: ReasoningContent(content: "First-turn reasoning.")
+            )),
+            .tool(id: firstCall.id, name: firstCall.name, content: #"{"weather":"sun"}"#),
+            .assistant(AssistantMessage(
+                content: "Checking Berlin",
+                toolCalls: [secondCall],
+                reasoning: ReasoningContent(content: "Second-turn reasoning.")
+            )),
+            .tool(id: secondCall.id, name: secondCall.name, content: #"{"weather":"rain"}"#),
+        ]
+
+        let encoded = try encodedMessages(for: messages, assistantReplayProfile: .reasoningContent)
+        let replayedReasoning = encoded.compactMap { $0["reasoning_content"] as? String }
+
+        #expect(replayedReasoning == ["First-turn reasoning.", "Second-turn reasoning."])
+    }
 }
 
 struct ReplayProfileDefaultTests {
@@ -309,4 +411,44 @@ struct ReplayProfileDefaultTests {
         #expect(msg?["reasoning_content"] == nil)
         #expect(msg?["reasoning_details"] == nil)
     }
+
+    @Test
+    func togetherFactoryPinsReplayProfileProviderURLAndProfile() throws {
+        let client = OpenAIClient.together(apiKey: "test-key", model: "zai-org/GLM-5.2")
+
+        #expect(client.modelIdentifier == "zai-org/GLM-5.2")
+        #expect(client.assistantReplayProfile == .reasoningContent)
+        #expect(client.providerIdentifier == .together)
+        #expect(client.profile == .compatible)
+
+        let request = try client.buildRequest(messages: [.user("Hello")], tools: [])
+        let urlRequest = try client.buildURLRequest(request)
+        #expect(urlRequest.url == OpenAIClient.togetherBaseURL.appendingPathComponent("chat/completions"))
+
+        let data = try JSONEncoder().encode(request)
+        let json = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        #expect(json["model"] as? String == "zai-org/GLM-5.2")
+        #expect(json["max_tokens"] != nil)
+        #expect(json["max_completion_tokens"] == nil)
+
+        let chatTemplateKwargs = try #require(json["chat_template_kwargs"] as? [String: Any])
+        #expect(chatTemplateKwargs["clear_thinking"] as? Bool == false)
+        #expect(chatTemplateKwargs["thinking"] as? Bool == true)
+    }
+}
+
+private func encodedMessages(
+    for messages: [ChatMessage],
+    assistantReplayProfile: OpenAIChatAssistantReplayProfile
+) throws -> [[String: Any]] {
+    let client = OpenAIClient(
+        apiKey: "test-key",
+        model: "test/model",
+        baseURL: OpenAIClient.togetherBaseURL,
+        assistantReplayProfile: assistantReplayProfile
+    )
+    let request = try client.buildRequest(messages: messages, tools: [])
+    let data = try JSONEncoder().encode(request)
+    let json = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+    return try #require(json["messages"] as? [[String: Any]])
 }

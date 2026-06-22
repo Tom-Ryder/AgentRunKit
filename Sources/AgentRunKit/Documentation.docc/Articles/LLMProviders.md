@@ -53,9 +53,10 @@ Other clients (``OpenAIClient``, ``GeminiClient``) use semantic-only replay. His
 
 Outbound replay is controlled by ``OpenAIChatAssistantReplayProfile``, which defaults to `.conservative` (omit all assistant-local reasoning fields from requests). This is the correct default because first-party OpenAI routes reasoning continuity through the Responses API, and other providers have heterogeneous replay contracts.
 
-One opt-in profile is available:
+Two opt-in profiles are available:
 
 - `.openRouterReasoningDetails`: emits `reasoning_details` on assistant turns, matching OpenRouter's documented Chat Completions replay contract. Does not emit `reasoning_content`.
+- `.reasoningContent`: emits `reasoning_content` on every prior assistant turn that includes tool calls. This matches Together's current reasoning models (GLM-5.2, MiniMax-M3, Kimi-K2.6) and DeepSeek's V4 thinking mode, which re-admit the trace through `reasoning_content`.
 
 ```swift
 let client = OpenAIClient.openRouter(
@@ -69,7 +70,20 @@ let client = OpenAIClient.openRouter(
 
 Reasoning replay is best-effort. Some models return no `reasoning_details` on a given turn (for example GPT-class models routed through Chat Completions, which expose replayable reasoning only through the Responses API). When that happens the assistant turn carries no replayable reasoning and `reasoning_details` is absent from the next request. A workflow that requires replayable reasoning continuity can detect this by inspecting the reasoning details on the returned assistant message, such as the last assistant entry in ``AgentResult/history``.
 
-Together's preserved-thinking replay depends on a provider-specific mode (`clear_thinking`) not yet modeled by the client, so it remains conservative in this release. For first-party OpenAI reasoning continuity, and for Responses-native OpenRouter models such as xAI Grok, use ``ResponsesAPIClient`` instead. See `Targeting OpenRouter with ResponsesAPIClient` below.
+Together's current reasoning models emit chain-of-thought in the `reasoning` field and re-admit it across tool-call turns only through `reasoning_content`; echoing the emitted `reasoning` field back is ignored. ``OpenAIClient/together(apiKey:model:maxTokens:contextWindowSize:assistantReplayProfile:)`` reads `reasoning` inbound, replays `reasoning_content` on every prior tool-call turn, and sends `chat_template_kwargs={"clear_thinking": false, "thinking": true}` so the model emits its reasoning and retains it across tool-call turns (Together's Preserved Thinking mode, on by default for this client). It pins the compatible backend and identifies errors as `together`:
+
+```swift
+let client = OpenAIClient.together(
+    apiKey: "sk-together-...",
+    model: "zai-org/GLM-5.2"
+)
+```
+
+Validated pairings are intentionally narrow: `.reasoningContent` is verified against Together's current reasoning models and is consistent with DeepSeek's V4 thinking mode. Pairing it with the OpenRouter backend, or replaying reasoning resumed from a non-OpenAI-chat checkpoint, is unsupported and may be ignored or rejected by the endpoint. The replay profile remains independently overridable so callers can target compatible endpoints not yet covered by a factory.
+
+`.reasoningContent` replays every prior tool-call turn's trace, so pair ``OpenAIClient/together(apiKey:model:maxTokens:contextWindowSize:assistantReplayProfile:)`` with a `contextWindowSize` if prompt growth should trigger compaction. The `prune_context` tool prunes tool results only; surviving assistant reasoning is still replayed and can refer to pruned observations.
+
+For first-party OpenAI reasoning continuity, and for Responses-native OpenRouter models such as xAI Grok, use ``ResponsesAPIClient`` instead. See `Targeting OpenRouter with ResponsesAPIClient` below.
 
 ## ResponsesAPIClient vs OpenAIClient
 
@@ -107,11 +121,12 @@ xAI Grok models are the canonical case. Grok returns encrypted reasoning artifac
 | `.openRouter` | `openrouter.ai` | No (rejected at request build) | No | `max_tokens` |
 | `.compatible` | Groq, Together, Ollama, any OpenAI-compatible proxy | No | No | `max_tokens` |
 
-Three factories pin the profile. Prefer them over the raw initializer:
+Four factory paths pin the profile. Prefer them over the raw initializer:
 
 ```swift
 let openai     = OpenAIClient.openAI(apiKey: "sk-...", model: "gpt-5.4")
 let openRouter = OpenAIClient.openRouter(apiKey: "sk-or-...", model: "x-ai/grok-4")
+let together   = OpenAIClient.together(apiKey: "sk-together-...", model: "zai-org/GLM-5.2")
 let groq       = OpenAIClient.proxy(baseURL: OpenAIClient.groqBaseURL)
 ```
 
@@ -122,7 +137,7 @@ The designated initializer `OpenAIClient(...)` still accepts `profile:` directly
 | `OpenAIClient.openAIBaseURL` | `https://api.openai.com/v1` |
 | `OpenAIClient.openRouterBaseURL` | `https://openrouter.ai/api/v1` |
 | `OpenAIClient.groqBaseURL` | `https://api.groq.com/openai/v1` |
-| `OpenAIClient.togetherBaseURL` | `https://api.together.xyz/v1` |
+| `OpenAIClient.togetherBaseURL` | `https://api.together.ai/v1` |
 | `OpenAIClient.ollamaBaseURL` | `http://localhost:11434/v1` |
 
 When a feature requires a specific profile (custom tools, strict function schemas, allowed-tools), the client throws ``TransportError/featureUnsupported(provider:feature:)`` rather than silently dropping the field on the wire.
