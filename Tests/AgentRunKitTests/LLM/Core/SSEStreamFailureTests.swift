@@ -2,8 +2,9 @@
 import Foundation
 import Testing
 
-struct DelayedByteStream: AsyncSequence {
+struct DelayedByteStream<C: Clock>: AsyncSequence where C.Duration == Duration {
     typealias Element = UInt8
+    let clock: C
     let chunks: [Chunk]
 
     struct Chunk {
@@ -12,10 +13,11 @@ struct DelayedByteStream: AsyncSequence {
     }
 
     func makeAsyncIterator() -> AsyncIterator {
-        AsyncIterator(chunks: chunks)
+        AsyncIterator(clock: clock, chunks: chunks)
     }
 
     struct AsyncIterator: AsyncIteratorProtocol {
+        let clock: C
         let chunks: [Chunk]
         var chunkIndex = 0
         var byteIndex = 0
@@ -24,7 +26,7 @@ struct DelayedByteStream: AsyncSequence {
             guard chunkIndex < chunks.count else { return nil }
             let chunk = chunks[chunkIndex]
             if byteIndex == 0, chunk.delay > .zero {
-                try await Task.sleep(for: chunk.delay)
+                try await clock.sleep(for: chunk.delay)
             }
             guard byteIndex < chunk.bytes.count else {
                 chunkIndex += 1
@@ -40,6 +42,12 @@ struct DelayedByteStream: AsyncSequence {
             }
             return chunk.bytes[byteIndex]
         }
+    }
+}
+
+extension DelayedByteStream where C == ContinuousClock {
+    init(chunks: [Chunk]) {
+        self.init(clock: ContinuousClock(), chunks: chunks)
     }
 }
 
@@ -86,20 +94,32 @@ struct SSEStreamFailureTests {
 
     @Test
     func commentHeartbeatsRefreshStallDeadlineWithoutIncrementingEventDiagnostics() async throws {
-        let bytes = DelayedByteStream(chunks: [
+        let clock = TestClock()
+        let bytes = DelayedByteStream(clock: clock, chunks: [
             .init(delay: .zero, bytes: sseChunk(minimalChunkJSON)),
             .init(delay: .seconds(1), bytes: sseComment("keepalive")),
             .init(delay: .seconds(1), bytes: sseComment("keepalive")),
             .init(delay: .seconds(1), bytes: sseDone()),
         ])
 
-        let completion = try await processSSEStream(
-            bytes: bytes,
-            provider: .custom("test"),
-            stallTimeout: .milliseconds(2500)
-        ) { event, _ in
-            event.data == "[DONE]" ? .complete : .continue
+        let task = Task {
+            try await processSSEStream(
+                bytes: bytes,
+                provider: .custom("test"),
+                stallTimeout: .milliseconds(2500),
+                clock: clock
+            ) { event, _ in
+                event.data == "[DONE]" ? .complete : .continue
+            }
         }
+
+        await clock.awaitSuspensions(atLeast: 2)
+        clock.advance(by: .seconds(1))
+        await clock.awaitSuspensions(atLeast: 2)
+        clock.advance(by: .seconds(1))
+        await clock.awaitSuspensions(atLeast: 2)
+        clock.advance(by: .seconds(1))
+        let completion = try await task.value
 
         #expect(completion.terminalMarkerSeen)
         #expect(completion.diagnostics.eventsObserved == 2)
@@ -187,19 +207,28 @@ struct SSEStreamFailureTests {
 
     @Test
     func stallAfterFinishSignalThrowsIdleTimeoutWithFinishSignalSeen() async throws {
-        let bytes = DelayedByteStream(chunks: [
+        let clock = TestClock()
+        let bytes = DelayedByteStream(clock: clock, chunks: [
             .init(delay: .zero, bytes: sseChunk("finish")),
             .init(delay: .seconds(10), bytes: sseChunk("tail")),
         ])
 
-        do {
+        let task = Task {
             try await processSSEStream(
                 bytes: bytes,
                 provider: .custom("test"),
-                stallTimeout: .seconds(3)
+                stallTimeout: .seconds(3),
+                clock: clock
             ) { event, _ in
                 event.data == "finish" ? .completeOnEOF : .continue
             }
+        }
+
+        await clock.awaitSuspensions(atLeast: 2)
+        clock.advance(by: .seconds(3))
+
+        do {
+            _ = try await task.value
             Issue.record("Expected idle timeout")
         } catch let error as AgentError {
             guard case let .llmError(.streamFailed(.idleTimeout(diagnostics))) = error else {

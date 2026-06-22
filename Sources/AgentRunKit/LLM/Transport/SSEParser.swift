@@ -81,14 +81,15 @@ struct SSECompletion {
 }
 
 @discardableResult
-func processSSEStream<S: AsyncSequence & Sendable>(
+func processSSEStream<S: AsyncSequence & Sendable, C: Clock>(
     bytes: S,
     provider: ProviderIdentifier,
     stallTimeout: Duration?,
+    clock: C = ContinuousClock(),
     handler: @escaping @Sendable (SSEEvent, StreamFailureDiagnostics) async throws -> SSEDisposition
-) async throws -> SSECompletion where S.Element == UInt8 {
+) async throws -> SSECompletion where S.Element == UInt8, C.Duration == Duration {
     let progress = StreamProgress(provider: provider)
-    let started = ContinuousClock.now
+    let started = clock.now
 
     if let stallTimeout {
         return try await withThrowingTaskGroup(of: SSECompletion.self) { group in
@@ -96,20 +97,22 @@ func processSSEStream<S: AsyncSequence & Sendable>(
             group.addTask {
                 while true {
                     try Task.checkCancellation()
-                    let lastActivity = await progress.lastActivity
-                    let elapsed = ContinuousClock.now - lastActivity
-                    if elapsed >= stallTimeout {
-                        let diagnostics = await progress.snapshot(elapsed: ContinuousClock.now - started)
+                    let lastActivityOffset = await progress.lastActivityOffset
+                    let deadline = started.advanced(by: lastActivityOffset + stallTimeout)
+                    if clock.now >= deadline {
+                        let diagnostics = await progress.snapshot(elapsed: started.duration(to: clock.now))
                         throw AgentError.llmError(.streamFailed(.idleTimeout(
                             diagnostics: diagnostics
                         )))
                     }
-                    try await Task.sleep(for: stallTimeout - elapsed)
+                    try await clock.sleep(until: deadline, tolerance: nil)
                 }
             }
 
             group.addTask {
-                try await runSSEParser(bytes: bytes, progress: progress, started: started, handler: handler)
+                try await runSSEParser(
+                    bytes: bytes, progress: progress, started: started, clock: clock, handler: handler
+                )
             }
 
             guard let result = try await group.next() else {
@@ -119,18 +122,19 @@ func processSSEStream<S: AsyncSequence & Sendable>(
         }
     }
 
-    return try await runSSEParser(bytes: bytes, progress: progress, started: started, handler: handler)
+    return try await runSSEParser(bytes: bytes, progress: progress, started: started, clock: clock, handler: handler)
 }
 
-private func runSSEParser<S: AsyncSequence & Sendable>(
+private func runSSEParser<S: AsyncSequence & Sendable, C: Clock>(
     bytes: S,
     progress: StreamProgress,
-    started: ContinuousClock.Instant,
+    started: C.Instant,
+    clock: C,
     handler: @Sendable (SSEEvent, StreamFailureDiagnostics) async throws -> SSEDisposition
-) async throws -> SSECompletion where S.Element == UInt8 {
+) async throws -> SSECompletion where S.Element == UInt8, C.Duration == Duration {
     func dispatch(_ event: SSEEvent) async throws -> SSECompletion? {
-        await progress.recordEvent(eventName: event.event)
-        let diagnostics = await progress.snapshot(elapsed: ContinuousClock.now - started)
+        await progress.recordEvent(eventName: event.event, offset: started.duration(to: clock.now))
+        let diagnostics = await progress.snapshot(elapsed: started.duration(to: clock.now))
         switch try await handler(event, diagnostics) {
         case .continue:
             return nil
@@ -145,7 +149,7 @@ private func runSSEParser<S: AsyncSequence & Sendable>(
     var parser = SSEEventParser()
     do {
         for try await line in UnboundedLines(source: bytes) {
-            await progress.recordActivity()
+            await progress.recordActivity(offset: started.duration(to: clock.now))
             guard let event = parser.appendLine(line) else { continue }
             if let completion = try await dispatch(event) {
                 return completion
@@ -155,7 +159,7 @@ private func runSSEParser<S: AsyncSequence & Sendable>(
             return completion
         }
         try Task.checkCancellation()
-        let diagnostics = await progress.snapshot(elapsed: ContinuousClock.now - started)
+        let diagnostics = await progress.snapshot(elapsed: started.duration(to: clock.now))
         guard diagnostics.finishSignalSeen else {
             throw AgentError.llmError(.streamFailed(.providerTerminationMissing(
                 diagnostics: diagnostics
@@ -165,7 +169,7 @@ private func runSSEParser<S: AsyncSequence & Sendable>(
     } catch is CancellationError {
         throw CancellationError()
     } catch let urlError as URLError {
-        let diagnostics = await progress.snapshot(elapsed: ContinuousClock.now - started)
+        let diagnostics = await progress.snapshot(elapsed: started.duration(to: clock.now))
         throw AgentError.llmError(.streamFailed(.midStreamTransportFailure(
             code: urlError.code,
             diagnostics: diagnostics
@@ -175,7 +179,7 @@ private func runSSEParser<S: AsyncSequence & Sendable>(
 
 actor StreamProgress {
     private let provider: ProviderIdentifier
-    private(set) var lastActivity: ContinuousClock.Instant = .now
+    private(set) var lastActivityOffset: Duration = .zero
     private var eventsObserved: Int = 0
     private var lastEvent: String?
     private var finishSignalSeen = false
@@ -184,12 +188,12 @@ actor StreamProgress {
         self.provider = provider
     }
 
-    func recordActivity() {
-        lastActivity = .now
+    func recordActivity(offset: Duration) {
+        lastActivityOffset = offset
     }
 
-    func recordEvent(eventName: String?) {
-        lastActivity = .now
+    func recordEvent(eventName: String?, offset: Duration) {
+        lastActivityOffset = offset
         eventsObserved += 1
         if let eventName, !eventName.isEmpty {
             lastEvent = eventName
