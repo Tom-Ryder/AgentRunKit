@@ -790,35 +790,34 @@ struct StreamStallDetectionTests {
 
     @Test
     func stalledStreamThrowsError() async throws {
-        let (byteStream, continuation) = AsyncStream<UInt8>.makeStream()
+        let clock = TestClock()
+        let bytes = DelayedByteStream(clock: clock, chunks: [
+            .init(delay: .zero, bytes: sseChunk(minimalChunkJSON)),
+            .init(delay: .seconds(10), bytes: sseChunk(minimalChunkJSON)),
+        ])
 
-        for byte in sseChunk(minimalChunkJSON) {
-            continuation.yield(byte)
+        let task = Task {
+            try await processSSEStream(
+                bytes: bytes,
+                provider: .custom("test"),
+                stallTimeout: .seconds(2),
+                clock: clock
+            ) { _, _ in .continue }
         }
 
-        let controlled = ControlledByteStream(stream: byteStream)
+        await clock.awaitSuspensions(atLeast: 2)
+        clock.advance(by: .seconds(2))
 
-        let started = ContinuousClock.now
         do {
-            try await processSSEStream(
-                bytes: controlled,
-                provider: .custom("test"),
-                stallTimeout: .seconds(2)
-            ) { _, _ in .continue }
+            _ = try await task.value
             Issue.record("Expected idle timeout error")
         } catch let error as AgentError {
-            let elapsed = ContinuousClock.now - started
-            guard case let .llmError(transport) = error else {
-                Issue.record("Expected llmError, got \(error)")
-                return
-            }
-            guard case let .streamFailed(.idleTimeout(diagnostics)) = transport else {
-                Issue.record("Expected idle timeout, got \(transport)")
+            guard case let .llmError(.streamFailed(.idleTimeout(diagnostics))) = error else {
+                Issue.record("Expected idle timeout, got \(error)")
                 return
             }
             #expect(diagnostics.eventsObserved == 1)
-            #expect(elapsed >= .seconds(1))
-            #expect(diagnostics.elapsed >= .seconds(1))
+            #expect(diagnostics.elapsed >= .seconds(2))
         }
     }
 
