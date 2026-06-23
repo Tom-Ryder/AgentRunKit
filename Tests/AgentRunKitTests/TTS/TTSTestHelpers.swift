@@ -158,3 +158,80 @@ func wrapInMP3Metadata(_ text: String) -> Data {
     data.append(mp3WrapperTail)
     return data
 }
+
+func markerPCMData(for text: String) -> Data {
+    let marker = UInt8(text.utf8.reduce(0) { ($0 + Int($1)) % 251 })
+    return Data(repeating: marker, count: text.utf8.count * 3)
+}
+
+func alignedPCMData(for text: String) -> Data {
+    let marker = UInt8(text.utf8.reduce(0) { ($0 + Int($1)) % 251 })
+    return Data(repeating: marker, count: text.utf8.count * 4)
+}
+
+func tonePCM(for text: String) -> Data {
+    let hash = text.utf8.reduce(0) { $0 &+ Int($1) }
+    let amplitude = 0.15 + Double(hash % 5) * 0.05
+    let count = 24000
+    var data = Data(capacity: count * 2)
+    for index in 0 ..< count {
+        let sample = amplitude * sin(2 * .pi * 1000 * Double(index) / 24000)
+        let bits = UInt16(bitPattern: Int16((sample * 32767.0).rounded()))
+        data.append(UInt8(bits & 0x00FF))
+        data.append(UInt8(bits >> 8))
+    }
+    return data
+}
+
+actor EncodingAwarePCMProvider: TTSProvider {
+    let config: TTSProviderConfig
+    let sampleRate: Int
+    let channels: Int
+    let bitsPerSample: Int
+    private let dataFactory: @Sendable (String) -> Data
+    private var responses: [Int: Result<Data, any Error>]
+    private(set) var generateCallCount = 0
+
+    init(
+        sampleRate: Int = 24000,
+        channels: Int = 1,
+        bitsPerSample: Int = 16,
+        maxChunkCharacters: Int = 20,
+        defaultVoice: String = "alloy",
+        responses: [Int: Result<Data, any Error>] = [:],
+        dataFactory: @Sendable @escaping (String) -> Data = markerPCMData(for:)
+    ) {
+        config = TTSProviderConfig(
+            maxChunkCharacters: maxChunkCharacters,
+            defaultVoice: defaultVoice,
+            defaultFormat: .pcm
+        )
+        self.sampleRate = sampleRate
+        self.channels = channels
+        self.bitsPerSample = bitsPerSample
+        self.responses = responses
+        self.dataFactory = dataFactory
+    }
+
+    nonisolated func resolvedEncoding(for format: TTSAudioFormat, options _: TTSOptions) -> TTSAudioEncoding {
+        switch format {
+        case .pcm:
+            TTSAudioEncoding(format, sampleRate: sampleRate, channels: channels, bitsPerSample: bitsPerSample)
+        case .mp3, .opus, .aac, .flac, .wav:
+            TTSAudioEncoding(format)
+        }
+    }
+
+    func generate(
+        text: String,
+        voice _: String,
+        options _: TTSOptions,
+        context: TTSChunkContext
+    ) async throws -> Data {
+        generateCallCount += 1
+        if let result = responses[context.chunk.index] {
+            return try result.get()
+        }
+        return dataFactory(text)
+    }
+}

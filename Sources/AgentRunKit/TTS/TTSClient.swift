@@ -95,16 +95,8 @@ public struct TTSClient<P: TTSProvider>: Sendable {
             for: options.responseFormat ?? provider.config.defaultFormat,
             options: options
         )
-        let stitchFormat = try stitch.map { policy -> PCMFormat in
-            guard let format = PCMFormat(encoding) else {
-                throw TTSError.invalidConfiguration(
-                    "stitching requires 16-bit PCM output with a known sample rate and channel count"
-                )
-            }
-            if policy.loudness != nil, format.channels != 1 {
-                throw TTSError.invalidConfiguration("loudness matching requires mono (1-channel) 16-bit PCM")
-            }
-            return format
+        if let stitch {
+            _ = try resolvePCMFormat(for: encoding, loudness: stitch.loudness != nil)
         }
         let internalChunks = SentenceChunker.chunk(
             text: text,
@@ -115,30 +107,96 @@ public struct TTSClient<P: TTSProvider>: Sendable {
         guard !internalChunks.isEmpty else {
             throw TTSError.emptyText
         }
-
-        var segments: [TTSSegment] = []
-        for try await segment in segmentStream(
-            plan: Self.makePublicChunks(internalChunks),
+        let (segments, _) = try await Self.runChunks(
+            Self.makePublicChunks(internalChunks),
             voice: voice ?? provider.config.defaultVoice,
             options: options,
-            encoding: encoding
-        ) {
-            segments.append(segment)
+            encoding: encoding,
+            provider: provider,
+            maxConcurrent: maxConcurrent,
+            handling: .failFast
+        )
+        if let stitch {
+            return try self.stitch(segments: segments, policy: stitch)
         }
+        return try concatenate(segments: segments)
+    }
 
-        if let stitch, let stitchFormat {
-            guard segments.allSatisfy({ $0.audio.count.isMultiple(of: stitchFormat.bytesPerFrame) }) else {
-                throw TTSError.invalidConfiguration(
-                    "stitching requires PCM segments aligned to whole 16-bit frames"
-                )
-            }
-            return try Self.stitched(segments: segments, format: stitchFormat, policy: stitch)
+    /// Synthesizes chunk by chunk, returning each chunk's outcome and preserving completed audio past a failure.
+    public func generateBatch(
+        text: String,
+        voice: String? = nil,
+        options: TTSOptions = TTSOptions(),
+        stitch: TTSStitchPolicy? = nil
+    ) async throws -> TTSBatchResult {
+        let encoding = provider.resolvedEncoding(
+            for: options.responseFormat ?? provider.config.defaultFormat,
+            options: options
+        )
+        if let stitch {
+            _ = try resolvePCMFormat(for: encoding, loudness: stitch.loudness != nil)
         }
+        let internalChunks = SentenceChunker.chunk(
+            text: text,
+            maxCharacters: provider.config.maxChunkCharacters,
+            targetCharacters: stitch?.targetCharacters,
+            preferParagraphBoundaries: stitch?.preferParagraphBoundaries ?? false
+        )
+        guard !internalChunks.isEmpty else {
+            throw TTSError.emptyText
+        }
+        let plan = Self.makePublicChunks(internalChunks)
+        let (segments, failures) = try await Self.runChunks(
+            plan,
+            voice: voice ?? provider.config.defaultVoice,
+            options: options,
+            encoding: encoding,
+            provider: provider,
+            maxConcurrent: maxConcurrent,
+            handling: .collect
+        )
+        return TTSBatchResult(total: plan.count, completedSegments: segments, failures: failures)
+    }
 
-        let (audio, byteRanges) = Self.concatenate(segments.map(\.audio), format: encoding.format)
+    /// Re-synthesizes exactly the given chunks, returning a sparse ``TTSBatchResult`` to merge into a prior batch.
+    public func generate(
+        chunks: [TTSChunk],
+        voice: String? = nil,
+        options: TTSOptions = TTSOptions()
+    ) async throws -> TTSBatchResult {
+        guard let total = chunks.first?.total else {
+            throw TTSError.invalidConfiguration("generate(chunks:) requires at least one chunk")
+        }
+        let indices = chunks.map(\.index)
+        guard chunks.allSatisfy({ $0.total == total }),
+              indices.allSatisfy({ (0 ..< total).contains($0) }),
+              Set(indices).count == indices.count
+        else {
+            throw TTSError.invalidConfiguration("chunks must share one total and hold unique indices within 0..<total")
+        }
+        let encoding = provider.resolvedEncoding(
+            for: options.responseFormat ?? provider.config.defaultFormat,
+            options: options
+        )
+        let (segments, failures) = try await Self.runChunks(
+            chunks,
+            voice: voice ?? provider.config.defaultVoice,
+            options: options,
+            encoding: encoding,
+            provider: provider,
+            maxConcurrent: maxConcurrent,
+            handling: .collect
+        )
+        return TTSBatchResult(total: total, completedSegments: segments, failures: failures)
+    }
+
+    /// Concatenates a complete, gap-free segment set into one audio buffer plus a manifest, with no stitching.
+    public func concatenate(segments: [TTSSegment]) throws -> TTSConcatenationResult {
+        let (ordered, encoding) = try validatedAssembly(segments)
+        let (audio, byteRanges) = Self.concatenate(ordered.map(\.audio), format: encoding.format)
         var manifest: [TTSManifestEntry] = []
-        manifest.reserveCapacity(segments.count)
-        for (segment, range) in zip(segments, byteRanges) {
+        manifest.reserveCapacity(ordered.count)
+        for (segment, range) in zip(ordered, byteRanges) {
             manifest.append(TTSManifestEntry(
                 chunk: segment.chunk,
                 encoding: segment.encoding,
@@ -149,6 +207,16 @@ public struct TTSClient<P: TTSProvider>: Sendable {
             ))
         }
         return TTSConcatenationResult(audio: audio, manifest: manifest)
+    }
+
+    /// Stitches a complete, gap-free 16-bit PCM segment set with boundary-keyed pauses, fades, and optional loudness.
+    public func stitch(segments: [TTSSegment], policy: TTSStitchPolicy) throws -> TTSConcatenationResult {
+        let (ordered, encoding) = try validatedAssembly(segments)
+        let format = try resolvePCMFormat(for: encoding, loudness: policy.loudness != nil)
+        guard ordered.allSatisfy({ $0.audio.count.isMultiple(of: format.bytesPerFrame) }) else {
+            throw TTSError.invalidConfiguration("stitching requires PCM segments aligned to whole 16-bit frames")
+        }
+        return try Self.stitched(segments: ordered, format: format, policy: policy)
     }
 }
 
@@ -164,14 +232,15 @@ private extension TTSClient {
         return AsyncThrowingStream { continuation in
             let task = Task {
                 do {
-                    try await Self.executeChunks(
+                    _ = try await Self.runChunks(
                         publicChunks,
                         voice: resolvedVoice,
                         options: options,
                         encoding: encoding,
                         provider: provider,
                         maxConcurrent: maxConcurrent,
-                        continuation: continuation
+                        handling: .failFast,
+                        onSegment: { continuation.yield($0) }
                     )
                     continuation.finish()
                 } catch {
@@ -301,25 +370,37 @@ private extension TTSClient {
         }
     }
 
-    static func executeChunks(
+    enum ChunkFailureHandling {
+        case failFast
+        case collect
+    }
+
+    private enum ChunkAttempt {
+        case success(TTSSegment)
+        case failure(TTSChunkFailure)
+    }
+
+    static func runChunks(
         _ chunks: [TTSChunk],
         voice: String,
         options: TTSOptions,
         encoding: TTSAudioEncoding,
         provider: P,
         maxConcurrent: Int,
-        continuation: AsyncThrowingStream<TTSSegment, Error>.Continuation
-    ) async throws {
-        let totalChunks = chunks.count
-
-        try await withThrowingTaskGroup(of: (Int, Data).self) { group in
+        handling: ChunkFailureHandling,
+        onSegment: ((TTSSegment) -> Void)? = nil
+    ) async throws -> (segments: [TTSSegment], failures: [TTSChunkFailure]) {
+        try await withThrowingTaskGroup(of: ChunkAttempt.self) { group in
             var nextToSend = 0
-            var nextToYield = 0
-            var buffer: [Int: Data] = [:]
             var activeTasks = 0
+            var buffer: [Int: TTSSegment] = [:]
+            var emitCursor = 0
+            var segments: [TTSSegment] = []
+            var failures: [TTSChunkFailure] = []
 
-            while nextToYield < totalChunks {
-                while activeTasks < maxConcurrent, nextToSend < totalChunks {
+            while nextToSend < chunks.count || activeTasks > 0 {
+                try Task.checkCancellation()
+                while activeTasks < maxConcurrent, nextToSend < chunks.count {
                     let chunk = chunks[nextToSend]
                     let context = TTSChunkContext(chunk: chunk, encoding: encoding)
                     group.addTask {
@@ -330,43 +411,87 @@ private extension TTSClient {
                                 options: options,
                                 context: context
                             )
-                            return (chunk.index, data)
+                            return .success(TTSSegment(
+                                chunk: chunk,
+                                encoding: encoding,
+                                timing: .uncomputed,
+                                audio: data
+                            ))
                         } catch is CancellationError {
                             throw CancellationError()
                         } catch let error as TransportError {
-                            throw TTSError.chunkFailed(
-                                index: chunk.index,
-                                total: totalChunks,
-                                sourceRange: chunk.sourceRange,
-                                error
-                            )
+                            return .failure(TTSChunkFailure(chunk: chunk, encoding: encoding, error: error))
                         } catch {
-                            throw TTSError.chunkFailed(
-                                index: chunk.index,
-                                total: totalChunks,
-                                sourceRange: chunk.sourceRange,
-                                TransportError.other(String(describing: error))
-                            )
+                            return .failure(TTSChunkFailure(
+                                chunk: chunk,
+                                encoding: encoding,
+                                error: .other(String(describing: error))
+                            ))
                         }
                     }
                     nextToSend += 1
                     activeTasks += 1
                 }
 
-                guard let (index, data) = try await group.next() else { break }
+                guard let attempt = try await group.next() else { break }
                 activeTasks -= 1
-                buffer[index] = data
 
-                while let audio = buffer.removeValue(forKey: nextToYield) {
-                    continuation.yield(TTSSegment(
-                        chunk: chunks[nextToYield],
-                        encoding: encoding,
-                        timing: .uncomputed,
-                        audio: audio
-                    ))
-                    nextToYield += 1
+                switch attempt {
+                case let .success(segment):
+                    if let onSegment {
+                        buffer[segment.index] = segment
+                        while let next = buffer.removeValue(forKey: emitCursor) {
+                            onSegment(next)
+                            emitCursor += 1
+                        }
+                    } else {
+                        segments.append(segment)
+                    }
+                case let .failure(failure):
+                    if handling == .failFast {
+                        throw TTSError.chunkFailed(
+                            index: failure.index,
+                            total: failure.total,
+                            sourceRange: failure.sourceRange,
+                            failure.error
+                        )
+                    }
+                    failures.append(failure)
                 }
             }
+
+            return (segments, failures)
         }
+    }
+
+    private func resolvePCMFormat(for encoding: TTSAudioEncoding, loudness: Bool) throws -> PCMFormat {
+        guard let format = PCMFormat(encoding) else {
+            throw TTSError.invalidConfiguration(
+                "stitching requires 16-bit PCM output with a known sample rate and channel count"
+            )
+        }
+        if loudness, format.channels != 1 {
+            throw TTSError.invalidConfiguration("loudness matching requires mono (1-channel) 16-bit PCM")
+        }
+        return format
+    }
+
+    private func validatedAssembly(
+        _ segments: [TTSSegment]
+    ) throws -> (segments: [TTSSegment], encoding: TTSAudioEncoding) {
+        guard let first = segments.first else {
+            throw TTSError.invalidConfiguration("cannot assemble an empty segment set")
+        }
+        let total = first.total
+        let ordered = segments.sorted { $0.index < $1.index }
+        guard ordered.count == total, ordered.map(\.index) == Array(0 ..< total) else {
+            throw TTSError.invalidConfiguration(
+                "assembly requires a complete, gap-free run of segments covering 0..<\(total)"
+            )
+        }
+        guard ordered.allSatisfy({ $0.encoding == first.encoding && $0.total == total }) else {
+            throw TTSError.invalidConfiguration("assembly requires every segment to share one encoding and total")
+        }
+        return (ordered, first.encoding)
     }
 }

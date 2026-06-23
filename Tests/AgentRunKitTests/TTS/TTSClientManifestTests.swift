@@ -2,16 +2,6 @@
 import Foundation
 import Testing
 
-private func manifestTestPCMData(for text: String) -> Data {
-    let marker = UInt8(text.utf8.reduce(0) { ($0 + Int($1)) % 251 })
-    return Data(repeating: marker, count: text.utf8.count * 3)
-}
-
-private func alignedPCMData(for text: String) -> Data {
-    let marker = UInt8(text.utf8.reduce(0) { ($0 + Int($1)) % 251 })
-    return Data(repeating: marker, count: text.utf8.count * 4)
-}
-
 struct TTSClientManifestTests {
     @Test
     func generateWithManifestProducesEntryPerChunkInOrder() async throws {
@@ -181,7 +171,7 @@ struct TTSClientManifestTests {
     func generateWithManifestPCMByteRangesSliceConcatenatedAudioToSegmentBytes() async throws {
         let provider = MockTTSProvider(
             config: TTSProviderConfig(maxChunkCharacters: 20, defaultVoice: "alloy", defaultFormat: .pcm),
-            dataFactory: manifestTestPCMData
+            dataFactory: markerPCMData
         )
         let client = TTSClient(provider: provider)
         let text = "First sentence. Second sentence. Third sentence."
@@ -194,7 +184,7 @@ struct TTSClientManifestTests {
             let expectedLength = entry.chunk.text.utf8.count * 3
             #expect(range.count == expectedLength)
             let slice = result.audio.subdata(in: range)
-            let expected = manifestTestPCMData(for: entry.chunk.text)
+            let expected = markerPCMData(for: entry.chunk.text)
             #expect(slice == expected)
         }
     }
@@ -325,53 +315,6 @@ private struct PCMEncodingScenario {
     let sampleRate: Int
     let channels: Int
     let bitsPerSample: Int
-}
-
-private actor EncodingAwarePCMProvider: TTSProvider {
-    let config: TTSProviderConfig
-    let sampleRate: Int
-    let channels: Int
-    let bitsPerSample: Int
-    let dataFactory: @Sendable (String) -> Data
-    private(set) var generateCallCount = 0
-
-    init(
-        sampleRate: Int = 24000,
-        channels: Int = 1,
-        bitsPerSample: Int = 16,
-        maxChunkCharacters: Int = 20,
-        defaultVoice: String = "alloy",
-        dataFactory: @Sendable @escaping (String) -> Data = manifestTestPCMData(for:)
-    ) {
-        config = TTSProviderConfig(
-            maxChunkCharacters: maxChunkCharacters,
-            defaultVoice: defaultVoice,
-            defaultFormat: .pcm
-        )
-        self.sampleRate = sampleRate
-        self.channels = channels
-        self.bitsPerSample = bitsPerSample
-        self.dataFactory = dataFactory
-    }
-
-    nonisolated func resolvedEncoding(for format: TTSAudioFormat, options _: TTSOptions) -> TTSAudioEncoding {
-        switch format {
-        case .pcm:
-            TTSAudioEncoding(format, sampleRate: sampleRate, channels: channels, bitsPerSample: bitsPerSample)
-        case .mp3, .opus, .aac, .flac, .wav:
-            TTSAudioEncoding(format)
-        }
-    }
-
-    func generate(
-        text: String,
-        voice _: String,
-        options _: TTSOptions,
-        context _: TTSChunkContext
-    ) async -> Data {
-        generateCallCount += 1
-        return dataFactory(text)
-    }
 }
 
 struct TTSClientPCMDurationTests {
@@ -759,20 +702,6 @@ struct TTSClientStitchTests {
         }
         #expect(cursor == result.audio.count)
     }
-}
-
-private func tonePCM(for text: String) -> Data {
-    let hash = text.utf8.reduce(0) { $0 &+ Int($1) }
-    let amplitude = 0.15 + Double(hash % 5) * 0.05
-    let count = 24000
-    var data = Data(capacity: count * 2)
-    for index in 0 ..< count {
-        let sample = amplitude * sin(2 * .pi * 1000 * Double(index) / 24000)
-        let bits = UInt16(bitPattern: Int16((sample * 32767.0).rounded()))
-        data.append(UInt8(bits & 0x00FF))
-        data.append(UInt8(bits >> 8))
-    }
-    return data
 }
 
 struct TTSClientLoudnessTests {
