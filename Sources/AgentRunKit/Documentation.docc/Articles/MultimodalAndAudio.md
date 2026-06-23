@@ -119,6 +119,7 @@ These methods cover different use cases:
 | `stream(text:voice:options:)` | `AsyncThrowingStream<TTSSegment, Error>` | Chunked, yields ordered ``TTSSegment`` values as they complete |
 | `generateAll(text:voice:options:)` | `Data` | Chunked, concatenates all segments into one `Data` |
 | `generateWithManifest(text:voice:options:stitch:)` | ``TTSConcatenationResult`` | Like `generateAll` but also returns a per-segment manifest; an optional ``TTSStitchPolicy`` stitches PCM with boundary-keyed pauses |
+| `generateBatch(text:voice:options:stitch:)` | ``TTSBatchResult`` | Chunked, preserves completed segments and reports per-chunk failures instead of throwing |
 | `chunks(for:)` | `[TTSChunk]` | The chunk plan this client will use, without invoking the provider |
 
 ```swift
@@ -288,6 +289,37 @@ requires mono 16-bit PCM and runs only through
 ``TTSClient/generateWithManifest(text:voice:options:stitch:)``; streaming cannot match loudness because
 it has no lookahead over chunks not yet synthesized. The default ceiling is the EBU R128 production
 value of -1 dBTP.
+
+### Recovering from Partial Failure
+
+``TTSClient/stream(text:voice:options:)``, ``TTSClient/generateAll(text:voice:options:)``, and
+``TTSClient/generateWithManifest(text:voice:options:stitch:)`` are all-or-nothing: one chunk's failure
+throws and discards the segments that already succeeded. For long inputs, where re-running the whole
+batch re-bills the good chunks, use ``TTSClient/generateBatch(text:voice:options:stitch:)``. It returns
+a ``TTSBatchResult`` that preserves every completed ``TTSSegment`` and reports each failed chunk as a
+``TTSChunkFailure`` keyed by chunk index rather than completion order; only empty text and invalid
+configuration throw.
+
+Recover by re-running just the failed chunks, merging, then assembling:
+
+```swift
+let batch = try await tts.generateBatch(text: longArticle, stitch: policy)
+let whole: TTSBatchResult
+if batch.isComplete {
+    whole = batch
+} else {
+    let retry = try await tts.generate(chunks: batch.failedChunks)
+    whole = try batch.merging(retry)
+}
+let result = try tts.stitch(segments: whole.completedSegments, policy: policy)
+```
+
+``TTSClient/generate(chunks:voice:options:)`` re-runs exactly the chunks you pass and reports their
+outcomes, so the caller owns the retry policy. ``TTSBatchResult/merging(_:)`` folds a retry into the
+prior result and refuses to overwrite a completed chunk. ``TTSClient/concatenate(segments:)`` and
+``TTSClient/stitch(segments:policy:)`` reassemble a complete, gap-free segment set; a hole or mixed
+encodings throws ``TTSError/invalidConfiguration(_:)``. Loudness is re-derived over the segments you
+pass, so stitching the complete recovered set reproduces the program a single uninterrupted run makes.
 
 ### Custom Providers
 

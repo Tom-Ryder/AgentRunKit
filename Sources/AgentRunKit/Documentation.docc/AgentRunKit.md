@@ -174,6 +174,8 @@ For a complete walkthrough, see <doc:GettingStarted>.
 - ``TTSChunkContext``
 - ``TTSManifestEntry``
 - ``TTSConcatenationResult``
+- ``TTSBatchResult``
+- ``TTSChunkFailure``
 - ``TTSStitchPolicy``
 - ``TTSLoudnessMatch``
 - ``TTSLoudnessMeasurement``
