@@ -8,6 +8,11 @@
 
     private let runsFoundationModelsSmoke = ProcessInfo.processInfo.environment["SMOKE_FOUNDATION_MODELS"] == "1"
 
+    private let onDeviceModelIsAvailable: Bool = {
+        guard #available(macOS 26, iOS 26, *) else { return false }
+        return SystemLanguageModel.default.isAvailable
+    }()
+
     private actor ToolCallRecorder {
         private var count = 0
 
@@ -17,6 +22,35 @@
 
         func recordedCount() -> Int {
             count
+        }
+    }
+
+    private struct ShipmentOrigin: Codable, Equatable {
+        let city: String
+    }
+
+    private struct ShipmentDestination: Codable, Equatable {
+        let code: Int
+    }
+
+    private struct RegisterShipmentParams: Codable, SchemaProviding, Equatable {
+        let origin: ShipmentOrigin
+        let destination: ShipmentDestination
+    }
+
+    private struct RegisteredShipment: Codable {
+        let status: String
+    }
+
+    private func makeShipmentTool(
+        recorder: ParamsRecorder<RegisterShipmentParams>
+    ) throws -> AgentRunKit.Tool<RegisterShipmentParams, RegisteredShipment, EmptyContext> {
+        try AgentRunKit.Tool(
+            name: "register_shipment",
+            description: "Registers a shipment from an origin city to a numeric destination code."
+        ) { params, _ in
+            await recorder.record(params)
+            return RegisteredShipment(status: "registered")
         }
     }
 
@@ -41,13 +75,9 @@
         .enabled(if: runsFoundationModelsSmoke, "Requires SMOKE_FOUNDATION_MODELS=1"),
         .serialized
     ) struct FMSmokeTest {
-        @Test func agentRunNoTools() async throws {
-            guard #available(macOS 26, iOS 26, *) else { return }
-            guard SystemLanguageModel.default.isAvailable else {
-                print("SKIP: On-device model not available")
-                return
-            }
-
+        @available(macOS 26, iOS 26, *)
+        @Test(.enabled(if: onDeviceModelIsAvailable, "Requires an available on-device model"))
+        func agentRunNoTools() async throws {
             let agent = Agent.onDevice(
                 tools: [],
                 context: EmptyContext(),
@@ -67,13 +97,9 @@
             #expect(!content.isEmpty)
         }
 
-        @Test func agentStreamNoTools() async throws {
-            guard #available(macOS 26, iOS 26, *) else { return }
-            guard SystemLanguageModel.default.isAvailable else {
-                print("SKIP: On-device model not available")
-                return
-            }
-
+        @available(macOS 26, iOS 26, *)
+        @Test(.enabled(if: onDeviceModelIsAvailable, "Requires an available on-device model"))
+        func agentStreamNoTools() async throws {
             let agent = Agent.onDevice(
                 tools: [],
                 context: EmptyContext(),
@@ -100,13 +126,9 @@
             #expect(finalContent?.isEmpty == false)
         }
 
-        @Test func clientGenerateNoTools() async throws {
-            guard #available(macOS 26, iOS 26, *) else { return }
-            guard SystemLanguageModel.default.isAvailable else {
-                print("SKIP: On-device model not available")
-                return
-            }
-
+        @available(macOS 26, iOS 26, *)
+        @Test(.enabled(if: onDeviceModelIsAvailable, "Requires an available on-device model"))
+        func clientGenerateNoTools() async throws {
             let client = FoundationModelsClient<EmptyContext>(context: EmptyContext())
             let response = try await client.generate(
                 messages: [
@@ -122,13 +144,9 @@
             #expect(!response.content.isEmpty)
         }
 
-        @Test func agentRunWithToolBridge() async throws {
-            guard #available(macOS 26, iOS 26, *) else { return }
-            guard SystemLanguageModel.default.isAvailable else {
-                print("SKIP: On-device model not available")
-                return
-            }
-
+        @available(macOS 26, iOS 26, *)
+        @Test(.enabled(if: onDeviceModelIsAvailable, "Requires an available on-device model"))
+        func agentRunWithToolBridge() async throws {
             let recorder = ToolCallRecorder()
             let tool = LookupTokenTool(recorder: recorder)
             let agent = Agent.onDevice(
@@ -151,13 +169,45 @@
             #expect(content.contains(LookupTokenTool.token))
         }
 
-        @Test func chatStreamWithToolBridge() async throws {
-            guard #available(macOS 26, iOS 26, *) else { return }
-            guard SystemLanguageModel.default.isAvailable else {
-                print("SKIP: On-device model not available")
-                return
-            }
+        @available(macOS 26, iOS 26, *)
+        @Test(.enabled(if: onDeviceModelIsAvailable, "Requires an available on-device model"))
+        func nestedObjectArgumentsReachTypedTool() async throws {
+            let recorder = ParamsRecorder<RegisterShipmentParams>()
+            let tool = try makeShipmentTool(recorder: recorder)
+            let agent = Agent.onDevice(
+                tools: [tool],
+                context: EmptyContext(),
+                instructions: "Use the register_shipment tool to register shipments exactly as requested."
+            )
 
+            let result = try await agent.run(
+                userMessage: "Register a shipment from origin city \"Lisbon\" to destination code 4271. "
+                    + "Call register_shipment exactly once with origin.city = \"Lisbon\" "
+                    + "and destination.code = 4271.",
+                context: EmptyContext()
+            )
+
+            print("=== Nested-object tool bridge ===")
+            print("Content: \(result.content ?? "(nil)")")
+            let received = await recorder.received
+            print("Recorded invocations: \(received)")
+            try #require(
+                !received.isEmpty,
+                """
+                Model-routing integration failure: register_shipment was never invoked; schema-contract \
+                coverage lives in the converter, boundary, and adapter suites.
+                """
+            )
+            let expected = RegisterShipmentParams(
+                origin: ShipmentOrigin(city: "Lisbon"),
+                destination: ShipmentDestination(code: 4271)
+            )
+            #expect(received.allSatisfy { $0 == expected })
+        }
+
+        @available(macOS 26, iOS 26, *)
+        @Test(.enabled(if: onDeviceModelIsAvailable, "Requires an available on-device model"))
+        func chatStreamWithToolBridge() async throws {
             let recorder = ToolCallRecorder()
             let tool = LookupTokenTool(recorder: recorder)
             let client = FoundationModelsClient(
@@ -197,13 +247,9 @@
             #expect(accumulatedDelta.contains(LookupTokenTool.token))
         }
 
-        @Test func chatSendReturnsPlainContent() async throws {
-            guard #available(macOS 26, iOS 26, *) else { return }
-            guard SystemLanguageModel.default.isAvailable else {
-                print("SKIP: On-device model not available")
-                return
-            }
-
+        @available(macOS 26, iOS 26, *)
+        @Test(.enabled(if: onDeviceModelIsAvailable, "Requires an available on-device model"))
+        func chatSendReturnsPlainContent() async throws {
             let client = FoundationModelsClient<EmptyContext>(context: EmptyContext())
             let chat = Chat<EmptyContext>(client: client)
             let (response, _) = try await chat.send("Say hello in one word.")

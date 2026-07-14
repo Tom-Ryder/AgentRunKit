@@ -10,4 +10,12 @@
             && feature == "single-turn text-only message mapping"
     }
 
+    actor ParamsRecorder<P: Sendable> {
+        private(set) var received: [P] = []
+
+        func record(_ value: P) {
+            received.append(value)
+        }
+    }
+
 #endif
