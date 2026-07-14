@@ -6,14 +6,14 @@
     import Testing
 
     @Suite(.serialized) struct FoundationModelsClientTests {
+        @available(macOS 26, iOS 26, *)
         @Test func contextWindowSize() {
-            guard #available(macOS 26, iOS 26, *) else { return }
             let client = FoundationModelsClient<EmptyContext>(context: EmptyContext())
             #expect(client.contextWindowSize == nil)
         }
 
+        @available(macOS 26, iOS 26, *)
         @Test func contextBudgetConfigurationThrowsBecauseWindowSizeIsNil() async {
-            guard #available(macOS 26, iOS 26, *) else { return }
             let client = FoundationModelsClient<EmptyContext>(context: EmptyContext())
             let agent = Agent<EmptyContext>(
                 client: client,
@@ -31,8 +31,8 @@
             }
         }
 
+        @available(macOS 26, iOS 26, *)
         @Test func responseFormatThrows() async {
-            guard #available(macOS 26, iOS 26, *) else { return }
             let client = FoundationModelsClient<EmptyContext>(context: EmptyContext())
             await #expect(throws: AgentError.self) {
                 try await client.generate(
@@ -44,8 +44,8 @@
             }
         }
 
+        @available(macOS 26, iOS 26, *)
         @Test func mergeInstructionsBothPresent() {
-            guard #available(macOS 26, iOS 26, *) else { return }
             let client = FoundationModelsClient<EmptyContext>(
                 context: EmptyContext(), instructions: "Base"
             )
@@ -53,28 +53,28 @@
             #expect(result == "Base\nFromMessages")
         }
 
+        @available(macOS 26, iOS 26, *)
         @Test func mergeInstructionsBaseOnly() {
-            guard #available(macOS 26, iOS 26, *) else { return }
             let client = FoundationModelsClient<EmptyContext>(
                 context: EmptyContext(), instructions: "Base"
             )
             #expect(client.mergeInstructions(nil) == "Base")
         }
 
+        @available(macOS 26, iOS 26, *)
         @Test func mergeInstructionsMessageOnly() {
-            guard #available(macOS 26, iOS 26, *) else { return }
             let client = FoundationModelsClient<EmptyContext>(context: EmptyContext())
             #expect(client.mergeInstructions("FromMessages") == "FromMessages")
         }
 
+        @available(macOS 26, iOS 26, *)
         @Test func mergeInstructionsBothNil() {
-            guard #available(macOS 26, iOS 26, *) else { return }
             let client = FoundationModelsClient<EmptyContext>(context: EmptyContext())
             #expect(client.mergeInstructions(nil) == nil)
         }
 
+        @available(macOS 26, iOS 26, *)
         @Test func generateRejectsMalformedHistory() async {
-            guard #available(macOS 26, iOS 26, *) else { return }
             let client = FoundationModelsClient<EmptyContext>(context: EmptyContext())
             let malformedHistory: [ChatMessage] = [
                 .user("Hi"),
@@ -94,8 +94,8 @@
             }
         }
 
+        @available(macOS 26, iOS 26, *)
         @Test func streamRejectsMalformedHistory() async {
-            guard #available(macOS 26, iOS 26, *) else { return }
             let client = FoundationModelsClient<EmptyContext>(context: EmptyContext())
             let malformedHistory: [ChatMessage] = [
                 .user("Hi"),
@@ -110,8 +110,8 @@
             }
         }
 
+        @available(macOS 26, iOS 26, *)
         @Test func generateRejectsMultiTurnHistory() async {
-            guard #available(macOS 26, iOS 26, *) else { return }
             let client = FoundationModelsClient<EmptyContext>(context: EmptyContext())
 
             await #expect {
@@ -126,8 +126,8 @@
             }
         }
 
+        @available(macOS 26, iOS 26, *)
         @Test func streamRejectsMultiTurnHistory() async {
-            guard #available(macOS 26, iOS 26, *) else { return }
             let client = FoundationModelsClient<EmptyContext>(context: EmptyContext())
 
             await #expect {
@@ -137,8 +137,8 @@
             }
         }
 
+        @available(macOS 26, iOS 26, *)
         @Test func generateRejectsSystemAfterUser() async {
-            guard #available(macOS 26, iOS 26, *) else { return }
             let client = FoundationModelsClient<EmptyContext>(context: EmptyContext())
 
             await #expect {
@@ -153,8 +153,8 @@
             }
         }
 
+        @available(macOS 26, iOS 26, *)
         @Test func streamRejectsSystemAfterUser() async {
-            guard #available(macOS 26, iOS 26, *) else { return }
             let client = FoundationModelsClient<EmptyContext>(context: EmptyContext())
 
             await #expect {

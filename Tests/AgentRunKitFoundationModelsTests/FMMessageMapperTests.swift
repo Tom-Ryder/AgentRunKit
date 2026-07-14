@@ -6,15 +6,15 @@
     import Testing
 
     @Suite(.serialized) struct FMMessageMapperTests {
+        @available(macOS 26, iOS 26, *)
         @Test func singleUserMessage() throws {
-            guard #available(macOS 26, iOS 26, *) else { return }
             let mapped = try FMMessageMapper.map([.user("Hello")])
             #expect(mapped.prompt == "Hello")
             #expect(mapped.instructions == nil)
         }
 
+        @available(macOS 26, iOS 26, *)
         @Test func systemMessageExtractedAsInstructions() throws {
-            guard #available(macOS 26, iOS 26, *) else { return }
             let mapped = try FMMessageMapper.map([
                 .system("You are helpful"),
                 .user("Hi"),
@@ -23,8 +23,8 @@
             #expect(mapped.prompt == "Hi")
         }
 
+        @available(macOS 26, iOS 26, *)
         @Test func multipleSystemMessagesJoinedWithNewline() throws {
-            guard #available(macOS 26, iOS 26, *) else { return }
             let mapped = try FMMessageMapper.map([
                 .system("First instruction"),
                 .system("Second instruction"),
@@ -33,8 +33,8 @@
             #expect(mapped.instructions == "First instruction\nSecond instruction")
         }
 
+        @available(macOS 26, iOS 26, *)
         @Test func textOnlyMultimodalUserMessage() throws {
-            guard #available(macOS 26, iOS 26, *) else { return }
             let mapped = try FMMessageMapper.map([
                 .userMultimodal([
                     .text("Describe this"),
@@ -44,14 +44,14 @@
             #expect(mapped.prompt == "Describe this\nin detail")
         }
 
+        @available(macOS 26, iOS 26, *)
         @Test func noSystemMessageYieldsNilInstructions() throws {
-            guard #available(macOS 26, iOS 26, *) else { return }
             let mapped = try FMMessageMapper.map([.user("Just a question")])
             #expect(mapped.instructions == nil)
         }
 
+        @available(macOS 26, iOS 26, *)
         @Test func multipleUserMessagesThrows() {
-            guard #available(macOS 26, iOS 26, *) else { return }
             #expect {
                 _ = try FMMessageMapper.map([
                     .user("First question"),
@@ -62,8 +62,8 @@
             }
         }
 
+        @available(macOS 26, iOS 26, *)
         @Test func systemMessageAfterUserThrows() {
-            guard #available(macOS 26, iOS 26, *) else { return }
             #expect {
                 _ = try FMMessageMapper.map([
                     .user("Question"),
@@ -74,8 +74,8 @@
             }
         }
 
+        @available(macOS 26, iOS 26, *)
         @Test func assistantMessageThrows() {
-            guard #available(macOS 26, iOS 26, *) else { return }
             #expect {
                 _ = try FMMessageMapper.map([
                     .user("First"),
@@ -86,8 +86,8 @@
             }
         }
 
+        @available(macOS 26, iOS 26, *)
         @Test func toolMessageThrows() {
-            guard #available(macOS 26, iOS 26, *) else { return }
             #expect {
                 _ = try FMMessageMapper.map([
                     .user("First"),
@@ -98,8 +98,8 @@
             }
         }
 
+        @available(macOS 26, iOS 26, *)
         @Test func emptyHistoryThrows() {
-            guard #available(macOS 26, iOS 26, *) else { return }
             #expect {
                 _ = try FMMessageMapper.map([])
             } throws: { error in
@@ -107,8 +107,8 @@
             }
         }
 
+        @available(macOS 26, iOS 26, *)
         @Test func systemOnlyHistoryThrows() {
-            guard #available(macOS 26, iOS 26, *) else { return }
             #expect {
                 _ = try FMMessageMapper.map([.system("System")])
             } throws: { error in
@@ -116,8 +116,8 @@
             }
         }
 
+        @available(macOS 26, iOS 26, *)
         @Test func emptyUserTextThrows() {
-            guard #available(macOS 26, iOS 26, *) else { return }
             #expect {
                 _ = try FMMessageMapper.map([.user(" \n\t ")])
             } throws: { error in
@@ -125,8 +125,8 @@
             }
         }
 
+        @available(macOS 26, iOS 26, *)
         @Test func nonTextMultimodalPartsThrow() {
-            guard #available(macOS 26, iOS 26, *) else { return }
             let data = Data([0x01, 0x02])
             let nonTextParts: [ContentPart] = [
                 .imageURL("https://example.com/image.jpg"),
@@ -155,8 +155,8 @@
             }
         }
 
+        @available(macOS 26, iOS 26, *)
         @Test func whitespaceOnlyMultimodalThrows() {
-            guard #available(macOS 26, iOS 26, *) else { return }
             #expect {
                 _ = try FMMessageMapper.map([
                     .userMultimodal([.text(" "), .text("\n")]),
@@ -166,8 +166,8 @@
             }
         }
 
+        @available(macOS 26, iOS 26, *)
         @Test func multimodalPlusUserThrows() {
-            guard #available(macOS 26, iOS 26, *) else { return }
             #expect {
                 _ = try FMMessageMapper.map([
                     .userMultimodal([.text("First question")]),
@@ -178,8 +178,8 @@
             }
         }
 
+        @available(macOS 26, iOS 26, *)
         @Test func assistantToolAndFollowUpThrows() {
-            guard #available(macOS 26, iOS 26, *) else { return }
             #expect {
                 _ = try FMMessageMapper.map([
                     .system("System"),
