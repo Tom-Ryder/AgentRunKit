@@ -1,7 +1,7 @@
 import Foundation
 
 /// An LLM client for Google models on Vertex AI.
-public struct VertexGoogleClient: LLMClient, Sendable {
+public struct VertexGoogleClient: LLMClient, ToolCallSurfacingClient, Sendable {
     public let modelIdentifier: String?
     public let contextWindowSize: Int?
     public let providerIdentifier: ProviderIdentifier = .vertexGoogle

@@ -2,7 +2,7 @@ import AgentRunKit
 import Foundation
 import MLXLMCommon
 
-public struct MLXClient: LLMClient, Sendable {
+public struct MLXClient: LLMClient, ToolCallSurfacingClient, Sendable {
     public let container: ModelContainer
     public let modelIdentifier: String?
     public let contextWindowSize: Int?

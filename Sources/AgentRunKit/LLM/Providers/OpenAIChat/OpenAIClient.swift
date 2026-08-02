@@ -1,7 +1,7 @@
 import Foundation
 
 /// An LLM client for OpenAI-compatible Chat Completions APIs.
-public struct OpenAIClient: LLMClient, Sendable {
+public struct OpenAIClient: LLMClient, ToolCallSurfacingClient, Sendable {
     public let modelIdentifier: String?
     public let maxTokens: Int
     public let contextWindowSize: Int?

@@ -1,7 +1,7 @@
 import Foundation
 
 /// An LLM client for the Anthropic Messages API.
-public struct AnthropicClient: LLMClient, Sendable {
+public struct AnthropicClient: LLMClient, ToolCallSurfacingClient, Sendable {
     public let modelIdentifier: String?
     public let maxTokens: Int
     public let contextWindowSize: Int?

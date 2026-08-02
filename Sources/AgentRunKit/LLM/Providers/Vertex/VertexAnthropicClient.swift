@@ -1,7 +1,7 @@
 import Foundation
 
 /// An LLM client for Anthropic models on Google Vertex AI.
-public struct VertexAnthropicClient: LLMClient, Sendable {
+public struct VertexAnthropicClient: LLMClient, ToolCallSurfacingClient, Sendable {
     public let modelIdentifier: String?
     public let contextWindowSize: Int?
     public let providerIdentifier: ProviderIdentifier = .vertexAnthropic

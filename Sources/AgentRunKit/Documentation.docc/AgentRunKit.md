@@ -94,6 +94,7 @@ For a complete walkthrough, see <doc:GettingStarted>.
 
 - <doc:LLMProviders>
 - ``LLMClient``
+- ``ToolCallSurfacingClient``
 - ``OpenAIClient``
 - ``OpenAIChatProfile``
 - ``OpenAIChatAssistantReplayProfile``

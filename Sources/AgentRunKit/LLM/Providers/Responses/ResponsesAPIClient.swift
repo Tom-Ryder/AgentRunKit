@@ -1,7 +1,7 @@
 import Foundation
 
 /// An LLM client for the OpenAI Responses API.
-public actor ResponsesAPIClient: LLMClient, HistoryRewriteAwareClient {
+public actor ResponsesAPIClient: LLMClient, ToolCallSurfacingClient, HistoryRewriteAwareClient {
     public nonisolated let modelIdentifier: String?
     public nonisolated let maxOutputTokens: Int?
     public nonisolated let contextWindowSize: Int?
