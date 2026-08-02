@@ -32,8 +32,14 @@ extension Agent {
             sessionID: target.sessionID, runID: RunID(),
             checkpointer: checkpointer
         )
-        validateInvocation(options)
         try target.messages.validateForAgentHistory()
+        if let terminalOutcome = target.terminalOutcome {
+            try completionPolicy.validateIdentity(of: terminalOutcome)
+            return replayTerminalOutcome(
+                terminalOutcome, target: target, eventFactory: options.eventFactory
+            )
+        }
+        validateInvocation(options)
         try validateMCPBindings(target.mcpToolBindings)
         return AsyncThrowingStream { continuation in
             let task = Task { [self] in
@@ -48,6 +54,40 @@ extension Agent {
             }
             continuation.onTermination = { _ in task.cancel() }
         }
+    }
+
+    func replayTerminalOutcome(
+        _ outcome: AgentTerminalOutcome,
+        target: AgentCheckpoint,
+        eventFactory: StreamEventFactory
+    ) -> AsyncThrowingStream<StreamEvent, Error> {
+        AsyncThrowingStream { continuation in
+            if let iterationUsage = target.iterationUsage {
+                continuation.yield(replayedIterationEvent(target: target, usage: iterationUsage))
+            }
+            finishStreaming(
+                continuation: continuation,
+                event: makeFinishedEvent(
+                    tokenUsage: target.tokenUsage,
+                    content: outcome.content,
+                    reason: .completed,
+                    history: target.messages,
+                    eventFactory: eventFactory
+                )
+            )
+        }
+    }
+
+    private func replayedIterationEvent(target: AgentCheckpoint, usage: TokenUsage) -> StreamEvent {
+        StreamEventFactory(
+            sessionID: target.sessionID,
+            runID: target.runID,
+            origin: .replayed(from: target.checkpointID)
+        ).make(.iterationCompleted(
+            usage: usage,
+            iteration: target.iteration,
+            history: target.messages
+        ))
     }
 
     private func validateMCPBindings(_ checkpointed: Set<MCPToolBinding>) throws {
@@ -67,16 +107,9 @@ extension Agent {
         options: InvocationOptions,
         continuation: AsyncThrowingStream<StreamEvent, Error>.Continuation
     ) async throws {
-        let replayFactory = StreamEventFactory(
-            sessionID: target.sessionID,
-            runID: target.runID,
-            origin: .replayed(from: target.checkpointID)
-        )
-        continuation.yield(replayFactory.make(.iterationCompleted(
-            usage: target.iterationUsage ?? TokenUsage(),
-            iteration: target.iteration,
-            history: target.messages
-        )))
+        continuation.yield(replayedIterationEvent(
+            target: target, usage: target.iterationUsage ?? TokenUsage()
+        ))
         var state = AgentLoopState(
             messages: target.messages,
             historyWasRewrittenLocally: true,

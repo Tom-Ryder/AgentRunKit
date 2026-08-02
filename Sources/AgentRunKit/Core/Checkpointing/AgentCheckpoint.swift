@@ -90,6 +90,7 @@ public struct AgentCheckpoint: Sendable, Codable, Identifiable {
     public let checkpointID: CheckpointID
     public let timestamp: Date
     public let mcpToolBindings: Set<MCPToolBinding>
+    public let terminalOutcome: AgentTerminalOutcome?
 
     public var id: CheckpointID {
         checkpointID
@@ -109,6 +110,38 @@ public struct AgentCheckpoint: Sendable, Codable, Identifiable {
         timestamp: Date = Date(),
         mcpToolBindings: Set<MCPToolBinding> = []
     ) {
+        self.init(
+            messages: messages,
+            iteration: iteration,
+            tokenUsage: tokenUsage,
+            iterationUsage: iterationUsage,
+            contextBudgetState: contextBudgetState,
+            historyWasRewrittenLocally: historyWasRewrittenLocally,
+            sessionAllowlist: sessionAllowlist,
+            sessionID: sessionID,
+            runID: runID,
+            checkpointID: checkpointID,
+            timestamp: timestamp,
+            mcpToolBindings: mcpToolBindings,
+            terminalOutcome: nil
+        )
+    }
+
+    init(
+        messages: [ChatMessage],
+        iteration: Int,
+        tokenUsage: TokenUsage,
+        iterationUsage: TokenUsage?,
+        contextBudgetState: ContextBudgetCheckpointState?,
+        historyWasRewrittenLocally: Bool,
+        sessionAllowlist: Set<String>,
+        sessionID: SessionID,
+        runID: RunID,
+        checkpointID: CheckpointID,
+        timestamp: Date,
+        mcpToolBindings: Set<MCPToolBinding>,
+        terminalOutcome: AgentTerminalOutcome?
+    ) {
         precondition(iteration >= 0, "iteration must be non-negative")
         self.messages = messages
         self.iteration = iteration
@@ -122,12 +155,13 @@ public struct AgentCheckpoint: Sendable, Codable, Identifiable {
         self.checkpointID = checkpointID
         self.timestamp = timestamp
         self.mcpToolBindings = mcpToolBindings
+        self.terminalOutcome = terminalOutcome
     }
 
     private enum CodingKeys: String, CodingKey {
         case messages, iteration, tokenUsage, iterationUsage, contextBudgetState
         case historyWasRewrittenLocally, sessionAllowlist
-        case sessionID, runID, checkpointID, timestamp, mcpToolBindings
+        case sessionID, runID, checkpointID, timestamp, mcpToolBindings, terminalOutcome
     }
 
     public init(from decoder: any Decoder) throws {
@@ -157,7 +191,10 @@ public struct AgentCheckpoint: Sendable, Codable, Identifiable {
             timestamp: container.decode(Date.self, forKey: .timestamp),
             mcpToolBindings: Set(container.decodeIfPresent(
                 [MCPToolBinding].self, forKey: .mcpToolBindings
-            ) ?? [])
+            ) ?? []),
+            terminalOutcome: container.decodeIfPresent(
+                AgentTerminalOutcome.self, forKey: .terminalOutcome
+            )
         )
     }
 
@@ -184,6 +221,7 @@ public struct AgentCheckpoint: Sendable, Codable, Identifiable {
                 forKey: .mcpToolBindings
             )
         }
+        try container.encodeIfPresent(terminalOutcome, forKey: .terminalOutcome)
     }
 }
 
@@ -192,6 +230,7 @@ public enum AgentCheckpointError: Error, Sendable, Equatable, LocalizedError {
     case notFound(CheckpointID)
     case fileSystem(String)
     case mcpBindingMismatch([MCPToolBinding])
+    case completionToolMismatch(checkpointed: String, live: String?)
 
     public var errorDescription: String? {
         switch self {
@@ -202,6 +241,11 @@ public enum AgentCheckpointError: Error, Sendable, Equatable, LocalizedError {
         case let .mcpBindingMismatch(missing):
             let names = missing.map { "\($0.serverName)::\($0.toolName)" }.joined(separator: ", ")
             return "Missing MCP tool bindings on resume: \(names)"
+        case let .completionToolMismatch(checkpointed, live):
+            return """
+            Terminal checkpoint completed through \(checkpointed), \
+            but the resuming agent completes through \(live ?? "the built-in finish tool")
+            """
         }
     }
 }

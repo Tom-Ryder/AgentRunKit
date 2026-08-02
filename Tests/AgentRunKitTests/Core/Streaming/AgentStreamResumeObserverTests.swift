@@ -19,6 +19,25 @@ private func awaitBufferedCursor(_ stream: AgentStream<some ToolContext>, atLeas
     }
 }
 
+private struct EchoParams: Codable, SchemaProviding {
+    let message: String
+    static var jsonSchema: JSONSchema {
+        .object(properties: ["message": .string()], required: ["message"])
+    }
+}
+
+private struct EchoOutput: Codable {
+    let echoed: String
+}
+
+private func makeEchoCallDeltas(id: String, message: String) -> [StreamDelta] {
+    [
+        .toolCallStart(index: 0, id: id, name: "echo", kind: .function),
+        .toolCallDelta(index: 0, arguments: #"{"message":"\#(message)"}"#),
+        .finished(usage: TokenUsage(input: 3, output: 2)),
+    ]
+}
+
 private func makeReplayedIterationEvent(
     iteration: Int,
     history: [ChatMessage],
@@ -393,6 +412,132 @@ struct AgentStreamResumeObserverTests {
     }
 }
 
+struct AgentStreamCheckpointObservationTests {
+    @MainActor @Test
+    func currentCheckpointTracksTheMostRecentLiveSave() async throws {
+        let backend = InMemoryCheckpointer()
+        let session = SessionID()
+        let echoTool = try Tool<EchoParams, EchoOutput, EmptyContext>(
+            name: "echo",
+            description: "Echoes input",
+            executor: { params, _ in EchoOutput(echoed: params.message) }
+        )
+        let agent = Agent<EmptyContext>(
+            client: StreamingMockLLMClient(streamSequences: [
+                makeEchoCallDeltas(id: "call_echo_1", message: "first"),
+                makeEchoCallDeltas(id: "call_echo_2", message: "second"),
+                [
+                    .toolCallStart(index: 0, id: "call_finish", name: "finish", kind: .function),
+                    .toolCallDelta(index: 0, arguments: #"{"content":"done"}"#),
+                    .finished(usage: TokenUsage(input: 1, output: 1)),
+                ],
+            ]),
+            tools: [echoTool]
+        )
+        let stream = AgentStream(agent: agent, bufferCapacity: 64)
+
+        stream.send("Hi", context: EmptyContext(), sessionID: session, checkpointer: backend)
+        await awaitStreamCompletion(stream)
+
+        let ids = try await backend.list(session: session)
+        #expect(ids.count == 2)
+        #expect(stream.currentCheckpoint == ids.last)
+    }
+
+    @MainActor @Test
+    func staleSaveObservationsAreIgnored() {
+        let agent = Agent<EmptyContext>(
+            client: StreamingMockLLMClient(streamSequences: []), tools: []
+        )
+        let stream = AgentStream(agent: agent, bufferCapacity: 8)
+        stream.observeSavedCheckpoint(CheckpointID(), generation: stream.sendGeneration &- 1)
+        #expect(stream.currentCheckpoint == nil)
+
+        let live = CheckpointID()
+        stream.observeSavedCheckpoint(live, generation: stream.sendGeneration)
+        #expect(stream.currentCheckpoint == live)
+    }
+
+    @MainActor @Test
+    func refusedTerminalResumePublishesNoTerminalState() async throws {
+        let backend = InMemoryCheckpointer()
+        let checkpointID = CheckpointID()
+        try await backend.save(AgentCheckpoint(
+            messages: [.user("Summarize"), .assistant(AssistantMessage(content: "summarized"))],
+            iteration: 1,
+            tokenUsage: TokenUsage(input: 9, output: 4),
+            iterationUsage: TokenUsage(input: 5, output: 2),
+            contextBudgetState: nil,
+            historyWasRewrittenLocally: false,
+            sessionAllowlist: [],
+            sessionID: SessionID(),
+            runID: RunID(),
+            checkpointID: checkpointID,
+            timestamp: Date(timeIntervalSince1970: 1_700_000_000),
+            mcpToolBindings: [],
+            terminalOutcome: AgentTerminalOutcome(content: "shipped", toolName: "finalize")
+        ))
+        let agent = Agent<EmptyContext>(
+            client: StreamingMockLLMClient(streamSequences: []), tools: []
+        )
+        let stream = AgentStream(agent: agent, bufferCapacity: 8)
+
+        await #expect(
+            throws: AgentCheckpointError.completionToolMismatch(checkpointed: "finalize", live: nil)
+        ) {
+            try await stream.resume(from: checkpointID, checkpointer: backend, context: EmptyContext())
+        }
+
+        #expect(stream.terminalContent == nil)
+        #expect(stream.finishReason == nil)
+        #expect(stream.history.isEmpty)
+        #expect(stream.currentCheckpoint == nil)
+        #expect(!stream.isStreaming)
+    }
+
+    @MainActor @Test
+    func aSendDuringResumeKeepsCheckpointStateOutOfTheStream() async throws {
+        let backend = InMemoryCheckpointer()
+        let checkpointSession = SessionID()
+        let checkpointID = CheckpointID()
+        try await backend.save(AgentCheckpoint(
+            messages: [.user("Checkpointed"), .assistant(AssistantMessage(content: "earlier"))],
+            iteration: 1,
+            tokenUsage: TokenUsage(input: 42, output: 24),
+            iterationUsage: TokenUsage(input: 42, output: 24),
+            sessionID: checkpointSession, runID: RunID(), checkpointID: checkpointID
+        ))
+        let freshFinish: [StreamDelta] = [
+            .toolCallStart(index: 0, id: "call_finish", name: "finish", kind: .function),
+            .toolCallDelta(index: 0, arguments: #"{"content":"fresh"}"#),
+            .finished(usage: TokenUsage(input: 1, output: 1)),
+        ]
+        let agent = Agent<EmptyContext>(
+            client: StreamingMockLLMClient(streamSequences: [freshFinish, freshFinish]), tools: []
+        )
+        let stream = AgentStream(agent: agent, bufferCapacity: 64)
+        let gate = GatedLoadCheckpointer(inner: backend)
+
+        let resumeTask = Task {
+            try await stream.resume(from: checkpointID, checkpointer: gate, context: EmptyContext())
+        }
+        await gate.awaitLoadStarted()
+        stream.send("Fresh", context: EmptyContext())
+        await gate.releaseLoad()
+        try await resumeTask.value
+        await awaitStreamCompletion(stream)
+
+        #expect(stream.content == "fresh")
+        #expect(stream.terminalContent == "fresh")
+        #expect(stream.tokenUsage == TokenUsage(input: 1, output: 1))
+        #expect(stream.history.contains(.user("Fresh")))
+        #expect(!stream.history.contains(.user("Checkpointed")))
+        #expect(stream.sessionID != checkpointSession)
+        #expect(stream.currentCheckpoint == nil)
+        #expect(stream.iterationsReplayed == 0)
+    }
+}
+
 private actor CountingCheckpointer: AgentCheckpointer {
     private let inner: any AgentCheckpointer
     private(set) var loadCount = 0
@@ -412,6 +557,53 @@ private actor CountingCheckpointer: AgentCheckpointer {
 
     func list(session: SessionID) async throws -> [CheckpointID] {
         try await inner.list(session: session)
+    }
+}
+
+private actor GatedLoadCheckpointer: AgentCheckpointer {
+    private let inner: any AgentCheckpointer
+    private var loadStarted = false
+    private var loadStartedContinuation: CheckedContinuation<Void, Never>?
+    private var isReleased = false
+    private var releaseContinuation: CheckedContinuation<Void, Never>?
+
+    init(inner: any AgentCheckpointer) {
+        self.inner = inner
+    }
+
+    func save(_ checkpoint: AgentCheckpoint) async throws {
+        try await inner.save(checkpoint)
+    }
+
+    func load(_ id: CheckpointID) async throws -> AgentCheckpoint {
+        loadStarted = true
+        loadStartedContinuation?.resume()
+        loadStartedContinuation = nil
+
+        if !isReleased {
+            await withCheckedContinuation { continuation in
+                releaseContinuation = continuation
+            }
+        }
+        return try await inner.load(id)
+    }
+
+    func list(session: SessionID) async throws -> [CheckpointID] {
+        try await inner.list(session: session)
+    }
+
+    func awaitLoadStarted() async {
+        guard !loadStarted else { return }
+        precondition(loadStartedContinuation == nil, "awaitLoadStarted supports a single waiter")
+        await withCheckedContinuation { continuation in
+            loadStartedContinuation = continuation
+        }
+    }
+
+    func releaseLoad() {
+        isReleased = true
+        releaseContinuation?.resume()
+        releaseContinuation = nil
     }
 }
 

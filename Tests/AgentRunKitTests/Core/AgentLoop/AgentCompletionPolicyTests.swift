@@ -86,3 +86,28 @@ struct ExecutableCompletionClassificationTests {
         #expect(try policy.classify([searchCall, pruneCall]) == TerminalCallDisposition.none)
     }
 }
+
+struct TerminalOutcomeIdentityTests {
+    private let outcome = AgentTerminalOutcome(content: #"{"summary":"shipped"}"#, toolName: "finalize")
+
+    @Test
+    func theConfiguredCompletionToolOwnsItsOutcome() throws {
+        try AgentCompletionPolicy.executableTool(name: "finalize").validateIdentity(of: outcome)
+    }
+
+    @Test
+    func anotherCompletionToolCannotClaimTheOutcome() {
+        #expect(
+            throws: AgentCheckpointError.completionToolMismatch(checkpointed: "finalize", live: "publish")
+        ) {
+            try AgentCompletionPolicy.executableTool(name: "publish").validateIdentity(of: outcome)
+        }
+    }
+
+    @Test
+    func builtInFinishAgentsNeverOwnATerminalOutcome() {
+        #expect(throws: AgentCheckpointError.completionToolMismatch(checkpointed: "finalize", live: nil)) {
+            try AgentCompletionPolicy.builtInFinish.validateIdentity(of: outcome)
+        }
+    }
+}

@@ -35,6 +35,66 @@ private func collect(_ stream: AsyncThrowingStream<StreamEvent, Error>) async th
     return events
 }
 
+private let terminalOutcome = AgentTerminalOutcome(
+    content: #"{"summary":"shipped"}"#, toolName: "finalize"
+)
+
+private let terminalMessages: [ChatMessage] = [
+    .user("Summarize"),
+    .assistant(AssistantMessage(
+        content: "",
+        toolCalls: [ToolCall(id: "call_finalize", name: "finalize", arguments: "{}")]
+    )),
+    .tool(id: "call_finalize", name: "finalize", content: #"{"summary":"shipped"}"#),
+]
+
+private func makeTerminalCheckpoint(
+    messages: [ChatMessage] = terminalMessages,
+    iteration: Int = 1,
+    tokenUsage: TokenUsage = TokenUsage(input: 9, output: 4),
+    iterationUsage: TokenUsage? = TokenUsage(input: 5, output: 2),
+    mcpToolBindings: Set<MCPToolBinding> = [],
+    sessionID: SessionID = SessionID(),
+    checkpointID: CheckpointID = CheckpointID()
+) -> AgentCheckpoint {
+    AgentCheckpoint(
+        messages: messages,
+        iteration: iteration,
+        tokenUsage: tokenUsage,
+        iterationUsage: iterationUsage,
+        contextBudgetState: nil,
+        historyWasRewrittenLocally: false,
+        sessionAllowlist: [],
+        sessionID: sessionID,
+        runID: RunID(),
+        checkpointID: checkpointID,
+        timestamp: Date(timeIntervalSince1970: 1_700_000_000),
+        mcpToolBindings: mcpToolBindings,
+        terminalOutcome: terminalOutcome
+    )
+}
+
+private func resumeExpectingCompletionToolMismatch(
+    _ target: AgentCheckpoint,
+    agent: Agent<EmptyContext>,
+    tokenBudget: Int? = nil
+) async {
+    let backend = InMemoryCheckpointer()
+    do {
+        try await backend.save(target)
+        _ = try await agent.resume(
+            from: target.checkpointID, checkpointer: backend,
+            context: EmptyContext(), tokenBudget: tokenBudget
+        )
+        Issue.record("Expected completionToolMismatch")
+    } catch let AgentCheckpointError.completionToolMismatch(checkpointed, live) {
+        #expect(checkpointed == "finalize")
+        #expect(live == nil)
+    } catch {
+        Issue.record("Expected completionToolMismatch, got \(error)")
+    }
+}
+
 struct AgentResumeTests {
     @Test
     func resumeMissingCheckpointThrowsBeforeStream() async {
@@ -367,6 +427,158 @@ struct AgentResumeTests {
         _ = try await collect(stream)
         let count = await approvalRequests.value
         #expect(count == 0)
+    }
+}
+
+struct AgentTerminalResumeTests {
+    @Test
+    func terminalCheckpointIsRefusedByABuiltInFinishAgent() async {
+        await resumeExpectingCompletionToolMismatch(
+            makeTerminalCheckpoint(),
+            agent: Agent<EmptyContext>(client: StreamingMockLLMClient(streamSequences: []), tools: [])
+        )
+    }
+
+    @Test
+    func terminalIdentityIsCheckedBeforeMCPBindingValidation() async {
+        await resumeExpectingCompletionToolMismatch(
+            makeTerminalCheckpoint(
+                mcpToolBindings: [MCPToolBinding(serverName: "alpha", toolName: "search")]
+            ),
+            agent: Agent<EmptyContext>(client: StreamingMockLLMClient(streamSequences: []), tools: [])
+        )
+    }
+
+    @Test
+    func terminalIdentityIsCheckedWithoutRequiringAnApprovalHandler() async {
+        await resumeExpectingCompletionToolMismatch(
+            makeTerminalCheckpoint(),
+            agent: Agent<EmptyContext>(
+                client: StreamingMockLLMClient(streamSequences: []),
+                tools: [],
+                configuration: AgentConfiguration(approvalPolicy: .allTools)
+            )
+        )
+    }
+
+    @Test
+    func terminalIdentityIsCheckedBeforeStructuralPreflight() async {
+        await resumeExpectingCompletionToolMismatch(
+            makeTerminalCheckpoint(iteration: 9),
+            agent: Agent<EmptyContext>(
+                client: StreamingMockLLMClient(streamSequences: []),
+                tools: [],
+                configuration: AgentConfiguration(maxIterations: 2)
+            ),
+            tokenBudget: 1
+        )
+    }
+
+    @Test
+    func malformedTerminalHistoryIsRejectedBeforeIdentityValidation() async throws {
+        let backend = InMemoryCheckpointer()
+        let target = makeTerminalCheckpoint(messages: [
+            .user("Summarize"),
+            .tool(id: "orphan", name: "finalize", content: "{}"),
+        ])
+        try await backend.save(target)
+        let agent = Agent<EmptyContext>(client: StreamingMockLLMClient(streamSequences: []), tools: [])
+        await #expect(throws: AgentError.malformedHistory(.unexpectedToolResult(id: "orphan"))) {
+            _ = try await agent.resume(
+                from: target.checkpointID, checkpointer: backend, context: EmptyContext()
+            )
+        }
+    }
+
+    @Test
+    func malformedHistoryThrowsInsteadOfTrappingOnAMissingApprovalHandler() async throws {
+        let backend = InMemoryCheckpointer()
+        let checkpointID = CheckpointID()
+        try await backend.save(AgentCheckpoint(
+            messages: [.user("Hi"), .tool(id: "orphan", name: "echo", content: "{}")],
+            iteration: 1,
+            tokenUsage: TokenUsage(input: 5, output: 5),
+            sessionID: SessionID(), runID: RunID(), checkpointID: checkpointID
+        ))
+        let agent = Agent<EmptyContext>(
+            client: StreamingMockLLMClient(streamSequences: []),
+            tools: [],
+            configuration: AgentConfiguration(approvalPolicy: .allTools)
+        )
+        await #expect(throws: AgentError.malformedHistory(.unexpectedToolResult(id: "orphan"))) {
+            _ = try await agent.resume(
+                from: checkpointID, checkpointer: backend, context: EmptyContext()
+            )
+        }
+    }
+
+    @Test
+    func terminalReplayCommitsTheSavedOutcomeWithoutLiveWork() async throws {
+        let toolInvocations = ToolInvocationCounter()
+        let echoTool = try Tool<EchoParams, EchoOutput, EmptyContext>(
+            name: "echo",
+            description: "Echo",
+            executor: { params, _ in
+                await toolInvocations.increment()
+                return EchoOutput(echoed: params.message)
+            }
+        )
+        let client = CapturingStreamingMockLLMClient(streamSequences: [secondFinishDeltas])
+        let agent = Agent<EmptyContext>(client: client, tools: [echoTool])
+        let target = makeTerminalCheckpoint()
+
+        let events = try await collect(agent.replayTerminalOutcome(
+            terminalOutcome, target: target,
+            eventFactory: StreamEventFactory(
+                sessionID: target.sessionID, runID: RunID(), origin: .live
+            )
+        ))
+
+        #expect(events.count == 2)
+        #expect(events.first?.origin == .replayed(from: target.checkpointID))
+        guard case let .iterationCompleted(replayedUsage, iteration, replayedHistory) = events.first?.kind else {
+            Issue.record("Expected a replayed .iterationCompleted")
+            return
+        }
+        #expect(replayedUsage == TokenUsage(input: 5, output: 2))
+        #expect(iteration == 1)
+        #expect(replayedHistory == terminalMessages)
+
+        #expect(events.last?.origin == .live)
+        guard case let .finished(usage, content, reason, history) = events.last?.kind else {
+            Issue.record("Expected a live .finished")
+            return
+        }
+        #expect(usage == TokenUsage(input: 9, output: 4))
+        #expect(content == terminalOutcome.content)
+        #expect(reason == .completed)
+        #expect(history == terminalMessages)
+
+        let capturedMessages = await client.allCapturedMessages
+        let invocations = await toolInvocations.value
+        #expect(capturedMessages.isEmpty)
+        #expect(invocations == 0)
+    }
+
+    @Test
+    func terminalReplayFabricatesNoIterationEventWithoutSavedIterationUsage() async throws {
+        let target = makeTerminalCheckpoint(iterationUsage: nil)
+        let agent = Agent<EmptyContext>(client: StreamingMockLLMClient(streamSequences: []), tools: [])
+
+        let events = try await collect(agent.replayTerminalOutcome(
+            terminalOutcome, target: target,
+            eventFactory: StreamEventFactory(
+                sessionID: target.sessionID, runID: RunID(), origin: .live
+            )
+        ))
+
+        #expect(events.count == 1)
+        guard case let .finished(_, content, reason, _) = events.first?.kind else {
+            Issue.record("Expected a live .finished")
+            return
+        }
+        #expect(content == terminalOutcome.content)
+        #expect(reason == .completed)
     }
 }
 

@@ -5,15 +5,23 @@ import Testing
 private func makeCheckpoint(
     sessionID: SessionID,
     iteration: Int,
-    timestamp: Date = Date()
+    timestamp: Date = Date(),
+    terminalOutcome: AgentTerminalOutcome? = nil
 ) -> AgentCheckpoint {
     AgentCheckpoint(
         messages: [.user("Hi")],
         iteration: iteration,
         tokenUsage: TokenUsage(input: 1, output: 1),
+        iterationUsage: nil,
+        contextBudgetState: nil,
+        historyWasRewrittenLocally: false,
+        sessionAllowlist: [],
         sessionID: sessionID,
         runID: RunID(),
-        timestamp: timestamp
+        checkpointID: CheckpointID(),
+        timestamp: timestamp,
+        mcpToolBindings: [],
+        terminalOutcome: terminalOutcome
     )
 }
 
@@ -35,6 +43,16 @@ struct AgentCheckpointerTests {
         #expect(loaded.checkpointID == checkpoint.checkpointID)
         #expect(loaded.sessionID == session)
         #expect(loaded.iteration == 1)
+    }
+
+    @Test
+    func inMemoryPreservesTerminalOutcome() async throws {
+        let backend = InMemoryCheckpointer()
+        let outcome = AgentTerminalOutcome(content: #"{"summary":"shipped"}"#, toolName: "finalize")
+        let checkpoint = makeCheckpoint(sessionID: SessionID(), iteration: 3, terminalOutcome: outcome)
+        try await backend.save(checkpoint)
+        let loaded = try await backend.load(checkpoint.checkpointID)
+        #expect(loaded.terminalOutcome == outcome)
     }
 
     @Test
@@ -100,6 +118,18 @@ struct AgentCheckpointerTests {
         #expect(loaded.messages == checkpoint.messages)
         #expect(loaded.tokenUsage == checkpoint.tokenUsage)
         #expect(loaded.timestamp == checkpoint.timestamp)
+    }
+
+    @Test
+    func filePreservesTerminalOutcome() async throws {
+        let dir = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let backend = FileCheckpointer(directory: dir)
+        let outcome = AgentTerminalOutcome(content: #"{"summary":"shipped"}"#, toolName: "finalize")
+        let checkpoint = makeCheckpoint(sessionID: SessionID(), iteration: 3, terminalOutcome: outcome)
+        try await backend.save(checkpoint)
+        let loaded = try await backend.load(checkpoint.checkpointID)
+        #expect(loaded.terminalOutcome == outcome)
     }
 
     @Test

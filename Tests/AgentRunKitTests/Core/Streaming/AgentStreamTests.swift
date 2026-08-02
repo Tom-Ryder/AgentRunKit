@@ -466,6 +466,59 @@ struct AgentStreamTests {
     }
 }
 
+struct AgentStreamTerminalContentTests {
+    @MainActor @Test
+    func terminalContentReportsCommittedFinishSeparatelyFromDeltas() async {
+        let deltas: [StreamDelta] = [
+            .content("streamed prose"),
+            .toolCallStart(index: 0, id: "call_1", name: "finish", kind: .function),
+            .toolCallDelta(index: 0, arguments: #"{"content": "committed result"}"#),
+            .finished(usage: TokenUsage(input: 10, output: 5)),
+        ]
+        let stream = makeAgentStream(streamSequences: [deltas])
+
+        stream.send("Hi", context: EmptyContext())
+        await awaitStreamCompletion(stream)
+
+        #expect(stream.content == "streamed prose")
+        #expect(stream.terminalContent == "committed result")
+    }
+
+    @MainActor @Test
+    func structuralTerminationAfterACompletionLeavesTerminalContentNil() async throws {
+        let loopTool = try Tool<EchoParams, EchoOutput, EmptyContext>(
+            name: "loop",
+            description: "Loops",
+            executor: { params, _ in EchoOutput(echoed: params.message) }
+        )
+        let finishDeltas: [StreamDelta] = [
+            .toolCallStart(index: 0, id: "call_finish", name: "finish", kind: .function),
+            .toolCallDelta(index: 0, arguments: #"{"content": "committed result"}"#),
+            .finished(usage: TokenUsage(input: 10, output: 5)),
+        ]
+        let loopDeltas: [StreamDelta] = [
+            .toolCallStart(index: 0, id: "call_loop", name: "loop", kind: .function),
+            .toolCallDelta(index: 0, arguments: #"{"message":"again"}"#),
+            .finished(usage: TokenUsage(input: 1, output: 1)),
+        ]
+        let client = StreamingMockLLMClient(streamSequences: [finishDeltas, loopDeltas, loopDeltas])
+        let agent = Agent<EmptyContext>(
+            client: client, tools: [loopTool],
+            configuration: AgentConfiguration(maxIterations: 2)
+        )
+        let stream = AgentStream(agent: agent)
+
+        stream.send("First", context: EmptyContext())
+        await awaitStreamCompletion(stream)
+        #expect(stream.terminalContent == "committed result")
+
+        stream.send("Second", context: EmptyContext())
+        await awaitStreamCompletion(stream)
+        #expect(stream.finishReason == .maxIterationsReached(limit: 2))
+        #expect(stream.terminalContent == nil)
+    }
+}
+
 private struct EchoParams: Codable, SchemaProviding {
     let message: String
     static var jsonSchema: JSONSchema {
@@ -689,6 +742,7 @@ struct AgentStreamNestedEventTests {
             .assistant(AssistantMessage(content: "parent result")),
         ]
         let checkpointID = CheckpointID()
+        let rootBudget = ContextBudget(windowSize: 1000, currentUsage: 400, softThreshold: 0.75)
         stream.handle(
             StreamEvent(
                 origin: .replayed(from: checkpointID),
@@ -697,6 +751,9 @@ struct AgentStreamNestedEventTests {
                 )
             ),
             toolCallIdPath: [], toolNamePath: []
+        )
+        stream.handle(
+            StreamEvent(kind: .budgetUpdated(budget: rootBudget)), toolCallIdPath: [], toolNamePath: []
         )
         stream.handle(
             StreamEvent(kind: .finished(
@@ -726,11 +783,19 @@ struct AgentStreamNestedEventTests {
             ),
             toolCallIdPath: [], toolNamePath: []
         )
+        stream.handle(
+            subAgentEvent(wrapping: .budgetUpdated(
+                budget: ContextBudget(windowSize: 200, currentUsage: 190, softThreshold: 0.75)
+            )),
+            toolCallIdPath: [], toolNamePath: []
+        )
 
         #expect(stream.tokenUsage == TokenUsage(input: 30, output: 15))
         #expect(stream.finishReason == .completed)
         #expect(stream.history == rootHistory)
         #expect(stream.content == "parent result")
+        #expect(stream.terminalContent == "parent result")
+        #expect(stream.contextBudget == rootBudget)
         #expect(stream.iterationUsages == [TokenUsage(input: 10, output: 5)])
         #expect(stream.iterationsReplayed == 1)
     }
@@ -762,6 +827,7 @@ struct AgentStreamNestedEventTests {
         #expect(stream.finishReason == nil)
         #expect(stream.history.isEmpty)
         #expect(stream.content.isEmpty)
+        #expect(stream.terminalContent == nil)
 
         let nestedCall = try #require(stream.toolCalls.first)
         #expect(nestedCall.id == "delegate_call/child_call")

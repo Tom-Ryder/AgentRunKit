@@ -9,7 +9,8 @@ private func makeCheckpoint(
     checkpointID: CheckpointID = CheckpointID(),
     historyWasRewrittenLocally: Bool = false,
     sessionAllowlist: Set<String> = [],
-    mcpToolBindings: Set<MCPToolBinding> = []
+    mcpToolBindings: Set<MCPToolBinding> = [],
+    terminalOutcome: AgentTerminalOutcome? = nil
 ) -> AgentCheckpoint {
     AgentCheckpoint(
         messages: [.user("Hello"), .assistant(AssistantMessage(content: "Hi"))],
@@ -28,7 +29,8 @@ private func makeCheckpoint(
         runID: runID,
         checkpointID: checkpointID,
         timestamp: Date(timeIntervalSince1970: 1_700_000_000),
-        mcpToolBindings: mcpToolBindings
+        mcpToolBindings: mcpToolBindings,
+        terminalOutcome: terminalOutcome
     )
 }
 
@@ -62,6 +64,35 @@ struct AgentCheckpointCodableTests {
         #expect(decoded.contextBudgetState == original.contextBudgetState)
         #expect(decoded.messages == original.messages)
         #expect(decoded.timestamp == original.timestamp)
+        #expect(decoded.terminalOutcome == nil)
+    }
+
+    @Test
+    func roundTripPreservesTerminalOutcome() throws {
+        let outcome = AgentTerminalOutcome(content: #"{"summary":"shipped"}"#, toolName: "finalize")
+        let data = try JSONEncoder().encode(makeCheckpoint(terminalOutcome: outcome))
+        let decoded = try JSONDecoder().decode(AgentCheckpoint.self, from: data)
+        #expect(decoded.terminalOutcome == outcome)
+    }
+
+    @Test
+    func nonTerminalCheckpointOmitsTheOutcomeKey() throws {
+        let data = try JSONEncoder().encode(makeCheckpoint())
+        let encoded = try JSONDecoder().decode([String: JSONValue].self, from: data)
+        #expect(encoded["terminalOutcome"] == nil)
+        #expect(encoded["messages"] != nil)
+    }
+
+    @Test
+    func terminalOutcomeRejectsEmptyToolName() throws {
+        let json = #"{"content": "shipped", "toolName": ""}"#
+        do {
+            _ = try JSONDecoder().decode(AgentTerminalOutcome.self, from: Data(json.utf8))
+            Issue.record("Expected DecodingError")
+        } catch is DecodingError {
+        } catch {
+            Issue.record("Expected DecodingError, got \(error)")
+        }
     }
 
     @Test
@@ -105,6 +136,7 @@ struct AgentCheckpointCodableTests {
         #expect(decoded.historyWasRewrittenLocally == false)
         #expect(decoded.sessionAllowlist.isEmpty)
         #expect(decoded.mcpToolBindings.isEmpty)
+        #expect(decoded.terminalOutcome == nil)
     }
 
     @Test

@@ -26,6 +26,7 @@ public final class AgentStream<C: ToolContext> {
     public private(set) var error: (any Error & Sendable)?
     public private(set) var tokenUsage: TokenUsage?
     public private(set) var finishReason: FinishReason?
+    public private(set) var terminalContent: String?
     public private(set) var history: [ChatMessage] = []
     public private(set) var toolCalls: [ToolCallInfo] = []
     public private(set) var iterationUsages: [TokenUsage] = []
@@ -82,7 +83,9 @@ public final class AgentStream<C: ToolContext> {
             userMessage: message, history: history, context: context,
             tokenBudget: tokenBudget, requestContext: requestContext,
             approvalHandler: approvalHandler, sessionID: sessionID,
-            checkpointer: checkpointer
+            checkpointer: checkpointer.map {
+                SaveObservingCheckpointer(inner: $0, stream: self, generation: generation)
+            }
         )
         activeTask = Task { await self.runStreamTask(generation: generation, stream: stream) }
     }
@@ -127,19 +130,27 @@ public final class AgentStream<C: ToolContext> {
     ) async throws {
         cancel()
         reset()
-        let target = try await checkpointer.load(checkpointID)
-        let resumedStream = try await agent.resume(
-            target: target, checkpointer: checkpointer, context: context,
-            tokenBudget: tokenBudget, requestContext: requestContext,
-            approvalHandler: approvalHandler
-        )
         sendGeneration &+= 1
         let generation = sendGeneration
+        let target = try await checkpointer.load(checkpointID)
+        let resumedStream = try await agent.resume(
+            target: target,
+            checkpointer: SaveObservingCheckpointer(
+                inner: checkpointer, stream: self, generation: generation
+            ),
+            context: context, tokenBudget: tokenBudget, requestContext: requestContext,
+            approvalHandler: approvalHandler
+        )
+        guard generation == sendGeneration else { return }
         isStreaming = true
         sessionID = target.sessionID
         history = target.messages
         tokenUsage = target.tokenUsage
         currentCheckpoint = target.checkpointID
+        if let terminalOutcome = target.terminalOutcome {
+            terminalContent = terminalOutcome.content
+            finishReason = .completed
+        }
         activeTask = Task { await self.runStreamTask(generation: generation, stream: resumedStream) }
     }
 
@@ -214,8 +225,14 @@ extension AgentStream {
                 origin: event.origin, toolCallIdPath: toolCallIdPath
             )
         case let .budgetUpdated(budget):
+            guard toolCallIdPath.isEmpty else { break }
             contextBudget = budget
         }
+    }
+
+    func observeSavedCheckpoint(_ checkpointID: CheckpointID, generation: UInt64) {
+        guard generation == sendGeneration else { return }
+        currentCheckpoint = checkpointID
     }
 
     private func observeEnvelope(_ event: StreamEvent) {
@@ -243,6 +260,7 @@ extension AgentStream {
         guard toolCallIdPath.isEmpty else { return }
         tokenUsage = usage
         finishReason = reason
+        terminalContent = finishContent
         history = messages
         if let finishContent, content.isEmpty {
             content = finishContent
@@ -307,6 +325,7 @@ extension AgentStream {
         error = nil
         tokenUsage = nil
         finishReason = nil
+        terminalContent = nil
         history = []
         toolCalls = []
         iterationUsages = []
@@ -314,5 +333,24 @@ extension AgentStream {
         sessionID = nil
         iterationsReplayed = 0
         currentCheckpoint = nil
+    }
+}
+
+struct SaveObservingCheckpointer<C: ToolContext>: AgentCheckpointer {
+    let inner: any AgentCheckpointer
+    let stream: AgentStream<C>
+    let generation: UInt64
+
+    func save(_ checkpoint: AgentCheckpoint) async throws {
+        try await inner.save(checkpoint)
+        await stream.observeSavedCheckpoint(checkpoint.checkpointID, generation: generation)
+    }
+
+    func load(_ id: CheckpointID) async throws -> AgentCheckpoint {
+        try await inner.load(id)
+    }
+
+    func list(session: SessionID) async throws -> [CheckpointID] {
+        try await inner.list(session: session)
     }
 }

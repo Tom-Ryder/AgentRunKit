@@ -8,7 +8,8 @@ extension Agent {
         totalUsage: TokenUsage,
         iterationUsage: TokenUsage?,
         eventFactory: StreamEventFactory,
-        checkpointer: (any AgentCheckpointer)?
+        checkpointer: (any AgentCheckpointer)?,
+        terminalOutcome: AgentTerminalOutcome? = nil
     ) async throws -> CheckpointID? {
         guard let checkpointer,
               let sessionID = eventFactory.sessionID,
@@ -24,7 +25,10 @@ extension Agent {
             sessionAllowlist: state.sessionAllowlist,
             sessionID: sessionID,
             runID: runID,
-            mcpToolBindings: mcpToolBindings(in: state.messages)
+            checkpointID: CheckpointID(),
+            timestamp: Date(),
+            mcpToolBindings: mcpToolBindings(in: state.messages),
+            terminalOutcome: terminalOutcome
         )
         try await checkpointer.save(checkpoint)
         return checkpoint.checkpointID

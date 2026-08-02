@@ -13,6 +13,17 @@ enum TerminalCallDisposition: Equatable {
 }
 
 extension AgentCompletionPolicy {
+    func validateIdentity(of outcome: AgentTerminalOutcome) throws {
+        switch self {
+        case .builtInFinish:
+            throw AgentCheckpointError.completionToolMismatch(checkpointed: outcome.toolName, live: nil)
+        case let .executableTool(name):
+            guard name == outcome.toolName else {
+                throw AgentCheckpointError.completionToolMismatch(checkpointed: outcome.toolName, live: name)
+            }
+        }
+    }
+
     func classify(_ toolCalls: [ToolCall]) throws -> TerminalCallDisposition {
         let includesReservedFinish = toolCalls.contains { $0.name == "finish" }
         guard !includesReservedFinish || toolCalls.count == 1 else {
