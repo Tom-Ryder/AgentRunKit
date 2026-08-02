@@ -8,6 +8,7 @@ public final class Agent<C: ToolContext>: Sendable {
     let tools: [any AnyTool<C>]
     let toolDefinitions: [ToolDefinition]
     let configuration: AgentConfiguration
+    let completionPolicy: AgentCompletionPolicy
 
     public init(
         client: any LLMClient,
@@ -29,6 +30,7 @@ public final class Agent<C: ToolContext>: Sendable {
         }
         toolDefinitions = defs
         self.configuration = configuration
+        completionPolicy = .builtInFinish
     }
 
     public func run(
@@ -187,7 +189,7 @@ extension Agent {
             )
             let budgetUsage = response.tokenUsage
 
-            if let finishCall = try exclusiveFinishCall(in: response.toolCalls) {
+            if case let .builtInFinish(finishCall) = try completionPolicy.classify(response.toolCalls) {
                 return try parseFinishResult(
                     finishCall,
                     tokenUsage: totalUsage,
@@ -353,7 +355,7 @@ extension Agent {
         var totalUsage = totalUsage
         var lastTotalTokens = lastTotalTokens
         let processor = StreamProcessor(
-            client: client, toolDefinitions: toolDefinitions, policy: .agent,
+            client: client, toolDefinitions: toolDefinitions, policy: .agent(completionPolicy),
             eventFactory: options.eventFactory
         )
         var compactor = ContextCompactor(client: client, configuration: configuration)
@@ -462,8 +464,9 @@ extension Agent {
     }
 
     func indexedExecutableToolCalls(from toolCalls: [ToolCall]) -> [IndexedToolCall] {
-        toolCalls.enumerated().compactMap { offset, call in
-            guard StreamPolicy.agent.shouldExecuteTool(name: call.name) else { return nil }
+        let policy = StreamPolicy.agent(completionPolicy)
+        return toolCalls.enumerated().compactMap { offset, call in
+            guard policy.shouldExecuteTool(name: call.name) else { return nil }
             return IndexedToolCall(index: offset, call: call)
         }
     }

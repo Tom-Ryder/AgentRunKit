@@ -8,7 +8,7 @@ extension Agent {
         eventFactory: StreamEventFactory,
         continuation: AsyncThrowingStream<StreamEvent, Error>.Continuation
     ) throws -> Bool {
-        if let finishCall = try exclusiveFinishCall(in: iteration.toolCalls) {
+        if case let .builtInFinish(finishCall) = try completionPolicy.classify(iteration.toolCalls) {
             try finishStreaming(
                 continuation: continuation,
                 event: parseFinishEvent(
@@ -103,15 +103,6 @@ extension Agent {
             return
         }
         continuation.yield(eventFactory.make(.compacted(totalTokens: totalTokens, windowSize: windowSize)))
-    }
-
-    func exclusiveFinishCall(in toolCalls: [ToolCall]) throws -> ToolCall? {
-        let finishCalls = toolCalls.filter { $0.name == "finish" }
-        guard !finishCalls.isEmpty else { return nil }
-        guard finishCalls.count == 1, toolCalls.count == 1 else {
-            throw AgentError.malformedHistory(.finishMustBeExclusive)
-        }
-        return finishCalls[0]
     }
 
     func finishIfOverBudget(

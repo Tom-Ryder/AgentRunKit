@@ -6,6 +6,13 @@ enum ToolFeedback {
     static func failed(_ error: any Error) -> String {
         "Tool failed: \(error)"
     }
+
+    static func completionMustBeExclusive(toolName: String) -> String {
+        """
+        \(toolName) must be the only tool call in its message, so nothing in this message was executed. \
+        Call the other tools on their own, then call \(toolName) alone once you are ready to finish.
+        """
+    }
 }
 
 func firstTool<C: ToolContext>(

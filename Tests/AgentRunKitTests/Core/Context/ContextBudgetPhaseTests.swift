@@ -12,7 +12,8 @@ struct ContextBudgetPhaseVisibilityTests {
             .assistant(AssistantMessage(content: "thinking")),
             .tool(id: "call_1", name: "search", content: "result data"),
         ]
-        _ = phase.afterResponse(usage: TokenUsage(input: 3000, output: 500), messages: &messages)
+        let update = phase.advanceAfterResponse(usage: TokenUsage(input: 3000, output: 500))
+        _ = phase.applyContinuationEffects(update, messages: &messages)
 
         if case let .tool(_, _, content) = messages[1] {
             #expect(content.contains("[Token usage:"))
@@ -31,7 +32,8 @@ struct ContextBudgetPhaseVisibilityTests {
             .user("hello"),
             .assistant(AssistantMessage(content: "hi")),
         ]
-        _ = phase.afterResponse(usage: TokenUsage(input: 1000, output: 200), messages: &messages)
+        let update = phase.advanceAfterResponse(usage: TokenUsage(input: 1000, output: 200))
+        _ = phase.applyContinuationEffects(update, messages: &messages)
 
         #expect(messages.count == 3)
         if case let .user(content) = messages[2] {
@@ -50,7 +52,8 @@ struct ContextBudgetPhaseVisibilityTests {
             .tool(id: "call_1", name: "search", content: "old result"),
             .assistant(AssistantMessage(content: "thinking")),
         ]
-        _ = phase.afterResponse(usage: TokenUsage(input: 1000, output: 200), messages: &messages)
+        let update = phase.advanceAfterResponse(usage: TokenUsage(input: 1000, output: 200))
+        _ = phase.applyContinuationEffects(update, messages: &messages)
 
         if case let .tool(_, _, content) = messages[0] {
             #expect(content == "old result")
@@ -72,7 +75,8 @@ struct ContextBudgetPhaseVisibilityTests {
         var messages: [ChatMessage] = [
             .tool(id: "call_1", name: "search", content: "data"),
         ]
-        _ = phase.afterResponse(usage: TokenUsage(input: 3000, output: 500), messages: &messages)
+        let update = phase.advanceAfterResponse(usage: TokenUsage(input: 3000, output: 500))
+        _ = phase.applyContinuationEffects(update, messages: &messages)
 
         if case let .tool(_, _, content) = messages[0] {
             #expect(!content.contains("[Token usage:"))
@@ -88,7 +92,8 @@ struct ContextBudgetPhaseVisibilityTests {
         var messages: [ChatMessage] = [
             .tool(id: "call_1", name: "search", content: "data"),
         ]
-        _ = phase.afterResponse(usage: TokenUsage(input: 5000, output: 1000), messages: &messages)
+        let update = phase.advanceAfterResponse(usage: TokenUsage(input: 5000, output: 1000))
+        _ = phase.applyContinuationEffects(update, messages: &messages)
 
         if case let .tool(_, _, content) = messages[0] {
             #expect(content.contains("BUDGET: 6,000/10,000"))
@@ -106,7 +111,8 @@ struct ContextBudgetPhaseVisibilityTests {
             .tool(id: "call_1", name: "search", content: "first result"),
             .tool(id: "call_2", name: "search", content: "second result"),
         ]
-        _ = phase.afterResponse(usage: TokenUsage(input: 3000, output: 500), messages: &messages)
+        let update = phase.advanceAfterResponse(usage: TokenUsage(input: 3000, output: 500))
+        _ = phase.applyContinuationEffects(update, messages: &messages)
 
         if case let .tool(_, _, content) = messages[0] {
             #expect(!content.contains("[Token usage:"))
@@ -129,9 +135,10 @@ struct ContextBudgetPhaseAdvisoryTests {
             windowSize: 1000
         )
         var messages: [ChatMessage] = []
-        let result = phase.afterResponse(usage: TokenUsage(input: 700, output: 100), messages: &messages)
+        let update = phase.advanceAfterResponse(usage: TokenUsage(input: 700, output: 100))
 
-        #expect(result.advisoryEmitted)
+        #expect(update.advisoryDue)
+        #expect(phase.applyContinuationEffects(update, messages: &messages))
         #expect(messages.contains { if case let .user(content) = $0 { content.contains("advisory") } else { false } })
     }
 
@@ -141,12 +148,14 @@ struct ContextBudgetPhaseAdvisoryTests {
             windowSize: 1000
         )
         var messages: [ChatMessage] = []
-        _ = phase.afterResponse(usage: TokenUsage(input: 700, output: 100), messages: &messages)
+        let firstUpdate = phase.advanceAfterResponse(usage: TokenUsage(input: 700, output: 100))
+        _ = phase.applyContinuationEffects(firstUpdate, messages: &messages)
 
         var messages2: [ChatMessage] = []
-        let result2 = phase.afterResponse(usage: TokenUsage(input: 750, output: 100), messages: &messages2)
+        let secondUpdate = phase.advanceAfterResponse(usage: TokenUsage(input: 750, output: 100))
 
-        #expect(!result2.advisoryEmitted)
+        #expect(!secondUpdate.advisoryDue)
+        #expect(!phase.applyContinuationEffects(secondUpdate, messages: &messages2))
         #expect(messages2.isEmpty)
     }
 
@@ -157,15 +166,51 @@ struct ContextBudgetPhaseAdvisoryTests {
         )
 
         var firstMessages: [ChatMessage] = []
-        let firstResult = phase.afterResponse(usage: TokenUsage(input: 700, output: 100), messages: &firstMessages)
-        #expect(firstResult.advisoryEmitted)
+        let firstUpdate = phase.advanceAfterResponse(usage: TokenUsage(input: 700, output: 100))
+        #expect(phase.applyContinuationEffects(firstUpdate, messages: &firstMessages))
 
         var dropMessages: [ChatMessage] = []
-        _ = phase.afterResponse(usage: TokenUsage(input: 300, output: 100), messages: &dropMessages)
+        let dropUpdate = phase.advanceAfterResponse(usage: TokenUsage(input: 300, output: 100))
+        _ = phase.applyContinuationEffects(dropUpdate, messages: &dropMessages)
 
         var rearmMessages: [ChatMessage] = []
-        let rearmResult = phase.afterResponse(usage: TokenUsage(input: 700, output: 100), messages: &rearmMessages)
-        #expect(rearmResult.advisoryEmitted)
+        let rearmUpdate = phase.advanceAfterResponse(usage: TokenUsage(input: 700, output: 100))
+        #expect(phase.applyContinuationEffects(rearmUpdate, messages: &rearmMessages))
+    }
+
+    @Test func descentRearmsWithoutContinuationEffects() {
+        var phase = ContextBudgetPhase(
+            config: ContextBudgetConfig(softThreshold: 0.75),
+            windowSize: 1000
+        )
+        var messages: [ChatMessage] = []
+        let crossing = phase.advanceAfterResponse(usage: TokenUsage(input: 700, output: 100))
+        _ = phase.applyContinuationEffects(crossing, messages: &messages)
+        #expect(!phase.checkpointState.softAdvisoryArmed)
+
+        let descent = phase.advanceAfterResponse(usage: TokenUsage(input: 300, output: 100))
+
+        #expect(!descent.advisoryDue)
+        #expect(phase.checkpointState.softAdvisoryArmed)
+        #expect(phase.advanceAfterResponse(usage: TokenUsage(input: 700, output: 100)).advisoryDue)
+    }
+
+    @Test func advanceWithoutContinuationEffectsLeavesAdvisoryArmed() {
+        var phase = ContextBudgetPhase(
+            config: ContextBudgetConfig(softThreshold: 0.75),
+            windowSize: 1000
+        )
+        let undelivered = phase.advanceAfterResponse(usage: TokenUsage(input: 700, output: 100))
+
+        #expect(undelivered.advisoryDue)
+        #expect(phase.checkpointState.softAdvisoryArmed)
+        #expect(phase.checkpointState.lastBudget?.currentUsage == 800)
+
+        var messages: [ChatMessage] = []
+        let next = phase.advanceAfterResponse(usage: TokenUsage(input: 750, output: 100))
+        #expect(next.advisoryDue)
+        #expect(phase.applyContinuationEffects(next, messages: &messages))
+        #expect(!phase.checkpointState.softAdvisoryArmed)
     }
 
     @Test func advisoryNotEmittedWhenNoSoftThreshold() {
@@ -174,9 +219,10 @@ struct ContextBudgetPhaseAdvisoryTests {
             windowSize: 1000
         )
         var messages: [ChatMessage] = []
-        let result = phase.afterResponse(usage: TokenUsage(input: 900, output: 100), messages: &messages)
+        let update = phase.advanceAfterResponse(usage: TokenUsage(input: 900, output: 100))
 
-        #expect(!result.advisoryEmitted)
+        #expect(!update.advisoryDue)
+        #expect(!phase.applyContinuationEffects(update, messages: &messages))
     }
 
     @Test func advisoryWithoutPruneSuggestsFinalAnswerOnly() {
@@ -185,7 +231,8 @@ struct ContextBudgetPhaseAdvisoryTests {
             windowSize: 1000
         )
         var messages: [ChatMessage] = []
-        _ = phase.afterResponse(usage: TokenUsage(input: 700, output: 100), messages: &messages)
+        let update = phase.advanceAfterResponse(usage: TokenUsage(input: 700, output: 100))
+        _ = phase.applyContinuationEffects(update, messages: &messages)
 
         guard case let .user(content) = messages.last else {
             Issue.record("Expected advisory user message")
@@ -203,7 +250,8 @@ struct ContextBudgetPhaseAdvisoryTests {
         var messages: [ChatMessage] = [
             .assistant(AssistantMessage(content: "thinking")),
         ]
-        _ = phase.afterResponse(usage: TokenUsage(input: 700, output: 100), messages: &messages)
+        let update = phase.advanceAfterResponse(usage: TokenUsage(input: 700, output: 100))
+        _ = phase.applyContinuationEffects(update, messages: &messages)
 
         #expect(messages.count == 2)
         guard case let .user(content) = messages[1] else {
@@ -334,11 +382,10 @@ struct ContextBudgetPhaseBudgetComputationTests {
             config: ContextBudgetConfig(),
             windowSize: 10000
         )
-        var messages: [ChatMessage] = []
-        let result = phase.afterResponse(usage: TokenUsage(input: 3000, output: 500), messages: &messages)
+        let update = phase.advanceAfterResponse(usage: TokenUsage(input: 3000, output: 500))
 
-        #expect(result.budget.currentUsage == 3500)
-        #expect(result.budget.windowSize == 10000)
+        #expect(update.budget.currentUsage == 3500)
+        #expect(update.budget.windowSize == 10000)
     }
 
     @Test func budgetExcludesReasoningTokens() {
@@ -346,13 +393,11 @@ struct ContextBudgetPhaseBudgetComputationTests {
             config: ContextBudgetConfig(),
             windowSize: 10000
         )
-        var messages: [ChatMessage] = []
-        let result = phase.afterResponse(
-            usage: TokenUsage(input: 3000, output: 500, reasoning: 2000),
-            messages: &messages
+        let update = phase.advanceAfterResponse(
+            usage: TokenUsage(input: 3000, output: 500, reasoning: 2000)
         )
 
-        #expect(result.budget.currentUsage == 3500)
+        #expect(update.budget.currentUsage == 3500)
     }
 
     @Test func budgetSaturatesOnOverflow() {
@@ -360,13 +405,11 @@ struct ContextBudgetPhaseBudgetComputationTests {
             config: ContextBudgetConfig(),
             windowSize: Int.max
         )
-        var messages: [ChatMessage] = []
-        let result = phase.afterResponse(
-            usage: TokenUsage(input: Int.max, output: 1),
-            messages: &messages
+        let update = phase.advanceAfterResponse(
+            usage: TokenUsage(input: Int.max, output: 1)
         )
 
-        #expect(result.budget.currentUsage == Int.max)
-        #expect(result.budget.utilization == 1.0)
+        #expect(update.budget.currentUsage == Int.max)
+        #expect(update.budget.utilization == 1.0)
     }
 }

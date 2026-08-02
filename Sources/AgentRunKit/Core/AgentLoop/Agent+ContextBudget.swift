@@ -20,11 +20,12 @@ extension Agent {
         emit: StreamEmitter? = nil
     ) {
         guard var phase = budgetPhase else { return }
-        let result = phase.afterResponse(usage: usage, messages: &messages)
+        let update = phase.advanceAfterResponse(usage: usage)
+        let advisoryDelivered = phase.applyContinuationEffects(update, messages: &messages)
         budgetPhase = phase
-        emit?.yield(.budgetUpdated(budget: result.budget))
-        if result.advisoryEmitted {
-            emit?.yield(.budgetAdvisory(budget: result.budget))
+        emit?.yield(.budgetUpdated(budget: update.budget))
+        if advisoryDelivered {
+            emit?.yield(.budgetAdvisory(budget: update.budget))
         }
     }
 

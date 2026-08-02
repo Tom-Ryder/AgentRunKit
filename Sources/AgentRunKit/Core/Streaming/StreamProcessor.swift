@@ -6,12 +6,24 @@ struct StreamPolicy {
     let emitToolStartForTerminalTool: Bool
     let executeTerminalTool: Bool
 
-    static let agent = StreamPolicy(
-        terminalToolName: "finish",
-        terminateWhenNoToolCalls: false,
-        emitToolStartForTerminalTool: false,
-        executeTerminalTool: false
-    )
+    static func agent(_ completion: AgentCompletionPolicy) -> StreamPolicy {
+        switch completion {
+        case .builtInFinish:
+            StreamPolicy(
+                terminalToolName: "finish",
+                terminateWhenNoToolCalls: false,
+                emitToolStartForTerminalTool: false,
+                executeTerminalTool: false
+            )
+        case let .executableTool(name):
+            StreamPolicy(
+                terminalToolName: name,
+                terminateWhenNoToolCalls: false,
+                emitToolStartForTerminalTool: true,
+                executeTerminalTool: true
+            )
+        }
+    }
 
     static let chat = StreamPolicy(
         terminalToolName: nil,

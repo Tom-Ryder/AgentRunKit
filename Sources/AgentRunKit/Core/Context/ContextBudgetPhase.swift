@@ -1,8 +1,8 @@
 import Foundation
 
-struct AfterResponseResult {
+struct ContextBudgetUpdate {
     let budget: ContextBudget
-    let advisoryEmitted: Bool
+    let advisoryDue: Bool
 }
 
 struct ContextBudgetPhase {
@@ -32,8 +32,7 @@ struct ContextBudgetPhase {
         )
     }
 
-    @discardableResult
-    mutating func afterResponse(usage: TokenUsage, messages: inout [ChatMessage]) -> AfterResponseResult {
+    mutating func advanceAfterResponse(usage: TokenUsage) -> ContextBudgetUpdate {
         let budget = ContextBudget(
             windowSize: windowSize,
             currentUsage: usage.inputOutputTotal,
@@ -44,34 +43,40 @@ struct ContextBudgetPhase {
             softAdvisoryArmed = true
         }
 
+        lastBudget = budget
+        return ContextBudgetUpdate(
+            budget: budget,
+            advisoryDue: budget.isAboveSoftThreshold && softAdvisoryArmed
+        )
+    }
+
+    mutating func applyContinuationEffects(
+        _ update: ContextBudgetUpdate,
+        messages: inout [ChatMessage]
+    ) -> Bool {
         let visibilityInsertedAsUser: Bool
         if config.enableVisibility {
-            let annotation = budget.formatted(config.visibilityFormat)
+            let annotation = update.budget.formatted(config.visibilityFormat)
             visibilityInsertedAsUser = injectVisibility(annotation, into: &messages)
         } else {
             visibilityInsertedAsUser = false
         }
 
-        var advisoryEmitted = false
-        if budget.isAboveSoftThreshold, softAdvisoryArmed {
-            softAdvisoryArmed = false
-            advisoryEmitted = true
-            let pct = Int(budget.utilization * 100)
-            let pruneHint = config.enablePruneTool
-                ? " Consider pruning irrelevant tool results with prune_context to free capacity, or provide"
-                : " Provide"
-            let advisory = "[Context budget advisory: usage is at \(pct)%.\(pruneHint) your final answer.]"
-            if visibilityInsertedAsUser,
-               let lastIndex = messages.indices.last,
-               case let .user(content) = messages[lastIndex] {
-                messages[lastIndex] = .user(content + "\n\n" + advisory)
-            } else {
-                messages.append(.user(advisory))
-            }
+        guard update.advisoryDue else { return false }
+        softAdvisoryArmed = false
+        let pct = Int(update.budget.utilization * 100)
+        let pruneHint = config.enablePruneTool
+            ? " Consider pruning irrelevant tool results with prune_context to free capacity, or provide"
+            : " Provide"
+        let advisory = "[Context budget advisory: usage is at \(pct)%.\(pruneHint) your final answer.]"
+        if visibilityInsertedAsUser,
+           let lastIndex = messages.indices.last,
+           case let .user(content) = messages[lastIndex] {
+            messages[lastIndex] = .user(content + "\n\n" + advisory)
+        } else {
+            messages.append(.user(advisory))
         }
-
-        lastBudget = budget
-        return AfterResponseResult(budget: budget, advisoryEmitted: advisoryEmitted)
+        return true
     }
 }
 

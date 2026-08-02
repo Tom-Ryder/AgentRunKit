@@ -40,6 +40,31 @@ struct AgentTests {
     }
 
     @Test
+    func finishWithSiblingToolThrowsBeforeExecutingAnything() async throws {
+        let invocations = ToolInvocationCounter()
+        let echoTool = try Tool<EchoParams, EchoOutput, EmptyContext>(
+            name: "echo",
+            description: "Echoes input",
+            executor: { params, _ in
+                await invocations.increment()
+                return EchoOutput(echoed: "Echo: \(params.message)")
+            }
+        )
+        let client = MockLLMClient(responses: [
+            AssistantMessage(content: "", toolCalls: [
+                ToolCall(id: "call_echo", name: "echo", arguments: #"{"message": "should not run"}"#),
+                ToolCall(id: "call_finish", name: "finish", arguments: #"{"content": "done"}"#)
+            ])
+        ])
+        let agent = Agent<EmptyContext>(client: client, tools: [echoTool])
+
+        await #expect(throws: AgentError.malformedHistory(.finishMustBeExclusive)) {
+            try await agent.run(userMessage: "Go", context: EmptyContext())
+        }
+        #expect(await invocations.value == 0)
+    }
+
+    @Test
     func multiTurnWithToolCalls() async throws {
         let echoTool = try Tool<EchoParams, EchoOutput, EmptyContext>(
             name: "echo",
@@ -503,6 +528,13 @@ private struct NoopParams: Codable, SchemaProviding {
 }
 
 private struct NoopOutput: Codable {}
+
+private actor ToolInvocationCounter {
+    private(set) var value = 0
+    func increment() {
+        value += 1
+    }
+}
 
 actor CapturingMockLLMClient: LLMClient {
     nonisolated let providerIdentifier: ProviderIdentifier = .custom("CapturingMockLLMClient")

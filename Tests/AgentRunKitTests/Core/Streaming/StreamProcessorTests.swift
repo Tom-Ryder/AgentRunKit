@@ -113,7 +113,9 @@ struct StreamProcessorEmittedOutputTests {
             deltas: [.toolCallStart(index: 0, id: "finish_1", name: "finish", kind: .function)],
             error: promptTooLongError
         )
-        let processor = StreamProcessor(client: client, toolDefinitions: [], policy: .agent, eventFactory: testFactory)
+        let processor = StreamProcessor(
+            client: client, toolDefinitions: [], policy: .agent(.builtInFinish), eventFactory: testFactory
+        )
         let (_, eventContinuation) = AsyncThrowingStream<StreamEvent, Error>.makeStream()
         var totalUsage = TokenUsage()
         var emittedOutput = true
@@ -129,6 +131,62 @@ struct StreamProcessorEmittedOutputTests {
         } catch {
             #expect(!emittedOutput)
         }
+    }
+}
+
+struct StreamPolicyDerivationTests {
+    @Test
+    func builtInFinishSuppressesAndWithholdsOnlyTheReservedTool() {
+        let policy = StreamPolicy.agent(.builtInFinish)
+
+        #expect(!policy.shouldEmitToolStart(name: "finish"))
+        #expect(!policy.shouldExecuteTool(name: "finish"))
+        #expect(policy.shouldEmitToolStart(name: "search"))
+        #expect(policy.shouldExecuteTool(name: "search"))
+    }
+
+    @Test
+    func customCompletionAndReservedFinishBothStayOnTheOrdinaryToolPath() {
+        let policy = StreamPolicy.agent(.executableTool(name: "finalize"))
+
+        #expect(policy.shouldEmitToolStart(name: "finalize"))
+        #expect(policy.shouldExecuteTool(name: "finalize"))
+        #expect(policy.shouldEmitToolStart(name: "finish"))
+        #expect(policy.shouldExecuteTool(name: "finish"))
+    }
+
+    @Test
+    func customCompletionToolStreamsAnOrdinaryStartEvent() async throws {
+        let client = ScriptedStreamClient(
+            deltas: [
+                .toolCallStart(index: 0, id: "call_1", name: "finalize", kind: .function),
+                .toolCallDelta(index: 0, arguments: "{}"),
+                .finished(usage: nil),
+            ],
+            error: nil
+        )
+        let processor = StreamProcessor(
+            client: client, toolDefinitions: [],
+            policy: .agent(.executableTool(name: "finalize")), eventFactory: testFactory
+        )
+        let (events, eventContinuation) = AsyncThrowingStream<StreamEvent, Error>.makeStream()
+        var totalUsage = TokenUsage()
+        var emittedOutput = false
+
+        let iteration = try await processor.process(
+            messages: [.user("Hi")],
+            totalUsage: &totalUsage,
+            emittedOutput: &emittedOutput,
+            continuation: eventContinuation
+        )
+        eventContinuation.finish()
+
+        #expect(iteration.toolCalls == [ToolCall(id: "call_1", name: "finalize", arguments: "{}")])
+        var kinds: [StreamEvent.Kind] = []
+        for try await event in events {
+            kinds.append(event.kind)
+        }
+        #expect(kinds == [.toolCallStarted(name: "finalize", id: "call_1")])
     }
 }
 
