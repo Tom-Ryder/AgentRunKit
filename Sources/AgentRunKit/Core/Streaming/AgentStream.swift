@@ -204,9 +204,15 @@ extension AgentStream {
                 toolNamePath: toolNamePath + [toolName]
             )
         case let .finished(usage, finishContent, reason, messages):
-            handleFinished(usage: usage, finishContent: finishContent, reason: reason, messages: messages)
+            handleFinished(
+                usage: usage, finishContent: finishContent, reason: reason,
+                messages: messages, toolCallIdPath: toolCallIdPath
+            )
         case let .iterationCompleted(usage, _, replayedHistory):
-            handleIterationCompleted(usage: usage, messages: replayedHistory, origin: event.origin)
+            handleIterationCompleted(
+                usage: usage, messages: replayedHistory,
+                origin: event.origin, toolCallIdPath: toolCallIdPath
+            )
         case let .budgetUpdated(budget):
             contextBudget = budget
         }
@@ -231,8 +237,10 @@ extension AgentStream {
     }
 
     private func handleFinished(
-        usage: TokenUsage, finishContent: String?, reason: FinishReason?, messages: [ChatMessage]
+        usage: TokenUsage, finishContent: String?, reason: FinishReason?, messages: [ChatMessage],
+        toolCallIdPath: [String]
     ) {
+        guard toolCallIdPath.isEmpty else { return }
         tokenUsage = usage
         finishReason = reason
         history = messages
@@ -241,7 +249,10 @@ extension AgentStream {
         }
     }
 
-    private func handleIterationCompleted(usage: TokenUsage, messages: [ChatMessage], origin: EventOrigin) {
+    private func handleIterationCompleted(
+        usage: TokenUsage, messages: [ChatMessage], origin: EventOrigin, toolCallIdPath: [String]
+    ) {
+        guard toolCallIdPath.isEmpty else { return }
         iterationUsages.append(usage)
         if case .replayed = origin {
             iterationsReplayed += 1

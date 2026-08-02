@@ -621,3 +621,190 @@ struct AgentStreamApprovalTests {
         }
     }
 }
+
+@MainActor
+struct AgentStreamNestedEventTests {
+    private func subAgentEvent(
+        wrapping kind: StreamEvent.Kind,
+        origin: EventOrigin = .live
+    ) -> StreamEvent {
+        StreamEvent(
+            origin: origin,
+            kind: .subAgentEvent(
+                toolCallId: "delegate_call",
+                toolName: "delegate",
+                event: StreamEvent(kind: kind)
+            )
+        )
+    }
+
+    private func makeChildAgent() throws -> Agent<SubAgentContext<EmptyContext>> {
+        let echoTool = try Tool<EchoParams, EchoOutput, SubAgentContext<EmptyContext>>(
+            name: "echo",
+            description: "Echoes input",
+            executor: { params, _ in EchoOutput(echoed: "Echo: \(params.message)") }
+        )
+        let client = StreamingMockLLMClient(streamSequences: [
+            [
+                .toolCallStart(index: 0, id: "child_call", name: "echo", kind: .function),
+                .toolCallDelta(index: 0, arguments: #"{"message":"child"}"#),
+                .finished(usage: TokenUsage(input: 3, output: 2)),
+            ],
+            [
+                .toolCallStart(index: 0, id: "child_finish", name: "finish", kind: .function),
+                .toolCallDelta(index: 0, arguments: #"{"content":"child result"}"#),
+                .finished(usage: TokenUsage(input: 4, output: 1)),
+            ],
+        ])
+        return Agent<SubAgentContext<EmptyContext>>(client: client, tools: [echoTool])
+    }
+
+    private func makeDelegatingParentAgent() throws -> Agent<SubAgentContext<EmptyContext>> {
+        let delegateTool = try SubAgentTool<EchoParams, EmptyContext>(
+            name: "delegate",
+            description: "Delegates work",
+            agent: makeChildAgent(),
+            messageBuilder: { $0.message }
+        )
+        let client = StreamingMockLLMClient(streamSequences: [
+            [
+                .toolCallStart(index: 0, id: "delegate_call", name: "delegate", kind: .function),
+                .toolCallDelta(index: 0, arguments: #"{"message":"child"}"#),
+                .finished(usage: TokenUsage(input: 10, output: 5)),
+            ],
+            [
+                .toolCallStart(index: 0, id: "parent_finish", name: "finish", kind: .function),
+                .toolCallDelta(index: 0, arguments: #"{"content":"parent done"}"#),
+                .finished(usage: TokenUsage(input: 20, output: 10)),
+            ],
+        ])
+        return Agent<SubAgentContext<EmptyContext>>(client: client, tools: [delegateTool])
+    }
+
+    @MainActor @Test
+    func nestedEventsCannotOverwriteRootState() {
+        let stream = makeAgentStream(streamSequences: [])
+        let rootHistory: [ChatMessage] = [
+            .user("Go"),
+            .assistant(AssistantMessage(content: "parent result")),
+        ]
+        let checkpointID = CheckpointID()
+        stream.handle(
+            StreamEvent(
+                origin: .replayed(from: checkpointID),
+                kind: .iterationCompleted(
+                    usage: TokenUsage(input: 10, output: 5), iteration: 1, history: rootHistory
+                )
+            ),
+            toolCallIdPath: [], toolNamePath: []
+        )
+        stream.handle(
+            StreamEvent(kind: .finished(
+                tokenUsage: TokenUsage(input: 30, output: 15),
+                content: "parent result",
+                reason: .completed,
+                history: rootHistory
+            )),
+            toolCallIdPath: [], toolNamePath: []
+        )
+
+        stream.handle(
+            subAgentEvent(wrapping: .finished(
+                tokenUsage: TokenUsage(input: 3, output: 2),
+                content: "child result",
+                reason: .maxIterationsReached(limit: 2),
+                history: [.user("child task")]
+            )),
+            toolCallIdPath: [], toolNamePath: []
+        )
+        stream.handle(
+            subAgentEvent(
+                wrapping: .iterationCompleted(
+                    usage: TokenUsage(input: 3, output: 2), iteration: 1, history: [.user("child task")]
+                ),
+                origin: .replayed(from: checkpointID)
+            ),
+            toolCallIdPath: [], toolNamePath: []
+        )
+
+        #expect(stream.tokenUsage == TokenUsage(input: 30, output: 15))
+        #expect(stream.finishReason == .completed)
+        #expect(stream.history == rootHistory)
+        #expect(stream.content == "parent result")
+        #expect(stream.iterationUsages == [TokenUsage(input: 10, output: 5)])
+        #expect(stream.iterationsReplayed == 1)
+    }
+
+    @MainActor @Test
+    func nestedFinishPublishesNoRootTerminalStateAndKeepsNestedCallsObservable() throws {
+        let stream = makeAgentStream(streamSequences: [])
+        stream.handle(
+            subAgentEvent(wrapping: .toolCallStarted(name: "echo", id: "child_call")),
+            toolCallIdPath: [], toolNamePath: []
+        )
+        stream.handle(
+            subAgentEvent(wrapping: .toolCallCompleted(
+                id: "child_call", name: "echo", result: .success("Echo: child")
+            )),
+            toolCallIdPath: [], toolNamePath: []
+        )
+        stream.handle(
+            subAgentEvent(wrapping: .finished(
+                tokenUsage: TokenUsage(input: 3, output: 2),
+                content: "child result",
+                reason: .completed,
+                history: [.user("child task")]
+            )),
+            toolCallIdPath: [], toolNamePath: []
+        )
+
+        #expect(stream.tokenUsage == nil)
+        #expect(stream.finishReason == nil)
+        #expect(stream.history.isEmpty)
+        #expect(stream.content.isEmpty)
+
+        let nestedCall = try #require(stream.toolCalls.first)
+        #expect(nestedCall.id == "delegate_call/child_call")
+        #expect(nestedCall.name == "delegate > echo")
+        if case let .completed(result) = nestedCall.state {
+            #expect(result == "Echo: child")
+        } else {
+            Issue.record("Expected completed state for nested tool call")
+        }
+    }
+
+    @MainActor @Test
+    func parentStreamReportsOwnFinishAcrossSubAgentRun() async throws {
+        let stream = try AgentStream(agent: makeDelegatingParentAgent())
+
+        stream.send("Go", context: SubAgentContext(inner: EmptyContext(), maxDepth: 3))
+        await awaitStreamCompletion(stream)
+
+        #expect(stream.content == "parent done")
+        #expect(stream.finishReason == .completed)
+        #expect(stream.tokenUsage == TokenUsage(input: 30, output: 15))
+        #expect(stream.iterationUsages == [
+            TokenUsage(input: 10, output: 5),
+            TokenUsage(input: 20, output: 10),
+        ])
+        #expect(stream.history.first == .user("Go"))
+        #expect(stream.toolCalls.contains { $0.name == "delegate > echo" })
+    }
+
+    @MainActor @Test
+    func childStreamObservesOwnFinishWhenRunIndependently() async throws {
+        let stream = try AgentStream(agent: makeChildAgent())
+
+        stream.send("child", context: SubAgentContext(inner: EmptyContext(), maxDepth: 3))
+        await awaitStreamCompletion(stream)
+
+        #expect(stream.content == "child result")
+        #expect(stream.finishReason == .completed)
+        #expect(stream.tokenUsage == TokenUsage(input: 7, output: 3))
+        #expect(stream.iterationUsages == [
+            TokenUsage(input: 3, output: 2),
+            TokenUsage(input: 4, output: 1),
+        ])
+        #expect(stream.toolCalls.contains { $0.name == "echo" })
+    }
+}

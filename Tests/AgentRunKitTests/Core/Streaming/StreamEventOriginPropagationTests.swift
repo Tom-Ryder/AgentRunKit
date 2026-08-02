@@ -52,6 +52,29 @@ struct StreamEventOriginPropagationTests {
         #expect(stream.toolCalls[0].name == "parent-tool > child-tool")
     }
 
+    @MainActor @Test
+    func nestedReplayedIterationDoesNotAdvanceRootReplayState() throws {
+        let client = StreamingMockLLMClient(streamSequences: [])
+        let agent = Agent<EmptyContext>(client: client, tools: [])
+        let stream = AgentStream(agent: agent)
+
+        let checkpointID = try CheckpointID(rawValue: uuid("00000000-0000-0000-0000-000000000713"))
+        let nested = StreamEvent(kind: .iterationCompleted(
+            usage: TokenUsage(input: 4, output: 2), iteration: 1, history: [.user("child task")]
+        ))
+        let outer = StreamEvent(
+            origin: .replayed(from: checkpointID),
+            kind: .subAgentEvent(toolCallId: "parent-tc", toolName: "parent-tool", event: nested)
+        )
+
+        stream.handle(outer, toolCallIdPath: [], toolNamePath: [])
+
+        #expect(stream.currentCheckpoint == checkpointID)
+        #expect(stream.iterationsReplayed == 0)
+        #expect(stream.iterationUsages.isEmpty)
+        #expect(stream.history.isEmpty)
+    }
+
     @Test
     func historyEmissionRewritePreservesReplayedOrigin() {
         let checkpointID = CheckpointID()
