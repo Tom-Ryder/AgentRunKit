@@ -580,6 +580,88 @@ struct AgentTerminalResumeTests {
         #expect(content == terminalOutcome.content)
         #expect(reason == .completed)
     }
+
+    @Test
+    func aCommittedStreamingCompletionReplaysThroughTheResumeAPI() async throws {
+        let invocations = ToolInvocationCounter()
+        let finalize = try Tool<EchoParams, EchoOutput, EmptyContext>(
+            name: "finalize",
+            description: "Return the final answer. Call it alone.",
+            executor: { params, _ in
+                await invocations.increment()
+                return EchoOutput(echoed: params.message)
+            }
+        )
+        let client = StreamingMockLLMClient(streamSequences: [[
+            .toolCallStart(index: 0, id: "call_finalize", name: "finalize", kind: .function),
+            .toolCallDelta(index: 0, arguments: #"{"message":"shipped"}"#),
+            .finished(usage: TokenUsage(input: 5, output: 2)),
+        ]])
+        let backend = InMemoryCheckpointer()
+        let session = SessionID()
+        let agent = Agent<EmptyContext>(client: client, tools: [], completionTool: finalize)
+
+        let liveEvents = try await collect(agent.stream(
+            userMessage: "Summarize", context: EmptyContext(),
+            sessionID: session, checkpointer: backend
+        ))
+        guard case let .finished(liveUsage, liveContent, _, liveHistory) = liveEvents.last?.kind else {
+            Issue.record("Expected a committed finished event")
+            return
+        }
+
+        let checkpointID = try #require(await backend.list(session: session).first)
+        let observer = SaveCountingCheckpointer(inner: backend)
+        let replayed = try await collect(agent.resume(
+            from: checkpointID, checkpointer: observer, context: EmptyContext()
+        ))
+
+        #expect(replayed.count == 2)
+        #expect(replayed.first?.origin == .replayed(from: checkpointID))
+        guard case let .iterationCompleted(replayedUsage, iteration, replayedHistory) = replayed.first?.kind else {
+            Issue.record("Expected a replayed .iterationCompleted")
+            return
+        }
+        #expect(replayedUsage == TokenUsage(input: 5, output: 2))
+        #expect(iteration == 1)
+        #expect(replayedHistory == liveHistory)
+
+        #expect(replayed.last?.origin == .live)
+        guard case let .finished(usage, content, reason, history) = replayed.last?.kind else {
+            Issue.record("Expected a live .finished")
+            return
+        }
+        #expect(usage == liveUsage)
+        #expect(content == liveContent)
+        #expect(reason == .completed)
+        #expect(history == liveHistory)
+
+        #expect(await observer.saveCount == 0)
+        #expect(await invocations.value == 1)
+        #expect(await client.allCapturedTools.count == 1)
+    }
+}
+
+private actor SaveCountingCheckpointer: AgentCheckpointer {
+    private let inner: any AgentCheckpointer
+    private(set) var saveCount = 0
+
+    init(inner: any AgentCheckpointer) {
+        self.inner = inner
+    }
+
+    func save(_ checkpoint: AgentCheckpoint) async throws {
+        saveCount += 1
+        try await inner.save(checkpoint)
+    }
+
+    func load(_ id: CheckpointID) async throws -> AgentCheckpoint {
+        try await inner.load(id)
+    }
+
+    func list(session: SessionID) async throws -> [CheckpointID] {
+        try await inner.list(session: session)
+    }
 }
 
 private actor ApprovalCounter {

@@ -401,17 +401,12 @@ extension Agent {
             messages: state.messages, context: iterationContext.context,
             eventFactory: factory, continuation: continuation
         )
-        if try tryFinishOnTerminalEvent(
-            iteration: iteration, totalUsage: totalUsage,
-            history: state.messages, eventFactory: factory, continuation: continuation
+        if try await resolveStreamingIteration(
+            iteration: iteration, iterationNumber: iterationNumber, totalUsage: totalUsage,
+            iterationContext: iterationContext, state: &state
         ) {
             return true
         }
-        try await finalizeStreamingIteration(
-            toolCalls: iteration.toolCalls, context: iterationContext.context,
-            budgetUsage: iteration.usage, options: iterationContext.options,
-            continuation: continuation, state: &state
-        )
         try await checkpointIfConfigured(
             iterationNumber: iterationNumber, state: state,
             totalUsage: totalUsage, iterationUsage: iteration.usage,

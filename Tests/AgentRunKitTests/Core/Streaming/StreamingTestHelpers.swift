@@ -50,6 +50,7 @@ actor StreamingMockLLMClient: LLMClient, ToolCallSurfacingClient {
     private let streamSequences: [[StreamDelta]]
     private var generateIndex = 0
     private var streamIndex = 0
+    private(set) var allCapturedTools: [[ToolDefinition]] = []
 
     init(
         generateResponses: [AssistantMessage] = [],
@@ -63,10 +64,11 @@ actor StreamingMockLLMClient: LLMClient, ToolCallSurfacingClient {
 
     func generate(
         messages _: [ChatMessage],
-        tools _: [ToolDefinition],
+        tools: [ToolDefinition],
         responseFormat _: ResponseFormat?,
         requestContext _: RequestContext?
     ) async throws -> AssistantMessage {
+        allCapturedTools.append(tools)
         defer { generateIndex += 1 }
         guard generateIndex < generateResponses.count else {
             throw AgentError.llmError(.other("No more mock responses"))
@@ -74,7 +76,8 @@ actor StreamingMockLLMClient: LLMClient, ToolCallSurfacingClient {
         return generateResponses[generateIndex]
     }
 
-    func nextStreamSequence() -> [StreamDelta] {
+    func nextStreamSequence(tools: [ToolDefinition]) -> [StreamDelta] {
+        allCapturedTools.append(tools)
         let sequence = streamIndex < streamSequences.count ? streamSequences[streamIndex] : []
         streamIndex += 1
         return sequence
@@ -82,13 +85,13 @@ actor StreamingMockLLMClient: LLMClient, ToolCallSurfacingClient {
 
     nonisolated func stream(
         messages _: [ChatMessage],
-        tools _: [ToolDefinition],
+        tools: [ToolDefinition],
         requestContext _: RequestContext?
     ) -> AsyncThrowingStream<StreamDelta, Error> {
         AsyncThrowingStream { continuation in
             Task {
                 do {
-                    let sequence = await self.nextStreamSequence()
+                    let sequence = await self.nextStreamSequence(tools: tools)
                     for delta in sequence {
                         try Task.checkCancellation()
                         continuation.yield(delta)
@@ -159,7 +162,7 @@ actor ContentOnlyTerminatingMockLLMClient: LLMClient, ContentOnlyTerminatingClie
     }
 }
 
-actor CapturingStreamingMockLLMClient: LLMClient {
+actor CapturingStreamingMockLLMClient: LLMClient, ToolCallSurfacingClient {
     nonisolated let providerIdentifier: ProviderIdentifier = .custom("CapturingStreamingMockLLMClient")
     private let streamSequences: [[StreamDelta]]
     private var streamIndex = 0

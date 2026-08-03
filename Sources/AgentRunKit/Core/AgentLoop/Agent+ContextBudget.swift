@@ -13,10 +13,15 @@ extension Agent {
         return ContextBudgetPhase(config: budgetConfig, windowSize: windowSize)
     }
 
-    func advanceBudgetPhase(_ budgetPhase: inout ContextBudgetPhase?, usage: TokenUsage) {
+    func advanceBudgetPhase(
+        _ budgetPhase: inout ContextBudgetPhase?,
+        usage: TokenUsage,
+        emit: StreamEmitter? = nil
+    ) {
         guard var phase = budgetPhase else { return }
-        _ = phase.advanceAfterResponse(usage: usage)
+        let update = phase.advanceAfterResponse(usage: usage)
         budgetPhase = phase
+        emit?.yield(.budgetUpdated(budget: update.budget))
     }
 
     func applyBudgetPhase(

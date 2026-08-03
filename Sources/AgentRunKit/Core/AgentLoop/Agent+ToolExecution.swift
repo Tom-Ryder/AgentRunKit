@@ -24,6 +24,7 @@ extension Agent {
     func resolveCompletionApproval(
         _ call: ToolCall,
         handler: ToolApprovalHandler?,
+        emit: StreamEmitter? = nil,
         allowlist: inout Set<String>
     ) async throws -> ApprovalOutcome {
         guard let handler,
@@ -34,7 +35,7 @@ extension Agent {
         }
         return try await resolveApproval(
             for: call, toolDescription: tool.description,
-            handler: handler, allowlist: &allowlist, emit: nil
+            handler: handler, allowlist: &allowlist, emit: emit
         )
     }
 
@@ -61,16 +62,59 @@ extension Agent {
             )
             result = try await runner.run(approvedCall, tool: firstTool(named: approvedCall.name, in: tools))
         }
+        return completionAttempt(for: result, toolName: call.name)
+    }
 
+    func executeStreamingCompletionCall(
+        _ call: ToolCall,
+        context: C,
+        messages: [ChatMessage],
+        options: InvocationOptions,
+        emit: StreamEmitter,
+        allowlist: inout Set<String>
+    ) async throws -> CompletionAttempt {
+        let executionContext = try context.withParentHistory(messages.resolvedPrefixForInheritance())
+        let result: ToolResult
+        switch try await resolveCompletionApproval(
+            call, handler: options.approvalHandler, emit: emit, allowlist: &allowlist
+        ) {
+        case let .denied(denial):
+            result = denial
+        case let .approved(approvedCall):
+            let runner = ToolCallRunner(
+                context: executionContext,
+                defaultTimeout: configuration.toolTimeout,
+                approvalHandler: options.approvalHandler,
+                subAgentDispatch: .streaming(SubAgentStreamWiring(
+                    emit: emit,
+                    parentSessionID: options.eventFactory.sessionID,
+                    parentDepth: currentDepth(of: context),
+                    historyEmissionDepthLimit: configuration.historyEmissionDepthLimit
+                ))
+            )
+            result = try await runner.run(approvedCall, tool: firstTool(named: approvedCall.name, in: tools))
+        }
+
+        let attempt = completionAttempt(for: result, toolName: call.name)
+        switch attempt {
+        case .completed:
+            emit.yield(.toolCallCompleted(id: call.id, name: call.name, result: result))
+        case let .feedback(feedback):
+            emit.yield(.toolCallCompleted(id: call.id, name: call.name, result: feedback))
+        }
+        return attempt
+    }
+
+    private func completionAttempt(for result: ToolResult, toolName: String) -> CompletionAttempt {
         guard !result.isError else {
             return .feedback(truncatedToolResult(
                 result,
-                toolName: call.name,
+                toolName: toolName,
                 tools: tools,
                 fallbackLimit: configuration.maxToolResultCharacters
             ))
         }
-        return .completed(AgentTerminalOutcome(content: result.content, toolName: call.name))
+        return .completed(AgentTerminalOutcome(content: result.content, toolName: toolName))
     }
 
     func resolveApprovals(

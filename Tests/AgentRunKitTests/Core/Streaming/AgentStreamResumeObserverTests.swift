@@ -496,6 +496,64 @@ struct AgentStreamCheckpointObservationTests {
     }
 
     @MainActor @Test
+    func terminalResumePreloadsCommittedStateBeforeReplayIsObserved() async throws {
+        let backend = InMemoryCheckpointer()
+        let checkpointID = CheckpointID()
+        let session = SessionID()
+        let messages: [ChatMessage] = [
+            .user("Summarize"),
+            .assistant(AssistantMessage(
+                content: "",
+                toolCalls: [ToolCall(id: "call_finalize", name: "finalize", arguments: "{}")]
+            )),
+            .tool(id: "call_finalize", name: "finalize", content: #"{"echoed":"shipped"}"#),
+        ]
+        try await backend.save(AgentCheckpoint(
+            messages: messages,
+            iteration: 1,
+            tokenUsage: TokenUsage(input: 9, output: 4),
+            iterationUsage: TokenUsage(input: 5, output: 2),
+            contextBudgetState: nil,
+            historyWasRewrittenLocally: false,
+            sessionAllowlist: [],
+            sessionID: session,
+            runID: RunID(),
+            checkpointID: checkpointID,
+            timestamp: Date(timeIntervalSince1970: 1_700_000_000),
+            mcpToolBindings: [],
+            terminalOutcome: AgentTerminalOutcome(content: #"{"echoed":"shipped"}"#, toolName: "finalize")
+        ))
+        let finalize = try Tool<EchoParams, EchoOutput, EmptyContext>(
+            name: "finalize",
+            description: "Return the final answer. Call it alone.",
+            executor: { params, _ in EchoOutput(echoed: params.message) }
+        )
+        let agent = Agent<EmptyContext>(
+            client: StreamingMockLLMClient(streamSequences: []), tools: [], completionTool: finalize
+        )
+        let stream = AgentStream(agent: agent, bufferCapacity: 8)
+
+        try await stream.resume(from: checkpointID, checkpointer: backend, context: EmptyContext())
+
+        #expect(stream.terminalContent == #"{"echoed":"shipped"}"#)
+        #expect(stream.finishReason == .completed)
+        #expect(stream.currentCheckpoint == checkpointID)
+        #expect(stream.history == messages)
+        #expect(stream.tokenUsage == TokenUsage(input: 9, output: 4))
+        #expect(stream.sessionID == session)
+        #expect(stream.iterationsReplayed == 0)
+
+        await awaitStreamCompletion(stream)
+
+        #expect(stream.terminalContent == #"{"echoed":"shipped"}"#)
+        #expect(stream.finishReason == .completed)
+        #expect(stream.currentCheckpoint == checkpointID)
+        #expect(stream.history == messages)
+        #expect(stream.iterationsReplayed == 1)
+        #expect(stream.error == nil)
+    }
+
+    @MainActor @Test
     func aSendDuringResumeKeepsCheckpointStateOutOfTheStream() async throws {
         let backend = InMemoryCheckpointer()
         let checkpointSession = SessionID()

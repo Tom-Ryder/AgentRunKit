@@ -198,6 +198,43 @@ struct AgentContentOnlyStreamTests {
         #expect(content == "done")
         #expect(reason == .completed)
     }
+
+    @Test
+    func aCustomCompletionToolSuppressesContentOnlyStreamTermination() async throws {
+        let finalize = try Tool<ContentOnlyNoopParams, ContentOnlyNoopOutput, EmptyContext>(
+            name: "finalize",
+            description: "Return the final answer. Call it alone.",
+            executor: { _, _ in ContentOnlyNoopOutput() }
+        )
+        let contentOnlyIteration: [StreamDelta] = [
+            .content("The answer is 42."),
+            .finished(usage: TokenUsage(input: 3, output: 5)),
+        ]
+        let completionIteration: [StreamDelta] = [
+            .toolCallStart(index: 0, id: "call_finalize", name: "finalize", kind: .function),
+            .toolCallDelta(index: 0, arguments: "{}"),
+            .finished(usage: TokenUsage(input: 4, output: 2)),
+        ]
+        let client = ContentOnlyTerminatingMockLLMClient(
+            streamSequences: [contentOnlyIteration, completionIteration]
+        )
+        let agent = Agent<EmptyContext>(client: client, tools: [], completionTool: finalize)
+
+        var events: [StreamEvent] = []
+        for try await event in agent.stream(userMessage: "Q", context: EmptyContext()) {
+            events.append(event)
+        }
+
+        #expect(events.contains { $0.kind == .delta("The answer is 42.") })
+        #expect(await client.invocationCount == 2)
+
+        guard case let .finished(_, content, reason, _) = events.last?.kind else {
+            Issue.record("Expected finished event")
+            return
+        }
+        #expect(content == "{}")
+        #expect(reason == .completed)
+    }
 }
 
 private struct ContentOnlyNoopParams: Codable, SchemaProviding {

@@ -135,4 +135,98 @@ struct AgentStreamingToolResultLimitTests {
         }
         #expect(extractToolContent(history) == expected)
     }
+
+    @Test
+    func aCommittedCompletionResultIgnoresPerToolAndGlobalLimits() async throws {
+        let longOutput = String(repeating: "Z", count: 200)
+        let finalize = try Tool<StreamingLimitEchoParams, StreamingLimitEchoOutput, EmptyContext>(
+            name: "finalize",
+            description: "Return the final answer. Call it alone.",
+            maxResultCharacters: 50,
+            executor: { params, _ in StreamingLimitEchoOutput(echoed: params.message) }
+        )
+        let deltas: [StreamDelta] = [
+            .toolCallStart(index: 0, id: "call_finalize", name: "finalize", kind: .function),
+            .toolCallDelta(index: 0, arguments: #"{"message": "\#(longOutput)"}"#),
+            .finished(usage: TokenUsage(input: 10, output: 5)),
+        ]
+
+        let client = StreamingMockLLMClient(streamSequences: [deltas])
+        let config = AgentConfiguration(maxToolResultCharacters: 50)
+        let agent = Agent<EmptyContext>(
+            client: client, tools: [], completionTool: finalize, configuration: config
+        )
+
+        var events: [StreamEvent] = []
+        for try await event in agent.stream(userMessage: "Go", context: EmptyContext()) {
+            events.append(event)
+        }
+
+        let expected = try encodedEchoOutput(longOutput)
+        guard case let .toolCallCompleted(_, _, result) = events.first(where: { event in
+            if case let .toolCallCompleted(_, name, _) = event.kind { name == "finalize" } else { false }
+        })?.kind else {
+            Issue.record("Expected toolCallCompleted event")
+            return
+        }
+        #expect(result.content == expected)
+
+        guard case let .finished(_, content, _, history) = events.last?.kind else {
+            Issue.record("Expected finished event")
+            return
+        }
+        #expect(content == expected)
+        #expect(extractToolContent(history) == expected)
+    }
+
+    @Test
+    func aFailedCompletionResultIsTruncatedForTheNextTurn() async throws {
+        let deltas: [StreamDelta] = [
+            .toolCallStart(index: 0, id: "call_finalize", name: "finalize", kind: .function),
+            .toolCallDelta(index: 0, arguments: "{}"),
+            .finished(usage: TokenUsage(input: 10, output: 5)),
+        ]
+
+        let client = CapturingStreamingMockLLMClient(streamSequences: [deltas, deltas])
+        let config = AgentConfiguration(maxIterations: 2)
+        let agent = Agent<EmptyContext>(
+            client: client, tools: [], completionTool: RejectingCompletionTool(), configuration: config
+        )
+
+        var events: [StreamEvent] = []
+        for try await event in agent.stream(userMessage: "Go", context: EmptyContext()) {
+            events.append(event)
+        }
+
+        let expected = ContextCompactor.truncateToolResult(
+            RejectingCompletionTool.rejection, maxCharacters: 50
+        )
+        guard case let .toolCallCompleted(_, _, result) = events.first(where: { event in
+            if case let .toolCallCompleted(_, name, _) = event.kind { name == "finalize" } else { false }
+        })?.kind else {
+            Issue.record("Expected toolCallCompleted event")
+            return
+        }
+        #expect(result.isError)
+        #expect(result.content == expected)
+
+        let allCapturedMessages = await client.allCapturedMessages
+        #expect(allCapturedMessages.count == 2)
+        #expect(extractToolContent(allCapturedMessages[1]) == expected)
+    }
+}
+
+private struct RejectingCompletionTool: AnyTool {
+    typealias Context = EmptyContext
+
+    static let rejection = String(repeating: "E", count: 200)
+
+    let name = "finalize"
+    let description = "Return the final answer. Call it alone."
+    let parametersSchema: JSONSchema = .object(properties: [:], required: [])
+    let maxResultCharacters: Int? = 50
+
+    func execute(arguments _: Data, context _: EmptyContext) async throws -> ToolResult {
+        .error(Self.rejection)
+    }
 }
