@@ -122,6 +122,18 @@ Cases are grouped below by category.
 | ``StreamEvent/Kind/budgetUpdated(budget:)`` | ``ContextBudget`` | Latest budget snapshot after a provider response |
 | ``StreamEvent/Kind/budgetAdvisory(budget:)`` | ``ContextBudget`` | Soft threshold was crossed |
 
+## Completion and Durability
+
+`.toolCallCompleted` reports that a tool finished executing. Top-level `.finished` reports that the agent run itself succeeded. The two are not interchangeable, and the gap between them matters when the run has a completion tool (see <doc:AgentAndChat#Custom-Completion-Tools>) and a checkpointer.
+
+For a successful completion the order is fixed: `.toolCallStarted`, approval and execution with any nested sub-agent events, the exact `.toolCallCompleted`, the terminal checkpoint save, then top-level `.finished`, then the stream closes. `.iterationCompleted` may arrive before execution, because it reports provider-turn completion rather than tool completion.
+
+That ordering is the durability contract. A consumer that returns as soon as it sees the completion tool's `.toolCallCompleted` terminates the stream and cancels the producer, potentially before the checkpoint is written. Wait for top-level `.finished`. If the save fails, the error propagates, no `.finished` is emitted, and no terminal state is published — the tool's own side effects cannot be rolled back, which is why completion tools must be idempotent.
+
+With no checkpointer configured, `.finished` is still authoritative for logical success but carries no durability claim at all.
+
+Raw-stream consumers can recover the saved checkpoint after `.finished` with ``FileCheckpointer/list(session:)``; because the save precedes the event, the terminal checkpoint is already present. ``AgentStream`` consumers do not need that call: `currentCheckpoint` tracks live saves, so it holds the terminal checkpoint's ID by the time `.finished` arrives.
+
 ## Canonical Transcript JSON
 
 Use ``StreamEventJSONCodec`` when you need stable transcript export or import:
@@ -145,18 +157,19 @@ This canonical codec uses the framework's fixed JSON settings for event transcri
 
 | Property | Type | Description |
 |---|---|---|
-| `content` | `String` | Accumulated text from `.delta` events |
+| `content` | `String` | Accumulated text from `.delta` events, falling back to the final content when the run produced no deltas |
 | `reasoning` | `String` | Accumulated reasoning from `.reasoningDelta` events |
 | `isStreaming` | `Bool` | True while a stream is active |
 | `error` | `(any Error & Sendable)?` | Set if the stream throws |
 | `tokenUsage` | ``TokenUsage``? | Final cumulative usage from `.finished` |
 | `finishReason` | `FinishReason?` | Reason from `.finished`, including structural max-iterations or token-budget limits |
+| `terminalContent` | `String?` | Content of the top-level `.finished` event; `nil` until the run completes and for structural terminations |
 | `history` | `[ChatMessage]` | Full conversation history from `.finished` |
 | `toolCalls` | [``ToolCallInfo``] | Top-level and nested tool calls with live state (`.running`, `.awaitingApproval`, `.completed`, `.failed`) |
 | `iterationUsages` | [``TokenUsage``] | Per-iteration usage, one entry per `.iterationCompleted` |
 | `contextBudget` | ``ContextBudget``? | Latest budget snapshot from `.budgetUpdated` |
 | `sessionID` | ``SessionID``? | Session identity threaded through emitted events |
-| `currentCheckpoint` | ``CheckpointID``? | Last replayed or live checkpoint observed; preloaded on resume |
+| `currentCheckpoint` | ``CheckpointID``? | Most recent checkpoint saved by the live run, preloaded on resume |
 | `iterationsReplayed` | `Int` | Count of replayed `.iterationCompleted` events; only incremented on `.replayed` origin |
 
 **Methods:**
@@ -164,6 +177,16 @@ This canonical codec uses the framework's fixed JSON settings for event transcri
 - `send(_:history:context:tokenBudget:requestContext:approvalHandler:sessionID:checkpointer:)` cancels any active stream, resets state, and starts a new one. Pass `sessionID:` and `checkpointer:` to persist iteration state.
 - `resume(from:checkpointer:context:tokenBudget:requestContext:approvalHandler:)` synchronously preloads observable state from the loaded checkpoint, then starts the live continuation. See <doc:CheckpointAndResume>.
 - `cancel()` cancels the active stream without resetting state. It is a local cancellation API and does not guarantee a terminal `.finished` event.
+
+### Final Content
+
+`content` and `terminalContent` answer different questions. `content` is what the user watched arrive: the accumulated `.delta` text, falling back to the final content only when the run streamed no deltas at all. `terminalContent` is the run's result, assigned from the top-level `.finished` event whether it came from the built-in `finish` tool, a completion tool, or a content-only client. Structural terminations carry no content, so `terminalContent` stays `nil` after max iterations or token-budget exhaustion — which distinguishes them from a completion whose result happened to be empty.
+
+### Root State and Nested Agents
+
+Aggregate state describes the parent run only. `tokenUsage`, `finishReason`, `terminalContent`, `history`, the `content` fallback, `iterationUsages`, `iterationsReplayed`, and `contextBudget` are written by root `.finished`, `.iterationCompleted`, and `.budgetUpdated` events; the same events nested inside ``StreamEvent/Kind/subAgentEvent(toolCallId:toolName:event:)`` never touch them. Nested events remain fully observable — they still arrive on the stream, and `toolCalls` still flattens nested tool activity — but a sub-agent finishing is not the parent finishing.
+
+This changed behavior for parent streams that emit no content deltas of their own: they previously displayed the last child's finish content and now display the parent's.
 
 ### Late-Binding Replay
 

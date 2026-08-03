@@ -5,6 +5,7 @@
 ### Creating an Agent
 
 - ``init(client:tools:configuration:)``
+- ``init(client:tools:completionTool:configuration:)``
 
 ### Running
 

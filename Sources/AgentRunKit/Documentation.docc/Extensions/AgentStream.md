@@ -2,7 +2,7 @@
 
 An `@Observable` view-model wrapper over ``Agent/stream(userMessage:history:context:tokenBudget:requestContext:approvalHandler:sessionID:checkpointer:)-(String,_,_,_,_,_,_,_)``.
 
-`finishReason` mirrors the final `.finished` event, including structural reasons such as `.maxIterationsReached(limit:)` and `.tokenBudgetExceeded(budget:used:)`. `cancel()` stops local observation and does not guarantee a terminal `.finished` event.
+`finishReason` mirrors the final `.finished` event, including structural reasons such as `.maxIterationsReached(limit:)` and `.tokenBudgetExceeded(budget:used:)`. `cancel()` stops local observation and does not guarantee a terminal `.finished` event. Aggregate state describes the parent run: nested sub-agent lifecycle events stay observable but never overwrite it.
 
 For checkpoint resume in SwiftUI, see <doc:CheckpointAndResume>. For late-binding event replay, see ``StreamEventBuffer``.
 
@@ -27,6 +27,7 @@ For checkpoint resume in SwiftUI, see <doc:CheckpointAndResume>. For late-bindin
 ### Observing Content
 
 - ``content``
+- ``terminalContent``
 - ``reasoning``
 - ``toolCalls``
 

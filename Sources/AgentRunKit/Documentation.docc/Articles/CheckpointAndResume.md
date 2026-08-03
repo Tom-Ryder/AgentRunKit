@@ -6,7 +6,9 @@ Persist iteration state mid-run, then resume from any saved checkpoint into a fr
 
 A checkpointer captures the agent's full loop state at the end of every iteration: messages, accumulated token usage, per-iteration usage, context budget phase, session and run identity, the local-rewrite flag, the session approval allowlist, and any participating MCP tool bindings. ``Agent/resume(from:checkpointer:context:tokenBudget:requestContext:approvalHandler:)`` loads a saved checkpoint, replays its history into the consuming stream as one synthetic event, then continues live from the next iteration.
 
-This unblocks long-running sessions that need to survive process restarts, UI re-renders, or planned suspension. Checkpoints are written automatically by ``Agent/stream(userMessage:history:context:tokenBudget:requestContext:approvalHandler:sessionID:checkpointer:)-(String,_,_,_,_,_,_,_)`` when both a `sessionID` and a `checkpointer` are passed.
+This unblocks long-running sessions that need to survive process restarts, UI re-renders, or planned suspension. Checkpoints are written automatically by ``Agent/stream(userMessage:history:context:tokenBudget:requestContext:approvalHandler:sessionID:checkpointer:)-(String,_,_,_,_,_,_,_)`` when a `checkpointer` is passed; `sessionID:` is optional, and a fresh ``SessionID`` is minted for the run when it is omitted. Keep your own session ID if you need to find these checkpoints again from another process.
+
+Checkpointing is a streaming capability by design. `run()` takes no session or checkpointer and has no resume entry point; a blocking workload that needs durability should be written as a stream.
 
 ## What a Checkpoint Captures
 
@@ -26,6 +28,7 @@ This unblocks long-running sessions that need to survive process restarts, UI re
 | `checkpointID` | Stable identity for the snapshot |
 | `timestamp` | UTC time the snapshot was taken |
 | `mcpToolBindings` | ``MCPToolBinding`` set: which MCP tools participated in this checkpoint's history |
+| `terminalOutcome` | ``AgentTerminalOutcome`` when this checkpoint records a committed completion, `nil` for every ordinary snapshot |
 
 ## Backends
 
@@ -38,11 +41,15 @@ This unblocks long-running sessions that need to survive process restarts, UI re
 
 ``FileCheckpointer`` stores one JSON file per checkpoint under `<directory>/checkpoints/<uuid>.json`. ``FileCheckpointer/list(session:)`` skips files it cannot read or decode, so unrelated debris in the directory does not break enumeration. ``FileCheckpointer/load(_:)`` throws ``AgentCheckpointError/fileSystem(_:)`` on the requested file if it is corrupt.
 
-Custom backends conform to ``AgentCheckpointer`` directly; database-backed and remote-storage implementations are out of scope for the built-in backends.
+``FileCheckpointer/list(session:)`` returns only the requested session's checkpoints, ordered by iteration and then by timestamp. A session that has been resumed contains checkpoints from several runs; read ``AgentCheckpoint/runID`` from the loaded snapshots to tell them apart.
+
+Custom backends conform to ``AgentCheckpointer`` directly; database-backed and remote-storage implementations are out of scope for the built-in backends. A custom backend must round-trip every field of ``AgentCheckpoint``. Resume treats a loaded checkpoint as authoritative, so a backend that quietly drops ``AgentCheckpoint/terminalOutcome`` turns a committed run back into a live one and re-executes work that already happened.
+
+Checkpoint storage grows without a framework-imposed bound. Every snapshot holds the full message history, ``FileCheckpointer`` writes pretty-printed JSON, a terminal checkpoint stores its exact result twice, and ``AgentCheckpointer`` has no delete operation. Retention and pruning are yours to implement.
 
 ## Enabling Checkpointing on a Stream
 
-Pass `sessionID:` and `checkpointer:` to either entry point.
+Pass `checkpointer:` to either entry point, and `sessionID:` when you need to look the checkpoints up later.
 
 ```swift
 let session = SessionID()
@@ -61,7 +68,7 @@ for try await event in stream {
 let savedIDs = try await checkpointer.list(session: session)
 ```
 
-If either argument is omitted, no checkpoint is written. The `stream()` overloads continue to default both to `nil`, so existing call sites are unaffected.
+Omitting `checkpointer:` writes no checkpoint. Omitting `sessionID:` still writes them, under a session ID minted for that run, which the emitted events carry on ``StreamEvent/sessionID``. Both parameters default to `nil`, so existing call sites are unaffected.
 
 ## Resuming a Run
 
@@ -98,6 +105,30 @@ Before replay begins, ``Agent/resume(from:checkpointer:context:tokenBudget:reque
 
 See <doc:MCPIntegration> for how MCP tools are discovered.
 
+## Terminal Checkpoints
+
+An agent built with a `completionTool:` (see <doc:AgentAndChat#Custom-Completion-Tools>) writes one final checkpoint when that tool succeeds. It carries an ``AgentTerminalOutcome`` holding the exact result and the name of the tool that produced it, and it is saved before the top-level `.finished` event is emitted. Every other terminal path — the built-in `finish` tool, content-only completion, max iterations, token budget exhaustion — keeps its existing cadence and writes no outcome, and so does a failed or exclusivity-violating completion attempt, which saves an ordinary snapshot and lets the run continue.
+
+Resuming a terminal checkpoint replays the committed result instead of continuing the run. ``Agent/resume(from:checkpointer:context:tokenBudget:requestContext:approvalHandler:)`` validates the saved message structure, checks outcome identity, then emits the saved iteration event (only when the original run reported per-iteration usage) followed by `.finished` with the stored content and ``FinishReason/completed``, and closes. It makes no LLM request, executes no tool, requires no approval handler and no live MCP bindings, applies no budget or iteration preflight, and writes no new checkpoint.
+
+Identity is checked because a terminal checkpoint asserts success on behalf of one specific completion contract. If the resuming agent completes through a different tool, or through the built-in `finish` tool, resume throws ``AgentCheckpointError/completionToolMismatch(checkpointed:live:)`` before any event is yielded.
+
+```swift
+do {
+    let stream = try await agent.resume(from: id, checkpointer: checkpointer, context: ctx)
+    for try await event in stream { handle(event) }
+} catch let error as AgentCheckpointError {
+    // .completionToolMismatch: this checkpoint belongs to a differently configured agent
+    report(error)
+}
+```
+
+Because tool execution and checkpoint storage are separate awaited operations, a save failure after a successful completion propagates as an error and suppresses `.finished`; it cannot undo whatever the tool already did. Completion tools with external side effects must be idempotent or transactional in their own domain.
+
+### Reading Older Checkpoints
+
+Checkpoints written before terminal outcomes existed decode normally and are treated as ordinary continuation snapshots. The compatibility runs one way only: an older binary decoding a newer terminal checkpoint ignores the outcome key and resumes the run live, re-executing a completion that already committed. Do not roll a deployment back onto checkpoints a newer runtime wrote.
+
 ## AgentStream Resume
 
 ``AgentStream/resume(from:checkpointer:context:tokenBudget:requestContext:approvalHandler:)`` is the SwiftUI-side entry point. It cancels any in-flight prior task before any await runs, loads the checkpoint exactly once, then synchronously preloads observable state before yielding control back to the caller.
@@ -120,6 +151,8 @@ When `resume` returns, these properties are already populated from the checkpoin
 | ``AgentStream/history`` | `target.messages` |
 | ``AgentStream/tokenUsage`` | `target.tokenUsage` |
 | ``AgentStream/currentCheckpoint`` | `target.checkpointID` |
+| ``AgentStream/terminalContent`` | `target.terminalOutcome.content`, on a terminal checkpoint only |
+| ``AgentStream/finishReason`` | ``FinishReason/completed``, on a terminal checkpoint only |
 
 The live continuation runs in a background task; ``AgentStream/iterationsReplayed`` increments once the synthetic replay event is observed, then the live iteration cycle proceeds normally. ``AgentStream/iterationsReplayed`` only counts replayed iterations, so callers can distinguish a fresh send from a resume.
 
@@ -154,19 +187,23 @@ The file backend is single-writer oriented. Multi-process coordination over the 
 
 ## Errors
 
-``AgentCheckpointError`` covers the three failure modes that resume can surface:
+``AgentCheckpointError`` covers the failure modes that resume can surface:
 
 | Case | Meaning |
 |---|---|
 | ``AgentCheckpointError/notFound(_:)`` | The named ``CheckpointID`` is not present in the backend |
 | ``AgentCheckpointError/fileSystem(_:)`` | A file backend operation failed (read, write, decode for the requested ID) |
 | ``AgentCheckpointError/mcpBindingMismatch(_:)`` | Resume cannot continue because one or more recorded MCP bindings have no live counterpart |
+| ``AgentCheckpointError/completionToolMismatch(checkpointed:live:)`` | A terminal checkpoint's completion tool is not the resuming agent's; `live` is `nil` for a built-in `finish` agent |
+
+Malformed saved history throws ``AgentError/malformedHistory(_:)`` before the invocation preconditions run, so a data problem is never masked by a missing approval handler or an out-of-range token budget.
 
 ## See Also
 
 - <doc:StreamingAndSwiftUI>
 - <doc:MCPIntegration>
 - ``AgentCheckpoint``
+- ``AgentTerminalOutcome``
 - ``AgentCheckpointer``
 - ``InMemoryCheckpointer``
 - ``FileCheckpointer``

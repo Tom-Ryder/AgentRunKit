@@ -26,6 +26,7 @@ The snapshot is what ``Agent/resume(from:checkpointer:context:tokenBudget:reques
 - ``historyWasRewrittenLocally``
 - ``sessionAllowlist``
 - ``mcpToolBindings``
+- ``terminalOutcome``
 
 ### Initialization
 

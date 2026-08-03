@@ -65,6 +65,7 @@ For a complete walkthrough, see <doc:GettingStarted>.
 
 - <doc:CheckpointAndResume>
 - ``AgentCheckpoint``
+- ``AgentTerminalOutcome``
 - ``AgentCheckpointer``
 - ``InMemoryCheckpointer``
 - ``FileCheckpointer``

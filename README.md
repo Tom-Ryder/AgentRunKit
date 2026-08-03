@@ -45,7 +45,13 @@ if let content = result.content {
 }
 ```
 
-`result.content` is optional. Completed runs return finish-tool content, while structural terminal reasons such as max iterations or token budget exhaustion surface through `result.finishReason` with no final content.
+`result.content` is optional. A completed run returns the content of whatever ended it — the built-in `finish` tool, or a completion tool you supply — while structural terminal reasons such as max iterations or token budget exhaustion surface through `result.finishReason` with no final content.
+
+To end the loop with your own typed tool instead of the built-in one, pass it as `completionTool:`. It replaces `finish` in the definitions sent to the model, executes through the normal tool path, and terminates the run only when it succeeds:
+
+```swift
+let agent = Agent(client: client, tools: [searchTool], completionTool: publishTool)
+```
 
 ---
 
@@ -86,6 +92,16 @@ For on-device inference, additional targets are available:
 
 - `AgentRunKitMLX` for MLX on Apple Silicon (links [mlx-swift-lm](https://github.com/ml-explore/mlx-swift-lm))
 - `AgentRunKitFoundationModels` for Apple Foundation Models (iOS 26+ and macOS 26+, no external dependencies)
+
+---
+
+## Upgrading
+
+Custom completion tools arrive with three deliberate changes for existing code:
+
+- `AgentCheckpointError` gained `completionToolMismatch(checkpointed:live:)`, thrown when a terminal checkpoint is resumed by an agent that completes through a different tool. A switch over `AgentCheckpointError` without a `default` must handle the new case.
+- `TestLLMClient` in `AgentRunKitTesting` gained a defaulted `completionToolName:` initializer parameter. Existing call sites compile unchanged; an API diff reports the previous constructor as removed.
+- A sub-agent's nested `.finished`, `.iterationCompleted`, and `.budgetUpdated` events no longer write to the parent `AgentStream`'s `tokenUsage`, `finishReason`, `history`, `content`, `iterationUsages`, `iterationsReplayed`, or `contextBudget`. A parent that emitted no content deltas previously displayed the last child's finish content and now displays its own. Nested events remain fully observable, and `toolCalls` still flattens them.
 
 ---
 

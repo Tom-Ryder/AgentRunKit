@@ -16,6 +16,8 @@ AgentRunKit connects to LLM providers through the ``LLMClient`` protocol. Eight 
 
 Any type conforming to ``LLMClient`` works with ``Agent``, ``Chat``, and ``SubAgentTool``.
 
+``ToolCallSurfacingClient`` refines it with one promise: the client returns structured calls for the definitions it is given and never executes them itself. That is what lets the loop own a caller's completion tool, so ``Agent/init(client:tools:completionTool:configuration:)`` requires the refinement. Every client in the matrix below conforms except `FoundationModelsClient`, which executes tools inside Apple's session. Conform your own client to it when it surfaces calls the same way; the requirement is behavioral, and the compiler cannot check it for you.
+
 ## Provider Feature Matrix
 
 | Provider | Auth | Structured Output | Reasoning | Multimodal | Prompt Caching | Transcription |

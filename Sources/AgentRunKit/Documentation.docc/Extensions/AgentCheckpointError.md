@@ -11,6 +11,7 @@ See <doc:CheckpointAndResume> for the resume contract that surfaces these.
 - ``notFound(_:)``
 - ``fileSystem(_:)``
 - ``mcpBindingMismatch(_:)``
+- ``completionToolMismatch(checkpointed:live:)``
 
 ### LocalizedError
 
