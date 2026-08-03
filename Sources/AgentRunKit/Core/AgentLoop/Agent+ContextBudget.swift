@@ -13,6 +13,12 @@ extension Agent {
         return ContextBudgetPhase(config: budgetConfig, windowSize: windowSize)
     }
 
+    func advanceBudgetPhase(_ budgetPhase: inout ContextBudgetPhase?, usage: TokenUsage) {
+        guard var phase = budgetPhase else { return }
+        _ = phase.advanceAfterResponse(usage: usage)
+        budgetPhase = phase
+    }
+
     func applyBudgetPhase(
         _ budgetPhase: inout ContextBudgetPhase?,
         usage: TokenUsage,

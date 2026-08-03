@@ -15,6 +15,13 @@ enum ToolFeedback {
     }
 }
 
+func exclusivityFeedbackResults(for calls: [ToolCall], toolName: String) -> [IndexedToolResult] {
+    let feedback = ToolResult.error(ToolFeedback.completionMustBeExclusive(toolName: toolName))
+    return calls.enumerated().map { offset, call in
+        IndexedToolResult(index: offset, call: call, result: feedback)
+    }
+}
+
 func firstTool<C: ToolContext>(
     named name: String,
     in tools: [any AnyTool<C>]

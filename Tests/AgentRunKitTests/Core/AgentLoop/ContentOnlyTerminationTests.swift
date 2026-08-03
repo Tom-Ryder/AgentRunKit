@@ -48,6 +48,30 @@ struct AgentContentOnlyRunTests {
         }
         #expect(hasNoopResult)
     }
+
+    @Test
+    func aCustomCompletionToolSuppressesContentOnlyTermination() async throws {
+        let finalize = try Tool<ContentOnlyNoopParams, ContentOnlyNoopOutput, EmptyContext>(
+            name: "finalize",
+            description: "Return the final answer. Call it alone.",
+            executor: { _, _ in ContentOnlyNoopOutput() }
+        )
+        let client = ContentOnlyTerminatingMockLLMClient(generateResponses: [
+            AssistantMessage(content: "The answer is 42.", toolCalls: []),
+            AssistantMessage(
+                content: "",
+                toolCalls: [ToolCall(id: "call_finalize", name: "finalize", arguments: "{}")]
+            ),
+        ])
+        let agent = Agent<EmptyContext>(client: client, tools: [], completionTool: finalize)
+
+        let result = try await agent.run(userMessage: "Q", context: EmptyContext())
+
+        #expect(result.finishReason == .completed)
+        #expect(result.content == "{}")
+        #expect(result.iterations == 2)
+        #expect(await client.invocationCount == 2)
+    }
 }
 
 struct AgentContentOnlyStreamTests {

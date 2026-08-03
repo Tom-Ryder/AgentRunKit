@@ -1,10 +1,11 @@
 @testable import AgentRunKit
 import Foundation
 
-actor MockLLMClient: LLMClient {
+actor MockLLMClient: LLMClient, ToolCallSurfacingClient {
     nonisolated let providerIdentifier: ProviderIdentifier = .custom("MockLLMClient")
     private let responses: [AssistantMessage]
     private var callIndex: Int = 0
+    private(set) var allCapturedTools: [[ToolDefinition]] = []
 
     init(responses: [AssistantMessage]) {
         self.responses = responses
@@ -12,10 +13,11 @@ actor MockLLMClient: LLMClient {
 
     func generate(
         messages _: [ChatMessage],
-        tools _: [ToolDefinition],
+        tools: [ToolDefinition],
         responseFormat _: ResponseFormat?,
         requestContext _: RequestContext?
     ) async throws -> AssistantMessage {
+        allCapturedTools.append(tools)
         defer { callIndex += 1 }
         guard callIndex < responses.count else {
             throw AgentError.llmError(.other("No more mock responses"))
@@ -41,7 +43,7 @@ struct ControlledByteStream: AsyncSequence {
     }
 }
 
-actor StreamingMockLLMClient: LLMClient {
+actor StreamingMockLLMClient: LLMClient, ToolCallSurfacingClient {
     nonisolated let providerIdentifier: ProviderIdentifier = .custom("StreamingMockLLMClient")
     let contextWindowSize: Int?
     private let generateResponses: [AssistantMessage]
@@ -100,7 +102,7 @@ actor StreamingMockLLMClient: LLMClient {
     }
 }
 
-actor ContentOnlyTerminatingMockLLMClient: LLMClient, ContentOnlyTerminatingClient {
+actor ContentOnlyTerminatingMockLLMClient: LLMClient, ContentOnlyTerminatingClient, ToolCallSurfacingClient {
     nonisolated let providerIdentifier: ProviderIdentifier = .custom("ContentOnlyTerminatingMockLLMClient")
     private let inner: StreamingMockLLMClient
     private(set) var invocationCount = 0

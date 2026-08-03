@@ -51,21 +51,24 @@ struct ExecutableCompletionClassificationTests {
     @Test
     func completionBesideAnotherCallIsFeedbackCarryingTheWholeBatch() throws {
         #expect(
-            try policy.classify([searchCall, finalizeCall]) == .exclusivityViolation([searchCall, finalizeCall])
+            try policy.classify([searchCall, finalizeCall])
+                == .exclusivityViolation(toolName: "finalize", calls: [searchCall, finalizeCall])
         )
     }
 
     @Test
     func completionBesidePruneContextIsAViolation() throws {
         #expect(
-            try policy.classify([pruneCall, finalizeCall]) == .exclusivityViolation([pruneCall, finalizeCall])
+            try policy.classify([pruneCall, finalizeCall])
+                == .exclusivityViolation(toolName: "finalize", calls: [pruneCall, finalizeCall])
         )
     }
 
     @Test
     func repeatedCompletionIsAViolation() throws {
         #expect(
-            try policy.classify([finalizeCall, finalizeCall]) == .exclusivityViolation([finalizeCall, finalizeCall])
+            try policy.classify([finalizeCall, finalizeCall])
+                == .exclusivityViolation(toolName: "finalize", calls: [finalizeCall, finalizeCall])
         )
     }
 

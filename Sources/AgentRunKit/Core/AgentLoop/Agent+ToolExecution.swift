@@ -11,9 +11,66 @@ struct IndexedToolResult {
     let result: ToolResult
 }
 
+enum CompletionAttempt {
+    case completed(AgentTerminalOutcome)
+    case feedback(ToolResult)
+}
+
 extension Agent {
     func requiresApproval(_ call: ToolCall, allowlist: Set<String>) -> Bool {
         configuration.approvalPolicy.requiresApproval(toolName: call.name, allowlist: allowlist)
+    }
+
+    func resolveCompletionApproval(
+        _ call: ToolCall,
+        handler: ToolApprovalHandler?,
+        allowlist: inout Set<String>
+    ) async throws -> ApprovalOutcome {
+        guard let handler,
+              requiresApproval(call, allowlist: allowlist),
+              let tool = firstTool(named: call.name, in: tools)
+        else {
+            return .approved(call)
+        }
+        return try await resolveApproval(
+            for: call, toolDescription: tool.description,
+            handler: handler, allowlist: &allowlist, emit: nil
+        )
+    }
+
+    func executeCompletionCall(
+        _ call: ToolCall,
+        context: C,
+        messages: [ChatMessage],
+        options: InvocationOptions,
+        allowlist: inout Set<String>
+    ) async throws -> CompletionAttempt {
+        let executionContext = try context.withParentHistory(messages.resolvedPrefixForInheritance())
+        let result: ToolResult
+        switch try await resolveCompletionApproval(
+            call, handler: options.approvalHandler, allowlist: &allowlist
+        ) {
+        case let .denied(denial):
+            result = denial
+        case let .approved(approvedCall):
+            let runner = ToolCallRunner(
+                context: executionContext,
+                defaultTimeout: configuration.toolTimeout,
+                approvalHandler: options.approvalHandler,
+                subAgentDispatch: .blocking
+            )
+            result = try await runner.run(approvedCall, tool: firstTool(named: approvedCall.name, in: tools))
+        }
+
+        guard !result.isError else {
+            return .feedback(truncatedToolResult(
+                result,
+                toolName: call.name,
+                tools: tools,
+                fallbackLimit: configuration.maxToolResultCharacters
+            ))
+        }
+        return .completed(AgentTerminalOutcome(content: result.content, toolName: call.name))
     }
 
     func resolveApprovals(

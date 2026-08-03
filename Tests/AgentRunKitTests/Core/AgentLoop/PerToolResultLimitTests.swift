@@ -21,7 +21,7 @@ private struct LimitedTool: AnyTool {
     }
 }
 
-private actor MockClient: LLMClient {
+private actor MockClient: LLMClient, ToolCallSurfacingClient {
     nonisolated let providerIdentifier: ProviderIdentifier = .custom("PerToolResultLimitMockClient")
     let contextWindowSize: Int? = nil
     private let responses: [AssistantMessage]
@@ -51,7 +51,26 @@ private actor MockClient: LLMClient {
     }
 }
 
+private struct FailingCompletionTool: AnyTool {
+    typealias Context = EmptyContext
+
+    let name = "finalize"
+    let description = "Reports why it cannot finish yet"
+    let parametersSchema: JSONSchema = .object(properties: [:], required: [])
+    private let message: String
+
+    init(message: String) {
+        self.message = message
+    }
+
+    func execute(arguments _: Data, context _: EmptyContext) async throws -> ToolResult {
+        .error(message)
+    }
+}
+
 private let finishCall = ToolCall(id: "call_finish", name: "finish", arguments: #"{"content": "done"}"#)
+
+private let finalizeCall = ToolCall(id: "call_finalize", name: "finalize", arguments: "{}")
 
 private func extractToolContent(_ messages: [ChatMessage]) -> String? {
     for message in messages {
@@ -194,6 +213,47 @@ struct PerToolResultLimitTests {
             maxCharacters: 50
         )
         #expect(toolContent == expected)
+        #expect(toolContent.count <= 50)
+    }
+
+    @Test
+    func aSuccessfulCompletionResultIsNeverTruncated() async throws {
+        let longOutput = String(repeating: "C", count: 200)
+        let completionTool = LimitedTool(name: "finalize", maxResultCharacters: 50, output: longOutput)
+        let client = MockClient(responses: [AssistantMessage(content: "", toolCalls: [finalizeCall])])
+        let config = AgentConfiguration(maxIterations: 5, maxToolResultCharacters: 50)
+        let agent = Agent<EmptyContext>(
+            client: client, tools: [], completionTool: completionTool, configuration: config
+        )
+
+        let result = try await agent.run(userMessage: "Go", context: EmptyContext())
+
+        #expect(try requireContent(result) == longOutput)
+        guard case let .tool(_, _, content) = result.history.last else {
+            Issue.record("Expected the exact completion result as the final history entry")
+            return
+        }
+        #expect(content == longOutput)
+    }
+
+    @Test
+    func aFailedCompletionResultIsTruncatedLikeAnyOtherToolResult() async throws {
+        let longMessage = String(repeating: "D", count: 200)
+        let client = MockClient(responses: [
+            AssistantMessage(content: "", toolCalls: [finalizeCall]),
+            AssistantMessage(content: "", toolCalls: [finalizeCall]),
+        ])
+        let config = AgentConfiguration(maxIterations: 2, maxToolResultCharacters: 50)
+        let agent = Agent<EmptyContext>(
+            client: client, tools: [], completionTool: FailingCompletionTool(message: longMessage),
+            configuration: config
+        )
+
+        let result = try await agent.run(userMessage: "Go", context: EmptyContext())
+
+        #expect(result.finishReason == .maxIterationsReached(limit: 2))
+        let toolContent = try #require(extractToolContent(result.history))
+        #expect(toolContent == ContextCompactor.truncateToolResult(longMessage, maxCharacters: 50))
         #expect(toolContent.count <= 50)
     }
 

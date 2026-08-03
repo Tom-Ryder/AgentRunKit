@@ -91,6 +91,20 @@ struct AgentMessageHistoryValidationTests {
             try messages.validateForAgentHistory()
         }
     }
+
+    @Test
+    func aResolvedBatchMixingACustomCompletionToolWithOtherCallsStaysValid() throws {
+        let messages: [ChatMessage] = [
+            .assistant(AssistantMessage(content: "", toolCalls: [
+                ToolCall(id: "call_1", name: "lookup", arguments: "{}"),
+                ToolCall(id: "call_2", name: "finalize", arguments: "{}"),
+            ])),
+            .tool(id: "call_1", name: "lookup", content: "details"),
+            .tool(id: "call_2", name: "finalize", content: "report"),
+        ]
+
+        try messages.validateForAgentHistory()
+    }
 }
 
 struct ChatMessageTerminalHistoryTests {
