@@ -674,6 +674,169 @@ struct TestLLMClientReservedToolTests {
     }
 }
 
+struct TestLLMClientCompletionToolTests {
+    @Test
+    func ordinaryToolsAreCalledWithoutTheCompletionTool() async throws {
+        let client = TestLLMClient(completionToolName: "finalize")
+        let response = try await client.generate(
+            messages: [.user("Hi")],
+            tools: [echoDefinition, finalizeDefinition],
+            responseFormat: nil,
+            requestContext: nil
+        )
+
+        #expect(response.toolCalls.map(\.name) == ["echo"])
+    }
+
+    @Test
+    func theCompletionToolIsCalledAloneOnceToolResultsExist() async throws {
+        let client = TestLLMClient(completionToolName: "finalize")
+        let messages: [ChatMessage] = [
+            .user("Hi"),
+            .assistant(AssistantMessage(content: "", toolCalls: [
+                ToolCall(id: "test_call_0", name: "echo", arguments: #"{"name":"test_0"}"#),
+            ])),
+            .tool(id: "test_call_0", name: "echo", content: echoResultContent),
+        ]
+        let response = try await client.generate(
+            messages: messages,
+            tools: [echoDefinition, finalizeDefinition],
+            responseFormat: nil,
+            requestContext: nil
+        )
+
+        #expect(response.toolCalls.map(\.name) == ["finalize"])
+        let call = try #require(response.toolCalls.first)
+        #expect(call.id == "test_completion")
+        let decoded = try JSONDecoder().decode(RoundTripParams.self, from: call.argumentsData)
+        #expect(decoded.name == "test_0")
+    }
+
+    @Test
+    func theCompletionToolIsCalledWhenNoOrdinaryToolIsSelectable() async throws {
+        let client = TestLLMClient(completionToolName: "finalize")
+        let response = try await client.generate(
+            messages: [.user("Hi")], tools: [finalizeDefinition], responseFormat: nil, requestContext: nil
+        )
+
+        #expect(response.toolCalls.map(\.name) == ["finalize"])
+    }
+
+    @Test
+    func aFailedCompletionAttemptIsFollowedByAnotherCompletionCall() async throws {
+        let client = TestLLMClient(completionToolName: "finalize")
+        let messages: [ChatMessage] = [
+            .user("Hi"),
+            .assistant(AssistantMessage(content: "", toolCalls: [
+                ToolCall(id: "test_completion", name: "finalize", arguments: #"{"name":"test_0"}"#),
+            ])),
+            .tool(id: "test_completion", name: "finalize", content: "Tool 'finalize' failed: not ready"),
+        ]
+        let response = try await client.generate(
+            messages: messages,
+            tools: [echoDefinition, finalizeDefinition],
+            responseFormat: nil,
+            requestContext: nil
+        )
+
+        #expect(response.toolCalls.map(\.name) == ["finalize"])
+    }
+
+    @Test
+    func specificSelectionExcludesTheCompletionTool() async throws {
+        let client = TestLLMClient(callTools: .specific(["echo", "finalize"]), completionToolName: "finalize")
+        let response = try await client.generate(
+            messages: [.user("Hi")],
+            tools: [echoDefinition, finalizeDefinition],
+            responseFormat: nil,
+            requestContext: nil
+        )
+
+        #expect(response.toolCalls.map(\.name) == ["echo"])
+    }
+
+    @Test
+    func toolFreeRequestsDoNotRequireTheCompletionDefinition() async throws {
+        let client = TestLLMClient(finishContent: "Summary", completionToolName: "finalize")
+        let response = try await client.generate(
+            messages: [.user("Summarize the conversation")], tools: [], responseFormat: nil, requestContext: nil
+        )
+
+        #expect(response.toolCalls.isEmpty)
+        #expect(response.content == "Summary")
+    }
+
+    @Test
+    func structuredOutputRequestsIgnoreTheCompletionConfiguration() async throws {
+        let client = TestLLMClient(completionToolName: "finalize")
+        let response = try await client.generate(
+            messages: [.user("Extract")],
+            tools: [finalizeDefinition],
+            responseFormat: .jsonSchema(StructuredTestOutput.self),
+            requestContext: nil
+        )
+
+        #expect(response.toolCalls.isEmpty)
+        let decoded = try JSONDecoder().decode(StructuredTestOutput.self, from: Data(response.content.utf8))
+        #expect(!decoded.title.isEmpty)
+    }
+
+    @Test
+    func agentRunsTheOrdinaryToolThenCompletes() async throws {
+        let echo = try makeEchoTool()
+        let finalize = try makeFinalizeTool { params, _ in EchoResult(echoed: "Final: \(params.name)") }
+        let client = TestLLMClient(completionToolName: "finalize")
+        let agent = Agent<EmptyContext>(client: client, tools: [echo], completionTool: finalize)
+
+        let result = try await agent.run(userMessage: "Hello", context: EmptyContext())
+
+        #expect(try requireContent(result) == finalizeResultContent)
+        #expect(result.finishReason == .completed)
+        #expect(result.iterations == 2)
+        #expect(toolMessageContents(result.history) == [echoResultContent, finalizeResultContent])
+    }
+
+    @Test
+    func agentStreamsTheCompletionToolAsAnOrdinaryCall() async throws {
+        let echo = try makeEchoTool()
+        let finalize = try makeFinalizeTool { params, _ in EchoResult(echoed: "Final: \(params.name)") }
+        let client = TestLLMClient(completionToolName: "finalize")
+        let agent = Agent<EmptyContext>(client: client, tools: [echo], completionTool: finalize)
+
+        var events: [StreamEvent] = []
+        for try await event in agent.stream(userMessage: "Hello", context: EmptyContext()) {
+            events.append(event)
+        }
+
+        #expect(events.contains { $0.kind == .toolCallStarted(name: "finalize", id: "test_completion") })
+        guard case let .finished(_, content, reason, history) = events.last?.kind else {
+            Issue.record("Expected a finished event")
+            return
+        }
+        #expect(content == finalizeResultContent)
+        #expect(reason == .completed)
+        #expect(toolMessageContents(history) == [echoResultContent, finalizeResultContent])
+    }
+
+    @Test
+    func aRejectedCompletionAttemptIsRetriedUntilItSucceeds() async throws {
+        let invocations = ToolInvocationCounter()
+        let finalize = try makeFinalizeTool { params, _ in
+            guard await invocations.increment() > 1 else { throw CompletionToolTestError.draftNotReady }
+            return EchoResult(echoed: "Final: \(params.name)")
+        }
+        let client = TestLLMClient(completionToolName: "finalize")
+        let agent = Agent<EmptyContext>(client: client, tools: [], completionTool: finalize)
+
+        let result = try await agent.run(userMessage: "Hello", context: EmptyContext())
+
+        #expect(try requireContent(result) == finalizeResultContent)
+        #expect(result.iterations == 2)
+        #expect(await invocations.value == 2)
+        #expect(toolMessageContents(result.history).count == 2)
+    }
+}
+
 private func generatedToolArgumentsJSON(
     schema: JSONSchema,
     seed: Int = 0,
@@ -697,6 +860,56 @@ private func generatedToolArgumentsValue(
 ) async throws -> JSONValue {
     let json = try await generatedToolArgumentsJSON(schema: schema, seed: seed, toolName: toolName)
     return try JSONDecoder().decode(JSONValue.self, from: Data(json.utf8))
+}
+
+private let echoDefinition = ToolDefinition(
+    name: "echo", description: "Echoes name", parametersSchema: RoundTripParams.jsonSchema
+)
+
+private let finalizeDefinition = ToolDefinition(
+    name: "finalize", description: "Returns the final report", parametersSchema: RoundTripParams.jsonSchema
+)
+
+private let echoResultContent = #"{"echoed":"Echo: test_0"}"#
+
+private let finalizeResultContent = #"{"echoed":"Final: test_0"}"#
+
+private enum CompletionToolTestError: Error {
+    case draftNotReady
+}
+
+private actor ToolInvocationCounter {
+    private(set) var value = 0
+
+    func increment() -> Int {
+        value += 1
+        return value
+    }
+}
+
+private func makeEchoTool() throws -> Tool<RoundTripParams, EchoResult, EmptyContext> {
+    try Tool(
+        name: "echo",
+        description: "Echoes name",
+        executor: { params, _ in EchoResult(echoed: "Echo: \(params.name)") }
+    )
+}
+
+private func makeFinalizeTool(
+    executor: @escaping @Sendable (RoundTripParams, EmptyContext) async throws -> EchoResult
+) throws -> Tool<RoundTripParams, EchoResult, EmptyContext> {
+    try Tool(
+        name: "finalize",
+        description: "Return the final report. Call it alone once the work is done.",
+        executor: executor
+    )
+}
+
+private func toolMessageContents(_ history: [ChatMessage]) -> [String] {
+    history.compactMap { message in
+        guard case let .tool(_, _, content) = message else { return nil }
+        return content
+    }
 }
 
 private struct RoundTripParams: Codable, SchemaProviding {

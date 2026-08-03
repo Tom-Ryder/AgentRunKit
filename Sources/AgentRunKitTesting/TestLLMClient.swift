@@ -2,7 +2,7 @@ import AgentRunKit
 import Foundation
 
 /// A schema-walking LLM client that auto-generates valid tool call arguments for offline testing.
-public struct TestLLMClient: LLMClient, Sendable {
+public struct TestLLMClient: LLMClient, ToolCallSurfacingClient, Sendable {
     /// Controls which tools the client calls on each turn.
     public enum CallToolsMode: Sendable, Equatable {
         case all
@@ -12,6 +12,8 @@ public struct TestLLMClient: LLMClient, Sendable {
     public let seed: Int
     public let callTools: CallToolsMode
     public let finishContent: String
+    /// The tool this client calls alone once no ordinary tool work remains.
+    public let completionToolName: String?
     public let contextWindowSize: Int?
     public let providerIdentifier: ProviderIdentifier = .custom("test")
     public let tokenUsage: TokenUsage
@@ -20,12 +22,14 @@ public struct TestLLMClient: LLMClient, Sendable {
         seed: Int = 0,
         callTools: CallToolsMode = .all,
         finishContent: String = "Test completed",
+        completionToolName: String? = nil,
         contextWindowSize: Int? = nil,
         tokenUsage: TokenUsage = TokenUsage(input: 1, output: 1)
     ) {
         self.seed = seed
         self.callTools = callTools
         self.finishContent = finishContent
+        self.completionToolName = completionToolName
         self.contextWindowSize = contextWindowSize
         self.tokenUsage = tokenUsage
     }
@@ -79,11 +83,18 @@ private extension TestLLMClient {
             let json = SchemaWalker.generateJSON(from: responseFormat.schema, seed: seed)
             return Response(toolCalls: [], content: json)
         }
+        guard !tools.isEmpty else {
+            return Response(toolCalls: [], content: finishContent)
+        }
 
+        let completionTool = completionToolDefinition(in: tools)
         let reservedFinishTool = tools.first(where: isReservedFinishTool)
-        let selectableTools = tools.filter { !isReservedTool($0) && toolMatchesMode($0) }
+        let selectableTools = tools.filter { !isReservedTool($0) && !isCompletionTool($0) && toolMatchesMode($0) }
 
         if hasToolResultsAfterLastUserMessage(messages) || selectableTools.isEmpty {
+            if let completionTool {
+                return Response(toolCalls: [buildCompletionToolCall(completionTool)], content: "")
+            }
             if reservedFinishTool != nil {
                 return Response(toolCalls: buildFinishToolCalls(), content: "")
             }
@@ -103,6 +114,26 @@ private extension TestLLMClient {
     func buildFinishToolCalls() -> [ToolCall] {
         let arguments = encodeJSON(FinishArguments(content: finishContent, reason: nil))
         return [ToolCall(id: "test_finish", name: reservedFinishToolDefinition.name, arguments: arguments)]
+    }
+
+    func buildCompletionToolCall(_ tool: ToolDefinition) -> ToolCall {
+        ToolCall(
+            id: "test_completion",
+            name: tool.name,
+            arguments: SchemaWalker.generateJSON(from: tool.parametersSchema, seed: seed)
+        )
+    }
+
+    func completionToolDefinition(in tools: [ToolDefinition]) -> ToolDefinition? {
+        guard let completionToolName else { return nil }
+        guard let definition = tools.first(where: { $0.name == completionToolName }) else {
+            preconditionFailure("Completion tool '\(completionToolName)' is missing from the request definitions")
+        }
+        return definition
+    }
+
+    func isCompletionTool(_ tool: ToolDefinition) -> Bool {
+        tool.name == completionToolName
     }
 
     func toolMatchesMode(_ tool: ToolDefinition) -> Bool {
