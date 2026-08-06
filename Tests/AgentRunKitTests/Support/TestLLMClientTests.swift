@@ -822,7 +822,8 @@ struct TestLLMClientCompletionToolTests {
     func aRejectedCompletionAttemptIsRetriedUntilItSucceeds() async throws {
         let invocations = ToolInvocationCounter()
         let finalize = try makeFinalizeTool { params, _ in
-            guard await invocations.increment() > 1 else { throw CompletionToolTestError.draftNotReady }
+            await invocations.increment()
+            guard await invocations.value > 1 else { throw CompletionToolTestError.draftNotReady }
             return EchoResult(echoed: "Final: \(params.name)")
         }
         let client = TestLLMClient(completionToolName: "finalize")
@@ -878,15 +879,6 @@ private enum CompletionToolTestError: Error {
     case draftNotReady
 }
 
-private actor ToolInvocationCounter {
-    private(set) var value = 0
-
-    func increment() -> Int {
-        value += 1
-        return value
-    }
-}
-
 private func makeEchoTool() throws -> Tool<RoundTripParams, EchoResult, EmptyContext> {
     try Tool(
         name: "echo",
@@ -903,13 +895,6 @@ private func makeFinalizeTool(
         description: "Return the final report. Call it alone once the work is done.",
         executor: executor
     )
-}
-
-private func toolMessageContents(_ history: [ChatMessage]) -> [String] {
-    history.compactMap { message in
-        guard case let .tool(_, _, content) = message else { return nil }
-        return content
-    }
 }
 
 private struct RoundTripParams: Codable, SchemaProviding {

@@ -555,16 +555,15 @@ struct AgentStreamCheckpointObservationTests {
 
     @MainActor @Test
     func aSendDuringResumeKeepsCheckpointStateOutOfTheStream() async throws {
-        let backend = InMemoryCheckpointer()
         let checkpointSession = SessionID()
         let checkpointID = CheckpointID()
-        try await backend.save(AgentCheckpoint(
+        let checkpoint = AgentCheckpoint(
             messages: [.user("Checkpointed"), .assistant(AssistantMessage(content: "earlier"))],
             iteration: 1,
             tokenUsage: TokenUsage(input: 42, output: 24),
             iterationUsage: TokenUsage(input: 42, output: 24),
             sessionID: checkpointSession, runID: RunID(), checkpointID: checkpointID
-        ))
+        )
         let freshFinish: [StreamDelta] = [
             .toolCallStart(index: 0, id: "call_finish", name: "finish", kind: .function),
             .toolCallDelta(index: 0, arguments: #"{"content":"fresh"}"#),
@@ -574,14 +573,14 @@ struct AgentStreamCheckpointObservationTests {
             client: StreamingMockLLMClient(streamSequences: [freshFinish, freshFinish]), tools: []
         )
         let stream = AgentStream(agent: agent, bufferCapacity: 64)
-        let gate = GatedLoadCheckpointer(inner: backend)
+        let gate = GatedCheckpointer(gating: .load, loadResult: checkpoint)
 
         let resumeTask = Task {
             try await stream.resume(from: checkpointID, checkpointer: gate, context: EmptyContext())
         }
-        await gate.awaitLoadStarted()
+        await gate.awaitGateEntered()
         stream.send("Fresh", context: EmptyContext())
-        await gate.releaseLoad()
+        await gate.release()
         try await resumeTask.value
         await awaitStreamCompletion(stream)
 
@@ -615,53 +614,6 @@ private actor CountingCheckpointer: AgentCheckpointer {
 
     func list(session: SessionID) async throws -> [CheckpointID] {
         try await inner.list(session: session)
-    }
-}
-
-private actor GatedLoadCheckpointer: AgentCheckpointer {
-    private let inner: any AgentCheckpointer
-    private var loadStarted = false
-    private var loadStartedContinuation: CheckedContinuation<Void, Never>?
-    private var isReleased = false
-    private var releaseContinuation: CheckedContinuation<Void, Never>?
-
-    init(inner: any AgentCheckpointer) {
-        self.inner = inner
-    }
-
-    func save(_ checkpoint: AgentCheckpoint) async throws {
-        try await inner.save(checkpoint)
-    }
-
-    func load(_ id: CheckpointID) async throws -> AgentCheckpoint {
-        loadStarted = true
-        loadStartedContinuation?.resume()
-        loadStartedContinuation = nil
-
-        if !isReleased {
-            await withCheckedContinuation { continuation in
-                releaseContinuation = continuation
-            }
-        }
-        return try await inner.load(id)
-    }
-
-    func list(session: SessionID) async throws -> [CheckpointID] {
-        try await inner.list(session: session)
-    }
-
-    func awaitLoadStarted() async {
-        guard !loadStarted else { return }
-        precondition(loadStartedContinuation == nil, "awaitLoadStarted supports a single waiter")
-        await withCheckedContinuation { continuation in
-            loadStartedContinuation = continuation
-        }
-    }
-
-    func releaseLoad() {
-        isReleased = true
-        releaseContinuation?.resume()
-        releaseContinuation = nil
     }
 }
 

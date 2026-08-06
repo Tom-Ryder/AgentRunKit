@@ -529,13 +529,6 @@ private struct NoopParams: Codable, SchemaProviding {
 
 private struct NoopOutput: Codable {}
 
-private actor ToolInvocationCounter {
-    private(set) var value = 0
-    func increment() {
-        value += 1
-    }
-}
-
 actor CapturingMockLLMClient: LLMClient {
     nonisolated let providerIdentifier: ProviderIdentifier = .custom("CapturingMockLLMClient")
     private let responses: [AssistantMessage]

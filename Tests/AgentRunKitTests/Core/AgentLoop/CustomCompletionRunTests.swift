@@ -2,34 +2,6 @@
 import Foundation
 import Testing
 
-private struct ReportContext: ToolContext {
-    let documentID: String
-}
-
-private struct FinalizeParams: Codable, SchemaProviding {
-    let summary: String
-
-    static var jsonSchema: JSONSchema {
-        .object(properties: ["summary": .string()], required: ["summary"])
-    }
-}
-
-private struct FinalizeOutput: Codable {
-    let report: String
-}
-
-private struct LookupParams: Codable, SchemaProviding {
-    let query: String
-
-    static var jsonSchema: JSONSchema {
-        .object(properties: ["query": .string()], required: ["query"])
-    }
-}
-
-private struct LookupOutput: Codable {
-    let matches: Int
-}
-
 private struct DraftAwareCompletionTool: AnyTool {
     typealias Context = ReportContext
 
@@ -46,47 +18,6 @@ private struct DraftAwareCompletionTool: AnyTool {
     }
 }
 
-private enum CustomCompletionTestError: Error {
-    case nonUTF8
-    case draftRejected
-}
-
-private actor ToolInvocationCounter {
-    private(set) var value = 0
-
-    func increment() {
-        value += 1
-    }
-}
-
-private func makeFinalizeTool(
-    executor: @escaping @Sendable (FinalizeParams, ReportContext) async throws -> FinalizeOutput
-) throws -> Tool<FinalizeParams, FinalizeOutput, ReportContext> {
-    try Tool(
-        name: "finalize",
-        description: "Return the final report. Call it alone once the work is done.",
-        executor: executor
-    )
-}
-
-private func makeLookupTool(
-    executor: @escaping @Sendable (LookupParams, ReportContext) async throws -> LookupOutput
-) throws -> Tool<LookupParams, LookupOutput, ReportContext> {
-    try Tool(name: "lookup", description: "Look up supporting material", executor: executor)
-}
-
-private func report(documentID: String, summary: String) -> FinalizeOutput {
-    FinalizeOutput(report: "\(documentID):\(summary)")
-}
-
-private func encodedReport(documentID: String, summary: String) throws -> String {
-    let data = try JSONEncoder().encode(report(documentID: documentID, summary: summary))
-    guard let content = String(bytes: data, encoding: .utf8) else {
-        throw CustomCompletionTestError.nonUTF8
-    }
-    return content
-}
-
 private func finalizeCall(id: String = "call_finalize", summary: String) -> ToolCall {
     ToolCall(id: id, name: "finalize", arguments: #"{"summary": "\#(summary)"}"#)
 }
@@ -96,13 +27,6 @@ private let lookupCall = ToolCall(id: "call_lookup", name: "lookup", arguments: 
 private let reservedFinishCall = ToolCall(
     id: "call_finish", name: "finish", arguments: #"{"content": "done"}"#
 )
-
-private func toolMessageContents(_ history: [ChatMessage]) -> [String] {
-    history.compactMap { message in
-        guard case let .tool(_, _, content) = message else { return nil }
-        return content
-    }
-}
 
 struct CustomCompletionRunTests {
     @Test

@@ -2,76 +2,6 @@
 import Foundation
 import Testing
 
-private struct ReportContext: ToolContext {
-    let documentID: String
-}
-
-private struct FinalizeParams: Codable, SchemaProviding {
-    let summary: String
-
-    static var jsonSchema: JSONSchema {
-        .object(properties: ["summary": .string()], required: ["summary"])
-    }
-}
-
-private struct FinalizeOutput: Codable {
-    let report: String
-}
-
-private struct LookupParams: Codable, SchemaProviding {
-    let query: String
-
-    static var jsonSchema: JSONSchema {
-        .object(properties: ["query": .string()], required: ["query"])
-    }
-}
-
-private struct LookupOutput: Codable {
-    let matches: Int
-}
-
-private enum CustomCompletionStreamTestError: Error, Equatable {
-    case nonUTF8
-    case draftRejected
-    case checkpointStorageUnavailable
-}
-
-private actor ToolInvocationCounter {
-    private(set) var value = 0
-
-    func increment() {
-        value += 1
-    }
-}
-
-private func makeFinalizeTool(
-    executor: @escaping @Sendable (FinalizeParams, ReportContext) async throws -> FinalizeOutput
-) throws -> Tool<FinalizeParams, FinalizeOutput, ReportContext> {
-    try Tool(
-        name: "finalize",
-        description: "Return the final report. Call it alone once the work is done.",
-        executor: executor
-    )
-}
-
-private func makeLookupTool(
-    executor: @escaping @Sendable (LookupParams, ReportContext) async throws -> LookupOutput
-) throws -> Tool<LookupParams, LookupOutput, ReportContext> {
-    try Tool(name: "lookup", description: "Look up supporting material", executor: executor)
-}
-
-private func report(documentID: String, summary: String) -> FinalizeOutput {
-    FinalizeOutput(report: "\(documentID):\(summary)")
-}
-
-private func encodedReport(documentID: String, summary: String) throws -> String {
-    let data = try JSONEncoder().encode(report(documentID: documentID, summary: summary))
-    guard let content = String(bytes: data, encoding: .utf8) else {
-        throw CustomCompletionStreamTestError.nonUTF8
-    }
-    return content
-}
-
 private func finalizeDeltas(
     id: String = "call_finalize",
     summary: String,
@@ -151,13 +81,6 @@ private func completedToolCallIDs(_ events: [StreamEvent]) -> [String] {
     }
 }
 
-private func toolMessageContents(_ history: [ChatMessage]) -> [String] {
-    history.compactMap { message in
-        guard case let .tool(_, _, content) = message else { return nil }
-        return content
-    }
-}
-
 private func awaitCollected(
     _ collector: StreamingEventCollector,
     where predicate: @Sendable @escaping (StreamEvent) -> Bool
@@ -174,61 +97,12 @@ private func awaitStreamCompletion(_ stream: AgentStream<some ToolContext>) asyn
     }
 }
 
-private actor GatedSaveCheckpointer: AgentCheckpointer {
-    private let inner: any AgentCheckpointer
-    private var saveStarted = false
-    private var saveStartedContinuation: CheckedContinuation<Void, Never>?
-    private var isReleased = false
-    private var releaseContinuation: CheckedContinuation<Void, Never>?
-    private(set) var saveCount = 0
-
-    init(inner: any AgentCheckpointer) {
-        self.inner = inner
-    }
-
-    func save(_ checkpoint: AgentCheckpoint) async throws {
-        saveCount += 1
-        saveStarted = true
-        saveStartedContinuation?.resume()
-        saveStartedContinuation = nil
-
-        if !isReleased {
-            await withCheckedContinuation { continuation in
-                releaseContinuation = continuation
-            }
-        }
-        try await inner.save(checkpoint)
-    }
-
-    func load(_ id: CheckpointID) async throws -> AgentCheckpoint {
-        try await inner.load(id)
-    }
-
-    func list(session: SessionID) async throws -> [CheckpointID] {
-        try await inner.list(session: session)
-    }
-
-    func awaitSaveStarted() async {
-        guard !saveStarted else { return }
-        precondition(saveStartedContinuation == nil, "awaitSaveStarted supports a single waiter")
-        await withCheckedContinuation { continuation in
-            saveStartedContinuation = continuation
-        }
-    }
-
-    func releaseSave() {
-        isReleased = true
-        releaseContinuation?.resume()
-        releaseContinuation = nil
-    }
-}
-
 private actor FailingSaveCheckpointer: AgentCheckpointer {
     private(set) var saveCount = 0
 
     func save(_: AgentCheckpoint) async throws {
         saveCount += 1
-        throw CustomCompletionStreamTestError.checkpointStorageUnavailable
+        throw CustomCompletionTestError.checkpointStorageUnavailable
     }
 
     func load(_ id: CheckpointID) async throws -> AgentCheckpoint {
@@ -275,8 +149,7 @@ struct CustomCompletionStreamTests {
 
     @Test
     func theTerminalCheckpointIsSavedBeforeTheCommittedFinish() async throws {
-        let backend = InMemoryCheckpointer()
-        let gate = GatedSaveCheckpointer(inner: backend)
+        let gate = GatedCheckpointer(gating: .save)
         let session = SessionID()
         let finalize = try makeFinalizeTool { params, context in
             report(documentID: context.documentID, summary: params.summary)
@@ -295,13 +168,13 @@ struct CustomCompletionStreamTests {
             }
         }
 
-        await gate.awaitSaveStarted()
+        await gate.awaitGateEntered()
         await awaitCollected(collector) { event in
             if case let .toolCallCompleted(_, name, _) = event.kind { return name == "finalize" }
             return false
         }
         #expect(await !collector.events.contains(where: isFinished))
-        await gate.releaseSave()
+        await gate.release()
         try await consumer.value
 
         let expected = try encodedReport(documentID: "doc-1", summary: "all done")
@@ -312,11 +185,10 @@ struct CustomCompletionStreamTests {
         }
         #expect(content == expected)
         #expect(reason == .completed)
-        #expect(await gate.saveCount == 1)
 
-        let ids = try await backend.list(session: session)
-        #expect(ids.count == 1)
-        let checkpoint = try await backend.load(#require(ids.first))
+        let saved = await gate.saved
+        #expect(saved.count == 1)
+        let checkpoint = try #require(saved.first)
         #expect(checkpoint.terminalOutcome == AgentTerminalOutcome(content: expected, toolName: "finalize"))
         #expect(checkpoint.messages == history)
         #expect(toolMessageContents(checkpoint.messages) == [expected])
@@ -344,7 +216,7 @@ struct CustomCompletionStreamTests {
                 events.append(event)
             }
             Issue.record("Expected the terminal save failure to surface")
-        } catch CustomCompletionStreamTestError.checkpointStorageUnavailable {
+        } catch CustomCompletionTestError.checkpointStorageUnavailable {
         } catch {
             Issue.record("Expected checkpointStorageUnavailable, got \(error)")
         }
@@ -361,7 +233,7 @@ struct CustomCompletionStreamTests {
         let invocations = ToolInvocationCounter()
         let finalize = try makeFinalizeTool { params, context in
             await invocations.increment()
-            guard params.summary != "draft" else { throw CustomCompletionStreamTestError.draftRejected }
+            guard params.summary != "draft" else { throw CustomCompletionTestError.draftRejected }
             return report(documentID: context.documentID, summary: params.summary)
         }
         let agent = makeAgent(
@@ -765,6 +637,6 @@ struct CustomCompletionStreamObserverTests {
         #expect(stream.history.isEmpty)
         #expect(stream.currentCheckpoint == nil)
         #expect(await checkpointer.saveCount == 1)
-        #expect(stream.error as? CustomCompletionStreamTestError == .checkpointStorageUnavailable)
+        #expect(stream.error as? CustomCompletionTestError == .checkpointStorageUnavailable)
     }
 }
