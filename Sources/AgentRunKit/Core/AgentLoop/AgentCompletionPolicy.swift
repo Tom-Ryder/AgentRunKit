@@ -32,7 +32,7 @@ extension AgentCompletionPolicy {
     }
 
     func classify(_ toolCalls: [ToolCall]) throws -> TerminalCallDisposition {
-        let includesReservedFinish = toolCalls.contains { $0.name == "finish" }
+        let includesReservedFinish = toolCalls.contains { $0.name == reservedFinishToolDefinition.name }
         guard !includesReservedFinish || toolCalls.count == 1 else {
             throw AgentError.malformedHistory(.finishMustBeExclusive)
         }

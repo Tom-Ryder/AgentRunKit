@@ -145,7 +145,7 @@ extension Agent {
         continuation: AsyncThrowingStream<StreamEvent, Error>.Continuation,
         state: inout AgentLoopState
     ) async throws {
-        let indexedCalls = indexedExecutableToolCalls(from: toolCalls)
+        let indexedCalls = indexedToolCalls(from: toolCalls)
         let pruneCalls = indexedCalls.filter { $0.call.name == "prune_context" }
         let regularCalls = indexedCalls.filter { $0.call.name != "prune_context" }
 

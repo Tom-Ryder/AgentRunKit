@@ -425,11 +425,7 @@ extension Agent {
         return false
     }
 
-    func indexedExecutableToolCalls(from toolCalls: [ToolCall]) -> [IndexedToolCall] {
-        let policy = StreamPolicy.agent(completionPolicy)
-        return toolCalls.enumerated().compactMap { offset, call in
-            guard policy.shouldExecuteTool(name: call.name) else { return nil }
-            return IndexedToolCall(index: offset, call: call)
-        }
+    func indexedToolCalls(from toolCalls: [ToolCall]) -> [IndexedToolCall] {
+        toolCalls.enumerated().map { offset, call in IndexedToolCall(index: offset, call: call) }
     }
 }

@@ -4,23 +4,20 @@ struct StreamPolicy {
     let terminalToolName: String?
     let terminateWhenNoToolCalls: Bool
     let emitToolStartForTerminalTool: Bool
-    let executeTerminalTool: Bool
 
     static func agent(_ completion: AgentCompletionPolicy) -> StreamPolicy {
         switch completion {
         case .builtInFinish:
             StreamPolicy(
-                terminalToolName: "finish",
+                terminalToolName: reservedFinishToolDefinition.name,
                 terminateWhenNoToolCalls: false,
-                emitToolStartForTerminalTool: false,
-                executeTerminalTool: false
+                emitToolStartForTerminalTool: false
             )
         case let .executableTool(name):
             StreamPolicy(
                 terminalToolName: name,
                 terminateWhenNoToolCalls: false,
-                emitToolStartForTerminalTool: true,
-                executeTerminalTool: true
+                emitToolStartForTerminalTool: true
             )
         }
     }
@@ -28,18 +25,12 @@ struct StreamPolicy {
     static let chat = StreamPolicy(
         terminalToolName: nil,
         terminateWhenNoToolCalls: true,
-        emitToolStartForTerminalTool: true,
-        executeTerminalTool: true
+        emitToolStartForTerminalTool: true
     )
 
     func shouldEmitToolStart(name: String) -> Bool {
         guard let terminalToolName, terminalToolName == name else { return true }
         return emitToolStartForTerminalTool
-    }
-
-    func shouldExecuteTool(name: String) -> Bool {
-        guard let terminalToolName, terminalToolName == name else { return true }
-        return executeTerminalTool
     }
 
     func shouldTerminateAfterIteration(toolCalls: [ToolCall]) -> Bool {

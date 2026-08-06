@@ -158,7 +158,7 @@ extension Agent {
         options: InvocationOptions,
         state: inout AgentLoopState
     ) async throws -> AgentResult? {
-        let indexedCalls = indexedExecutableToolCalls(from: toolCalls)
+        let indexedCalls = indexedToolCalls(from: toolCalls)
         let pruneCalls = indexedCalls.filter { $0.call.name == "prune_context" }
         let regularCalls = indexedCalls.filter { $0.call.name != "prune_context" }
 

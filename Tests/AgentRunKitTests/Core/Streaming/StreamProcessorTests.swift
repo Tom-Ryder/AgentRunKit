@@ -136,23 +136,19 @@ struct StreamProcessorEmittedOutputTests {
 
 struct StreamPolicyDerivationTests {
     @Test
-    func builtInFinishSuppressesAndWithholdsOnlyTheReservedTool() {
+    func builtInFinishSuppressesTheStartEventForOnlyTheReservedTool() {
         let policy = StreamPolicy.agent(.builtInFinish)
 
         #expect(!policy.shouldEmitToolStart(name: "finish"))
-        #expect(!policy.shouldExecuteTool(name: "finish"))
         #expect(policy.shouldEmitToolStart(name: "search"))
-        #expect(policy.shouldExecuteTool(name: "search"))
     }
 
     @Test
-    func customCompletionAndReservedFinishBothStayOnTheOrdinaryToolPath() {
+    func customCompletionAndReservedFinishBothEmitStartEvents() {
         let policy = StreamPolicy.agent(.executableTool(name: "finalize"))
 
         #expect(policy.shouldEmitToolStart(name: "finalize"))
-        #expect(policy.shouldExecuteTool(name: "finalize"))
         #expect(policy.shouldEmitToolStart(name: "finish"))
-        #expect(policy.shouldExecuteTool(name: "finish"))
     }
 
     @Test
