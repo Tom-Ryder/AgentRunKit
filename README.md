@@ -143,7 +143,7 @@ Custom completion tools arrive with three deliberate changes for existing code:
 |----------|---------|
 | iOS | 18.0+ |
 | macOS | 15.0+ |
-| Swift | 6.0+ |
+| Swift | 6.1+ |
 | Xcode | 26+ for local development and CI |
 
 ---
