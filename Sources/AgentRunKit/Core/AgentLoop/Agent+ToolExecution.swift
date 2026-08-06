@@ -23,14 +23,12 @@ extension Agent {
 
     func resolveCompletionApproval(
         _ call: ToolCall,
+        tool: any AnyTool<C>,
         handler: ToolApprovalHandler?,
         emit: StreamEmitter? = nil,
         allowlist: inout Set<String>
     ) async throws -> ApprovalOutcome {
-        guard let handler,
-              requiresApproval(call, allowlist: allowlist),
-              let tool = firstTool(named: call.name, in: tools)
-        else {
+        guard let handler, requiresApproval(call, allowlist: allowlist) else {
             return .approved(call)
         }
         return try await resolveApproval(
@@ -46,10 +44,13 @@ extension Agent {
         options: InvocationOptions,
         allowlist: inout Set<String>
     ) async throws -> CompletionAttempt {
+        guard let completionTool else {
+            preconditionFailure("Completion execution requires a configured completion tool")
+        }
         let executionContext = try context.withParentHistory(messages.resolvedPrefixForInheritance())
         let result: ToolResult
         switch try await resolveCompletionApproval(
-            call, handler: options.approvalHandler, allowlist: &allowlist
+            call, tool: completionTool, handler: options.approvalHandler, allowlist: &allowlist
         ) {
         case let .denied(denial):
             result = denial
@@ -60,7 +61,7 @@ extension Agent {
                 approvalHandler: options.approvalHandler,
                 subAgentDispatch: .blocking
             )
-            result = try await runner.run(approvedCall, tool: firstTool(named: approvedCall.name, in: tools))
+            result = try await runner.run(approvedCall, tool: completionTool)
         }
         return completionAttempt(for: result, toolName: call.name)
     }
@@ -73,10 +74,13 @@ extension Agent {
         emit: StreamEmitter,
         allowlist: inout Set<String>
     ) async throws -> CompletionAttempt {
+        guard let completionTool else {
+            preconditionFailure("Completion execution requires a configured completion tool")
+        }
         let executionContext = try context.withParentHistory(messages.resolvedPrefixForInheritance())
         let result: ToolResult
         switch try await resolveCompletionApproval(
-            call, handler: options.approvalHandler, emit: emit, allowlist: &allowlist
+            call, tool: completionTool, handler: options.approvalHandler, emit: emit, allowlist: &allowlist
         ) {
         case let .denied(denial):
             result = denial
@@ -92,7 +96,7 @@ extension Agent {
                     historyEmissionDepthLimit: configuration.historyEmissionDepthLimit
                 ))
             )
-            result = try await runner.run(approvedCall, tool: firstTool(named: approvedCall.name, in: tools))
+            result = try await runner.run(approvedCall, tool: completionTool)
         }
 
         let attempt = completionAttempt(for: result, toolName: call.name)

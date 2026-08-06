@@ -9,7 +9,9 @@ public final class Agent<C: ToolContext>: Sendable {
     let toolDefinitions: [ToolDefinition]
     let configuration: AgentConfiguration
     let completionPolicy: AgentCompletionPolicy
+    let completionTool: (any AnyTool<C>)?
 
+    /// Creates an agent that finishes through the built-in finish tool.
     public convenience init(
         client: any LLMClient,
         tools: [any AnyTool<C>],
@@ -59,6 +61,7 @@ public final class Agent<C: ToolContext>: Sendable {
         }
         toolDefinitions = defs
         self.configuration = configuration
+        self.completionTool = completionTool
         completionPolicy = completionTool.map { .executableTool(name: $0.name) } ?? .builtInFinish
     }
 
