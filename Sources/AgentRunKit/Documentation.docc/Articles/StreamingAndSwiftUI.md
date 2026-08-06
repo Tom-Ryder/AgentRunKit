@@ -186,7 +186,7 @@ This canonical codec uses the framework's fixed JSON settings for event transcri
 
 Aggregate state describes the parent run only. `tokenUsage`, `finishReason`, `terminalContent`, `history`, the `content` fallback, `iterationUsages`, `iterationsReplayed`, and `contextBudget` are written by root `.finished`, `.iterationCompleted`, and `.budgetUpdated` events; the same events nested inside ``StreamEvent/Kind/subAgentEvent(toolCallId:toolName:event:)`` never touch them. Nested events remain fully observable — they still arrive on the stream, and `toolCalls` still flattens nested tool activity — but a sub-agent finishing is not the parent finishing.
 
-This changed behavior for parent streams that emit no content deltas of their own: they previously displayed the last child's finish content and now display the parent's.
+Before 5.5, a parent stream that emitted no content deltas displayed the last child's finish content; from 5.5 it displays the parent's own.
 
 ### Late-Binding Replay
 

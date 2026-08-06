@@ -6,7 +6,7 @@
 
 <p align="center">
   <a href="https://github.com/Tom-Ryder/AgentRunKit/actions/workflows/ci.yml"><img src="https://github.com/Tom-Ryder/AgentRunKit/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
-  <img src="https://img.shields.io/badge/Swift-6.0-orange" alt="Swift 6.0">
+  <img src="https://img.shields.io/badge/Swift-6.1-orange" alt="Swift 6.1">
   <img src="https://img.shields.io/badge/Platforms-iOS%2018%20%7C%20macOS%2015-blue" alt="Platforms">
   <img src="https://img.shields.io/badge/On--Device-MLX%20%7C%20Foundation%20Models-8B5CF6" alt="On-Device MLX + Foundation Models">
   <img src="https://img.shields.io/badge/SPM-compatible-brightgreen" alt="SPM">
@@ -95,12 +95,12 @@ For on-device inference, additional targets are available:
 
 ---
 
-## Upgrading
+## Upgrading to 5.5
 
-Custom completion tools arrive with three deliberate changes for existing code:
+Custom completion tools ship in 5.5 with three deliberate changes for existing code:
 
 - `AgentCheckpointError` gained `completionToolMismatch(checkpointed:live:)`, thrown when a terminal checkpoint is resumed by an agent that completes through a different tool. A switch over `AgentCheckpointError` without a `default` must handle the new case.
-- `TestLLMClient` in `AgentRunKitTesting` gained a defaulted `completionToolName:` initializer parameter. Existing call sites compile unchanged; an API diff reports the previous constructor as removed.
+- `TestLLMClient` in `AgentRunKitTesting` gained a defaulted `completionToolName:` initializer parameter. Existing call sites compile unchanged.
 - A sub-agent's nested `.finished`, `.iterationCompleted`, and `.budgetUpdated` events no longer write to the parent `AgentStream`'s `tokenUsage`, `finishReason`, `history`, `content`, `iterationUsages`, `iterationsReplayed`, or `contextBudget`. A parent that emitted no content deltas previously displayed the last child's finish content and now displays its own. Nested events remain fully observable, and `toolCalls` still flattens them.
 
 ---

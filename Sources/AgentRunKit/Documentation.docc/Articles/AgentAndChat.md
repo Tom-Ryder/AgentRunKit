@@ -62,7 +62,7 @@ A factory that hides the provider choice keeps the refinement in its own type so
 typealias LLMClientFactory = @Sendable () throws -> any ToolCallSurfacingClient
 ```
 
-The completion tool joins the ordinary tools in one name space. Duplicate names, a collision between an ordinary tool and the completion tool, an empty name, and the reserved names `finish` and `prune_context` are all initializer precondition failures. Selecting a completion tool withdraws the synthetic `finish` definition entirely: the model sees your tools plus `prune_context` when enabled, and nothing else.
+The completion tool joins the ordinary tools in one namespace. Duplicate names, a collision between an ordinary tool and the completion tool, an empty name, and the reserved names `finish` and `prune_context` are all initializer precondition failures. Selecting a completion tool withdraws the synthetic `finish` definition entirely: the model sees your tools plus `prune_context` when enabled, and nothing else.
 
 ### Exclusivity
 
