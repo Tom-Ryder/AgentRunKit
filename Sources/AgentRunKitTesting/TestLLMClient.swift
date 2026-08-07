@@ -87,23 +87,24 @@ private extension TestLLMClient {
             return Response(toolCalls: [], content: finishContent)
         }
 
+        let turn = turnIndex(messages)
         let completionTool = completionToolDefinition(in: tools)
         let reservedFinishTool = tools.first(where: isReservedFinishTool)
         let selectableTools = tools.filter { !isReservedTool($0) && !isCompletionTool($0) && toolMatchesMode($0) }
 
         if hasToolResultsAfterLastUserMessage(messages) || selectableTools.isEmpty {
             if let completionTool {
-                return Response(toolCalls: [buildCompletionToolCall(completionTool)], content: "")
+                return Response(toolCalls: [buildCompletionToolCall(completionTool, turn: turn)], content: "")
             }
             if reservedFinishTool != nil {
-                return Response(toolCalls: buildFinishToolCalls(), content: "")
+                return Response(toolCalls: buildFinishToolCalls(turn: turn), content: "")
             }
             return Response(toolCalls: [], content: finishContent)
         }
 
         let toolCalls = selectableTools.enumerated().map { index, tool in
             ToolCall(
-                id: "test_call_\(index)",
+                id: "test_call_\(turn)_\(index)",
                 name: tool.name,
                 arguments: SchemaWalker.generateJSON(from: tool.parametersSchema, seed: seed &+ index)
             )
@@ -111,17 +112,24 @@ private extension TestLLMClient {
         return Response(toolCalls: toolCalls, content: "")
     }
 
-    func buildFinishToolCalls() -> [ToolCall] {
+    func buildFinishToolCalls(turn: Int) -> [ToolCall] {
         let arguments = encodeJSON(FinishArguments(content: finishContent, reason: nil))
-        return [ToolCall(id: "test_finish", name: reservedFinishToolDefinition.name, arguments: arguments)]
+        return [ToolCall(id: "test_finish_\(turn)", name: reservedFinishToolDefinition.name, arguments: arguments)]
     }
 
-    func buildCompletionToolCall(_ tool: ToolDefinition) -> ToolCall {
+    func buildCompletionToolCall(_ tool: ToolDefinition, turn: Int) -> ToolCall {
         ToolCall(
-            id: "test_completion",
+            id: "test_completion_\(turn)",
             name: tool.name,
             arguments: SchemaWalker.generateJSON(from: tool.parametersSchema, seed: seed)
         )
+    }
+
+    func turnIndex(_ messages: [ChatMessage]) -> Int {
+        messages.count {
+            if case .assistant = $0 { return true }
+            return false
+        }
     }
 
     func completionToolDefinition(in tools: [ToolDefinition]) -> ToolDefinition? {
@@ -146,17 +154,25 @@ private extension TestLLMClient {
     }
 
     func hasToolResultsAfterLastUserMessage(_ messages: [ChatMessage]) -> Bool {
-        guard let lastUserIndex = messages.lastIndex(where: {
-            if case .user = $0 { return true }
-            if case .userMultimodal = $0 { return true }
-            return false
+        // Budget advisories arrive as a user message directly after a tool result; a user message in that
+        // position is read as part of the prior turn rather than the start of a new one.
+        guard let lastUserIndex = messages.indices.last(where: { index in
+            isUserMessage(messages[index]) && (index == messages.startIndex || !isToolResult(messages[index - 1]))
         }) else {
             return false
         }
-        return messages[lastUserIndex...].contains {
-            if case .tool = $0 { return true }
-            return false
-        }
+        return messages[lastUserIndex...].contains(where: isToolResult)
+    }
+
+    func isUserMessage(_ message: ChatMessage) -> Bool {
+        if case .user = message { return true }
+        if case .userMultimodal = message { return true }
+        return false
+    }
+
+    func isToolResult(_ message: ChatMessage) -> Bool {
+        if case .tool = message { return true }
+        return false
     }
 
     func isReservedFinishTool(_ tool: ToolDefinition) -> Bool {

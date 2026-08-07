@@ -249,9 +249,9 @@ struct TestLLMClientTests {
         let messages: [ChatMessage] = [
             .user("Hi"),
             .assistant(AssistantMessage(content: "", toolCalls: [
-                ToolCall(id: "test_call_0", name: "echo", arguments: "{}"),
+                ToolCall(id: "test_call_0_0", name: "echo", arguments: "{}"),
             ])),
-            .tool(id: "test_call_0", name: "echo", content: "result"),
+            .tool(id: "test_call_0_0", name: "echo", content: "result"),
         ]
         let response = try await client.generate(
             messages: messages, tools: [reservedFinishToolDefinition], responseFormat: nil, requestContext: nil
@@ -266,9 +266,9 @@ struct TestLLMClientTests {
         let messages: [ChatMessage] = [
             .user("Hi"),
             .assistant(AssistantMessage(content: "", toolCalls: [
-                ToolCall(id: "test_call_0", name: "echo", arguments: "{}"),
+                ToolCall(id: "test_call_0_0", name: "echo", arguments: "{}"),
             ])),
-            .tool(id: "test_call_0", name: "echo", content: "result"),
+            .tool(id: "test_call_0_0", name: "echo", content: "result"),
         ]
         let response = try await client.generate(
             messages: messages, tools: [], responseFormat: nil, requestContext: nil
@@ -308,6 +308,7 @@ struct TestLLMClientTests {
                 ToolCall(id: "old_1", name: "search", arguments: "{}"),
             ])),
             .tool(id: "old_1", name: "search", content: "old result"),
+            .assistant(AssistantMessage(content: "First answer")),
             .userMultimodal([.text("New question with image"), .imageURL("https://example.com/img.png")]),
         ]
         let response = try await client.generate(
@@ -627,7 +628,7 @@ struct TestLLMClientTests {
             events.append(event)
         }
 
-        #expect(events.contains { $0.kind == .toolCallStarted(name: "finish", id: "test_call_0") })
+        #expect(events.contains { $0.kind == .toolCallStarted(name: "finish", id: "test_call_0_0") })
         let toolCompleted = events.first { event in
             if case let .toolCallCompleted(_, name, result) = event.kind {
                 return name == "finish" && result.content.contains("Finish:")
@@ -694,9 +695,9 @@ struct TestLLMClientCompletionToolTests {
         let messages: [ChatMessage] = [
             .user("Hi"),
             .assistant(AssistantMessage(content: "", toolCalls: [
-                ToolCall(id: "test_call_0", name: "echo", arguments: #"{"name":"test_0"}"#),
+                ToolCall(id: "test_call_0_0", name: "echo", arguments: #"{"name":"test_0"}"#),
             ])),
-            .tool(id: "test_call_0", name: "echo", content: echoResultContent),
+            .tool(id: "test_call_0_0", name: "echo", content: echoResultContent),
         ]
         let response = try await client.generate(
             messages: messages,
@@ -707,7 +708,7 @@ struct TestLLMClientCompletionToolTests {
 
         #expect(response.toolCalls.map(\.name) == ["finalize"])
         let call = try #require(response.toolCalls.first)
-        #expect(call.id == "test_completion")
+        #expect(call.id == "test_completion_1")
         let decoded = try JSONDecoder().decode(RoundTripParams.self, from: call.argumentsData)
         #expect(decoded.name == "test_0")
     }
@@ -728,9 +729,9 @@ struct TestLLMClientCompletionToolTests {
         let messages: [ChatMessage] = [
             .user("Hi"),
             .assistant(AssistantMessage(content: "", toolCalls: [
-                ToolCall(id: "test_completion", name: "finalize", arguments: #"{"name":"test_0"}"#),
+                ToolCall(id: "test_completion_0", name: "finalize", arguments: #"{"name":"test_0"}"#),
             ])),
-            .tool(id: "test_completion", name: "finalize", content: "Tool 'finalize' failed: not ready"),
+            .tool(id: "test_completion_0", name: "finalize", content: "Tool 'finalize' failed: not ready"),
         ]
         let response = try await client.generate(
             messages: messages,
@@ -764,6 +765,16 @@ struct TestLLMClientCompletionToolTests {
 
         #expect(response.toolCalls.isEmpty)
         #expect(response.content == "Summary")
+    }
+
+    @Test
+    func aToolCarryingRequestMissingTheCompletionDefinitionFailsFast() async {
+        await #expect(processExitsWith: .failure) {
+            let client = TestLLMClient(completionToolName: "finalize")
+            _ = try await client.generate(
+                messages: [.user("Hi")], tools: [echoDefinition], responseFormat: nil, requestContext: nil
+            )
+        }
     }
 
     @Test
@@ -808,7 +819,7 @@ struct TestLLMClientCompletionToolTests {
             events.append(event)
         }
 
-        #expect(events.contains { $0.kind == .toolCallStarted(name: "finalize", id: "test_completion") })
+        #expect(events.contains { $0.kind == .toolCallStarted(name: "finalize", id: "test_completion_1") })
         guard case let .finished(_, content, reason, history) = events.last?.kind else {
             Issue.record("Expected a finished event")
             return
@@ -835,6 +846,48 @@ struct TestLLMClientCompletionToolTests {
         #expect(result.iterations == 2)
         #expect(await invocations.value == 2)
         #expect(toolMessageContents(result.history).count == 2)
+    }
+
+    @Test
+    func everyCallInARunCarriesADistinctTurnScopedID() async throws {
+        let invocations = ToolInvocationCounter()
+        let echo = try makeEchoTool()
+        let finalize = try makeFinalizeTool { params, _ in
+            await invocations.increment()
+            guard await invocations.value > 1 else { throw CompletionToolTestError.draftNotReady }
+            return EchoResult(echoed: "Final: \(params.name)")
+        }
+        let client = TestLLMClient(completionToolName: "finalize")
+        let agent = Agent<EmptyContext>(client: client, tools: [echo], completionTool: finalize)
+
+        let result = try await agent.run(userMessage: "Hello", context: EmptyContext())
+
+        #expect(result.finishReason == .completed)
+        #expect(toolCallIDs(result.history) == ["test_call_0_0", "test_completion_1", "test_completion_2"])
+    }
+
+    @Test
+    func aBudgetAdvisoryDoesNotReopenTheToolCycle() async throws {
+        let echo = try makeEchoTool()
+        let finalize = try makeFinalizeTool { params, _ in EchoResult(echoed: "Final: \(params.name)") }
+        let client = TestLLMClient(
+            completionToolName: "finalize", contextWindowSize: 10, tokenUsage: TokenUsage(input: 6, output: 2)
+        )
+        let agent = Agent<EmptyContext>(
+            client: client, tools: [echo], completionTool: finalize,
+            configuration: AgentConfiguration(contextBudget: ContextBudgetConfig(softThreshold: 0.5))
+        )
+
+        let result = try await agent.run(userMessage: "Hello", context: EmptyContext())
+
+        #expect(result.history.contains { message in
+            guard case let .user(content) = message else { return false }
+            return content.contains("Context budget advisory")
+        })
+        #expect(try requireContent(result) == finalizeResultContent)
+        #expect(result.finishReason == .completed)
+        #expect(result.iterations == 2)
+        #expect(toolMessageContents(result.history) == [echoResultContent, finalizeResultContent])
     }
 }
 
@@ -895,6 +948,13 @@ private func makeFinalizeTool(
         description: "Return the final report. Call it alone once the work is done.",
         executor: executor
     )
+}
+
+private func toolCallIDs(_ history: [ChatMessage]) -> [String] {
+    history.flatMap { message -> [String] in
+        guard case let .assistant(assistant) = message else { return [] }
+        return assistant.toolCalls.map(\.id)
+    }
 }
 
 private struct RoundTripParams: Codable, SchemaProviding {
