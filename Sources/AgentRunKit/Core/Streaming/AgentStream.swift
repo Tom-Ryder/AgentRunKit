@@ -133,6 +133,7 @@ public final class AgentStream<C: ToolContext> {
         sendGeneration &+= 1
         let generation = sendGeneration
         let target = try await checkpointer.load(checkpointID)
+        guard generation == sendGeneration else { return }
         let resumedStream = try await agent.resume(
             target: target,
             checkpointer: SaveObservingCheckpointer(
@@ -336,7 +337,7 @@ extension AgentStream {
     }
 }
 
-struct SaveObservingCheckpointer<C: ToolContext>: AgentCheckpointer {
+private struct SaveObservingCheckpointer<C: ToolContext>: AgentCheckpointer {
     let inner: any AgentCheckpointer
     let stream: AgentStream<C>
     let generation: UInt64

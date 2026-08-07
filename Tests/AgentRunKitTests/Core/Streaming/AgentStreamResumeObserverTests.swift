@@ -570,7 +570,7 @@ struct AgentStreamCheckpointObservationTests {
             .finished(usage: TokenUsage(input: 1, output: 1)),
         ]
         let agent = Agent<EmptyContext>(
-            client: StreamingMockLLMClient(streamSequences: [freshFinish, freshFinish]), tools: []
+            client: StreamingMockLLMClient(streamSequences: [freshFinish]), tools: []
         )
         let stream = AgentStream(agent: agent, bufferCapacity: 64)
         let gate = GatedCheckpointer(gating: .load, loadResult: checkpoint)
@@ -592,6 +592,43 @@ struct AgentStreamCheckpointObservationTests {
         #expect(stream.sessionID != checkpointSession)
         #expect(stream.currentCheckpoint == nil)
         #expect(stream.iterationsReplayed == 0)
+    }
+
+    @MainActor @Test
+    func aSupersededResumeNeitherValidatesNorContinuesItsCheckpoint() async throws {
+        let checkpointID = CheckpointID()
+        let unresumable = AgentCheckpoint(
+            messages: [.user("Checkpointed"), .assistant(AssistantMessage(content: "earlier"))],
+            iteration: 1,
+            tokenUsage: TokenUsage(input: 42, output: 24),
+            sessionID: SessionID(), runID: RunID(), checkpointID: checkpointID,
+            mcpToolBindings: [MCPToolBinding(serverName: "alpha", toolName: "search")]
+        )
+        let client = CapturingStreamingMockLLMClient(streamSequences: [
+            [
+                .toolCallStart(index: 0, id: "call_finish", name: "finish", kind: .function),
+                .toolCallDelta(index: 0, arguments: #"{"content":"fresh"}"#),
+                .finished(usage: TokenUsage(input: 1, output: 1)),
+            ],
+        ])
+        let agent = Agent<EmptyContext>(client: client, tools: [])
+        let stream = AgentStream(agent: agent)
+        let gate = GatedCheckpointer(gating: .load, loadResult: unresumable)
+
+        let resumeTask = Task {
+            try await stream.resume(from: checkpointID, checkpointer: gate, context: EmptyContext())
+        }
+        await gate.awaitGateEntered()
+        stream.send("Fresh", context: EmptyContext())
+        await gate.release()
+        await #expect(throws: Never.self) { try await resumeTask.value }
+        await awaitStreamCompletion(stream)
+
+        let requests = await client.allCapturedMessages
+        #expect(requests == [[.user("Fresh")]])
+        #expect(stream.terminalContent == "fresh")
+        #expect(stream.currentCheckpoint == nil)
+        #expect(!stream.history.contains(.user("Checkpointed")))
     }
 }
 
