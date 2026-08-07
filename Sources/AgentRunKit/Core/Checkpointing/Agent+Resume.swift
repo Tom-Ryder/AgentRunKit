@@ -56,7 +56,7 @@ extension Agent {
         }
     }
 
-    func replayTerminalOutcome(
+    private func replayTerminalOutcome(
         _ outcome: AgentTerminalOutcome,
         target: AgentCheckpoint,
         eventFactory: StreamEventFactory

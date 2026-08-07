@@ -22,6 +22,20 @@ private let lookupBesideFinalizeDeltas: [StreamDelta] = [
     .finished(usage: nil),
 ]
 
+private let lookupDeltas: [StreamDelta] = [
+    .toolCallStart(index: 0, id: "call_lookup", name: "lookup", kind: .function),
+    .toolCallDelta(index: 0, arguments: #"{"query": "spec"}"#),
+    .finished(usage: nil),
+]
+
+private let pruneBesideFinalizeDeltas: [StreamDelta] = [
+    .toolCallStart(index: 0, id: "call_prune", name: "prune_context", kind: .function),
+    .toolCallDelta(index: 0, arguments: #"{"tool_call_ids":["call_lookup"]}"#),
+    .toolCallStart(index: 1, id: "call_finalize_1", name: "finalize", kind: .function),
+    .toolCallDelta(index: 1, arguments: #"{"summary": "early"}"#),
+    .finished(usage: nil),
+]
+
 private let hallucinatedFinishDeltas: [StreamDelta] = [
     .toolCallStart(index: 0, id: "call_finish", name: "finish", kind: .function),
     .toolCallDelta(index: 0, arguments: #"{"content": "done"}"#),
@@ -97,6 +111,14 @@ private func awaitStreamCompletion(_ stream: AgentStream<some ToolContext>) asyn
     }
 }
 
+private actor EventSnapshot {
+    private(set) var events: [StreamEvent] = []
+
+    func capture(_ events: [StreamEvent]) {
+        self.events = events
+    }
+}
+
 private actor FailingSaveCheckpointer: AgentCheckpointer {
     private(set) var saveCount = 0
 
@@ -149,8 +171,12 @@ struct CustomCompletionStreamTests {
 
     @Test
     func theTerminalCheckpointIsSavedBeforeTheCommittedFinish() async throws {
-        let gate = GatedCheckpointer(gating: .save)
         let session = SessionID()
+        let collector = StreamingEventCollector()
+        let eventsAtSave = EventSnapshot()
+        let gate = GatedCheckpointer(gating: .save, onGateEntered: {
+            await eventsAtSave.capture(collector.events)
+        })
         let finalize = try makeFinalizeTool { params, context in
             report(documentID: context.documentID, summary: params.summary)
         }
@@ -158,7 +184,6 @@ struct CustomCompletionStreamTests {
             streamSequences: [finalizeDeltas(summary: "all done", usage: TokenUsage(input: 12, output: 4))],
             completionTool: finalize
         )
-        let collector = StreamingEventCollector()
         let consumer = Task {
             for try await event in agent.stream(
                 userMessage: "Summarize", context: ReportContext(documentID: "doc-1"),
@@ -169,13 +194,10 @@ struct CustomCompletionStreamTests {
         }
 
         await gate.awaitGateEntered()
-        await awaitCollected(collector) { event in
-            if case let .toolCallCompleted(_, name, _) = event.kind { return name == "finalize" }
-            return false
-        }
-        #expect(await !collector.events.contains(where: isFinished))
         await gate.release()
         try await consumer.value
+
+        #expect(await !eventsAtSave.events.contains(where: isFinished))
 
         let expected = try encodedReport(documentID: "doc-1", summary: "all done")
         let events = await collector.events
@@ -192,6 +214,9 @@ struct CustomCompletionStreamTests {
         #expect(checkpoint.terminalOutcome == AgentTerminalOutcome(content: expected, toolName: "finalize"))
         #expect(checkpoint.messages == history)
         #expect(toolMessageContents(checkpoint.messages) == [expected])
+        #expect(checkpoint.iteration == 1)
+        #expect(checkpoint.tokenUsage == TokenUsage(input: 12, output: 4))
+        #expect(checkpoint.sessionID == session)
     }
 
     @Test
@@ -406,6 +431,49 @@ struct CustomCompletionStreamTests {
     }
 
     @Test
+    func pruneContextInsideAViolatingBatchIsNotExecuted() async throws {
+        let lookupInvocations = ToolInvocationCounter()
+        let lookup = try makeLookupTool { _, _ in
+            await lookupInvocations.increment()
+            return LookupOutput(matches: 7)
+        }
+        let finalize = try makeFinalizeTool { params, context in
+            report(documentID: context.documentID, summary: params.summary)
+        }
+        let agent = makeAgent(
+            streamSequences: [
+                lookupDeltas,
+                pruneBesideFinalizeDeltas,
+                finalizeDeltas(id: "call_finalize_2", summary: "all done"),
+            ],
+            tools: [lookup],
+            completionTool: finalize,
+            configuration: AgentConfiguration(
+                contextBudget: ContextBudgetConfig(enablePruneTool: true)
+            )
+        )
+
+        let events = try await collect(agent.stream(
+            userMessage: "Go", context: ReportContext(documentID: "doc-1")
+        ))
+
+        let pruneResult = try #require(completedToolResults(events, name: "prune_context").first)
+        #expect(pruneResult.isError)
+        #expect(await lookupInvocations.value == 1)
+
+        let expected = try encodedReport(documentID: "doc-1", summary: "all done")
+        guard case let .finished(_, content, reason, history) = events.last?.kind else {
+            Issue.record("Expected a committed finished event")
+            return
+        }
+        #expect(content == expected)
+        #expect(reason == .completed)
+        #expect(toolMessageContents(history) == [
+            #"{"matches":7}"#, pruneResult.content, pruneResult.content, expected,
+        ])
+    }
+
+    @Test
     func aLoneHallucinatedFinishCallBecomesUnknownToolFeedback() async throws {
         let finalize = try makeFinalizeTool { params, context in
             report(documentID: context.documentID, summary: params.summary)
@@ -466,6 +534,30 @@ struct CustomCompletionStreamTests {
 }
 
 struct CustomCompletionStreamBudgetTests {
+    @Test
+    func aCommittedCompletionOutranksAnExceededTokenBudget() async throws {
+        let finalize = try makeFinalizeTool { params, context in
+            report(documentID: context.documentID, summary: params.summary)
+        }
+        let agent = makeAgent(
+            streamSequences: [finalizeDeltas(summary: "all done", usage: TokenUsage(input: 100, output: 100))],
+            completionTool: finalize
+        )
+
+        let events = try await collect(agent.stream(
+            userMessage: "Summarize", context: ReportContext(documentID: "doc-1"), tokenBudget: 50
+        ))
+
+        let expected = try encodedReport(documentID: "doc-1", summary: "all done")
+        guard case let .finished(usage, content, reason, _) = events.last?.kind else {
+            Issue.record("Expected a committed finished event")
+            return
+        }
+        #expect(usage == TokenUsage(input: 100, output: 100))
+        #expect(content == expected)
+        #expect(reason == .completed)
+    }
+
     @Test
     func aCommittedCompletionAdvancesBudgetStateWithoutContinuationEffects() async throws {
         let backend = InMemoryCheckpointer()

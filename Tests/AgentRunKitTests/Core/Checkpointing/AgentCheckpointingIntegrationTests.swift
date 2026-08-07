@@ -105,29 +105,6 @@ struct AgentCheckpointingIntegrationTests {
     }
 
     @Test
-    func checkpointCarriesTheSuppliedTerminalOutcome() async throws {
-        let backend = InMemoryCheckpointer()
-        let session = SessionID()
-        let agent = Agent<EmptyContext>(client: StreamingMockLLMClient(), tools: [])
-        let outcome = AgentTerminalOutcome(content: #"{"summary":"shipped"}"#, toolName: "finalize")
-
-        let checkpointID = try await agent.checkpointIfConfigured(
-            iterationNumber: 2,
-            state: AgentLoopState(messages: [.user("Summarize")]),
-            totalUsage: TokenUsage(input: 9, output: 4),
-            iterationUsage: TokenUsage(input: 5, output: 2),
-            eventFactory: StreamEventFactory(sessionID: session, runID: RunID(), origin: .live),
-            checkpointer: backend,
-            terminalOutcome: outcome
-        )
-
-        let checkpoint = try await backend.load(#require(checkpointID))
-        #expect(checkpoint.terminalOutcome == outcome)
-        #expect(checkpoint.iteration == 2)
-        #expect(checkpoint.tokenUsage == TokenUsage(input: 9, output: 4))
-    }
-
-    @Test
     func streamSavesMCPToolBindingsAfterToolResults() async throws {
         let backend = InMemoryCheckpointer()
         let sessionID = SessionID()

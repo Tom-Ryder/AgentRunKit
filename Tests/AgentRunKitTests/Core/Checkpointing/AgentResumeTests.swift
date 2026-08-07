@@ -19,14 +19,6 @@ private struct EchoOutput: Codable {
     let echoed: String
 }
 
-private func makeEchoTool() throws -> Tool<EchoParams, EchoOutput, EmptyContext> {
-    try Tool<EchoParams, EchoOutput, EmptyContext>(
-        name: "echo",
-        description: "Echoes input",
-        executor: { params, _ in EchoOutput(echoed: params.message) }
-    )
-}
-
 private func collect(_ stream: AsyncThrowingStream<StreamEvent, Error>) async throws -> [StreamEvent] {
     var events: [StreamEvent] = []
     for try await event in stream {
@@ -45,7 +37,7 @@ private let terminalMessages: [ChatMessage] = [
         content: "",
         toolCalls: [ToolCall(id: "call_finalize", name: "finalize", arguments: "{}")]
     )),
-    .tool(id: "call_finalize", name: "finalize", content: #"{"summary":"shipped"}"#),
+    .tool(id: "call_finalize", name: "finalize", content: #"{"summary":"draft"}"#),
 ]
 
 private func makeTerminalCheckpoint(
@@ -71,6 +63,24 @@ private func makeTerminalCheckpoint(
         timestamp: Date(timeIntervalSince1970: 1_700_000_000),
         mcpToolBindings: mcpToolBindings,
         terminalOutcome: terminalOutcome
+    )
+}
+
+private func makeFinalizingAgent(
+    client: StreamingMockLLMClient,
+    invocations: ToolInvocationCounter = ToolInvocationCounter(),
+    configuration: AgentConfiguration = AgentConfiguration()
+) throws -> Agent<EmptyContext> {
+    let finalize = try Tool<EchoParams, EchoOutput, EmptyContext>(
+        name: "finalize",
+        description: "Return the final answer. Call it alone.",
+        executor: { params, _ in
+            await invocations.increment()
+            return EchoOutput(echoed: params.message)
+        }
+    )
+    return Agent<EmptyContext>(
+        client: client, tools: [], completionTool: finalize, configuration: configuration
     )
 }
 
@@ -440,6 +450,29 @@ struct AgentTerminalResumeTests {
     }
 
     @Test
+    func terminalCheckpointIsRefusedByAnAgentWithADifferentCompletionTool() async throws {
+        let backend = InMemoryCheckpointer()
+        let target = makeTerminalCheckpoint()
+        try await backend.save(target)
+        let publish = try Tool<EchoParams, EchoOutput, EmptyContext>(
+            name: "publish",
+            description: "Publish the final answer. Call it alone.",
+            executor: { params, _ in EchoOutput(echoed: params.message) }
+        )
+        let agent = Agent<EmptyContext>(
+            client: StreamingMockLLMClient(streamSequences: []), tools: [], completionTool: publish
+        )
+
+        await #expect(throws: AgentCheckpointError.completionToolMismatch(
+            checkpointed: "finalize", live: "publish"
+        )) {
+            _ = try await agent.resume(
+                from: target.checkpointID, checkpointer: backend, context: EmptyContext()
+            )
+        }
+    }
+
+    @Test
     func terminalIdentityIsCheckedBeforeMCPBindingValidation() async {
         await resumeExpectingCompletionToolMismatch(
             makeTerminalCheckpoint(
@@ -514,24 +547,15 @@ struct AgentTerminalResumeTests {
 
     @Test
     func terminalReplayCommitsTheSavedOutcomeWithoutLiveWork() async throws {
-        let toolInvocations = ToolInvocationCounter()
-        let echoTool = try Tool<EchoParams, EchoOutput, EmptyContext>(
-            name: "echo",
-            description: "Echo",
-            executor: { params, _ in
-                await toolInvocations.increment()
-                return EchoOutput(echoed: params.message)
-            }
-        )
-        let client = CapturingStreamingMockLLMClient(streamSequences: [secondFinishDeltas])
-        let agent = Agent<EmptyContext>(client: client, tools: [echoTool])
+        let backend = InMemoryCheckpointer()
         let target = makeTerminalCheckpoint()
+        try await backend.save(target)
+        let client = StreamingMockLLMClient(streamSequences: [secondFinishDeltas])
+        let invocations = ToolInvocationCounter()
+        let agent = try makeFinalizingAgent(client: client, invocations: invocations)
 
-        let events = try await collect(agent.replayTerminalOutcome(
-            terminalOutcome, target: target,
-            eventFactory: StreamEventFactory(
-                sessionID: target.sessionID, runID: RunID(), origin: .live
-            )
+        let events = try await collect(agent.resume(
+            from: target.checkpointID, checkpointer: backend, context: EmptyContext()
         ))
 
         #expect(events.count == 2)
@@ -554,22 +578,21 @@ struct AgentTerminalResumeTests {
         #expect(reason == .completed)
         #expect(history == terminalMessages)
 
-        let capturedMessages = await client.allCapturedMessages
-        let invocations = await toolInvocations.value
-        #expect(capturedMessages.isEmpty)
-        #expect(invocations == 0)
+        #expect(await client.allCapturedTools.isEmpty)
+        #expect(await invocations.value == 0)
     }
 
     @Test
     func terminalReplayFabricatesNoIterationEventWithoutSavedIterationUsage() async throws {
+        let backend = InMemoryCheckpointer()
         let target = makeTerminalCheckpoint(iterationUsage: nil)
-        let agent = Agent<EmptyContext>(client: StreamingMockLLMClient(streamSequences: []), tools: [])
+        try await backend.save(target)
+        let agent = try makeFinalizingAgent(
+            client: StreamingMockLLMClient(streamSequences: [secondFinishDeltas])
+        )
 
-        let events = try await collect(agent.replayTerminalOutcome(
-            terminalOutcome, target: target,
-            eventFactory: StreamEventFactory(
-                sessionID: target.sessionID, runID: RunID(), origin: .live
-            )
+        let events = try await collect(agent.resume(
+            from: target.checkpointID, checkpointer: backend, context: EmptyContext()
         ))
 
         #expect(events.count == 1)
@@ -582,16 +605,39 @@ struct AgentTerminalResumeTests {
     }
 
     @Test
+    func aMatchingAgentReplaysATerminalCheckpointWithoutPreflight() async throws {
+        let backend = InMemoryCheckpointer()
+        let target = makeTerminalCheckpoint(
+            iteration: 9,
+            mcpToolBindings: [MCPToolBinding(serverName: "alpha", toolName: "search")]
+        )
+        try await backend.save(target)
+        let client = StreamingMockLLMClient(streamSequences: [secondFinishDeltas])
+        let invocations = ToolInvocationCounter()
+        let agent = try makeFinalizingAgent(
+            client: client, invocations: invocations,
+            configuration: AgentConfiguration(maxIterations: 2, approvalPolicy: .allTools)
+        )
+
+        let events = try await collect(agent.resume(
+            from: target.checkpointID, checkpointer: backend,
+            context: EmptyContext(), tokenBudget: 1
+        ))
+
+        #expect(events.count == 2)
+        guard case let .finished(_, content, reason, _) = events.last?.kind else {
+            Issue.record("Expected a live .finished")
+            return
+        }
+        #expect(content == terminalOutcome.content)
+        #expect(reason == .completed)
+        #expect(await client.allCapturedTools.isEmpty)
+        #expect(await invocations.value == 0)
+    }
+
+    @Test
     func aCommittedStreamingCompletionReplaysThroughTheResumeAPI() async throws {
         let invocations = ToolInvocationCounter()
-        let finalize = try Tool<EchoParams, EchoOutput, EmptyContext>(
-            name: "finalize",
-            description: "Return the final answer. Call it alone.",
-            executor: { params, _ in
-                await invocations.increment()
-                return EchoOutput(echoed: params.message)
-            }
-        )
         let client = StreamingMockLLMClient(streamSequences: [[
             .toolCallStart(index: 0, id: "call_finalize", name: "finalize", kind: .function),
             .toolCallDelta(index: 0, arguments: #"{"message":"shipped"}"#),
@@ -599,7 +645,7 @@ struct AgentTerminalResumeTests {
         ]])
         let backend = InMemoryCheckpointer()
         let session = SessionID()
-        let agent = Agent<EmptyContext>(client: client, tools: [], completionTool: finalize)
+        let agent = try makeFinalizingAgent(client: client, invocations: invocations)
 
         let liveEvents = try await collect(agent.stream(
             userMessage: "Summarize", context: EmptyContext(),
