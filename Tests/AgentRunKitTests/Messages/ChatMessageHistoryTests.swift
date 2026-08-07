@@ -93,7 +93,7 @@ struct AgentMessageHistoryValidationTests {
     }
 
     @Test
-    func aResolvedBatchMixingACustomCompletionToolWithOtherCallsStaysValid() throws {
+    func agentHistoryAcceptsAResolvedMultiCallBatch() throws {
         let messages: [ChatMessage] = [
             .assistant(AssistantMessage(content: "", toolCalls: [
                 ToolCall(id: "call_1", name: "lookup", arguments: "{}"),

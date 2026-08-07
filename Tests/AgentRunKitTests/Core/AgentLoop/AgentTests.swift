@@ -497,6 +497,52 @@ struct AgentTokenBudgetTests {
     }
 }
 
+struct AgentInitializerPreconditionTests {
+    @Test
+    func duplicateToolNamesTrap() async {
+        await #expect(processExitsWith: .failure) {
+            let noop = try Tool<NoopParams, NoopOutput, EmptyContext>(
+                name: "noop", description: "No-op", executor: { _, _ in NoopOutput() }
+            )
+            _ = Agent<EmptyContext>(client: MockLLMClient(responses: []), tools: [noop, noop])
+        }
+    }
+
+    @Test
+    func aCompletionToolNamedLikeAnOrdinaryToolTraps() async {
+        await #expect(processExitsWith: .failure) {
+            let noop = try Tool<NoopParams, NoopOutput, EmptyContext>(
+                name: "noop", description: "No-op", executor: { _, _ in NoopOutput() }
+            )
+            _ = Agent<EmptyContext>(
+                client: MockLLMClient(responses: []), tools: [noop], completionTool: noop
+            )
+        }
+    }
+
+    @Test
+    func aCompletionToolClaimingTheReservedFinishNameTraps() async {
+        await #expect(processExitsWith: .failure) {
+            let finish = try Tool<NoopParams, NoopOutput, EmptyContext>(
+                name: "finish", description: "Finishes the run", executor: { _, _ in NoopOutput() }
+            )
+            _ = Agent<EmptyContext>(
+                client: MockLLMClient(responses: []), tools: [], completionTool: finish
+            )
+        }
+    }
+
+    @Test
+    func anEmptyToolNameTraps() async {
+        await #expect(processExitsWith: .failure) {
+            let unnamed = try Tool<NoopParams, NoopOutput, EmptyContext>(
+                name: "", description: "No-op", executor: { _, _ in NoopOutput() }
+            )
+            _ = Agent<EmptyContext>(client: MockLLMClient(responses: []), tools: [unnamed])
+        }
+    }
+}
+
 private struct EchoParams: Codable, SchemaProviding {
     let message: String
     static var jsonSchema: JSONSchema {

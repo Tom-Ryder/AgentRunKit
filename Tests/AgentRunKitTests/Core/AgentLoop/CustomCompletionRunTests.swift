@@ -28,6 +28,11 @@ private let reservedFinishCall = ToolCall(
     id: "call_finish", name: "finish", arguments: #"{"content": "done"}"#
 )
 
+private let finalizeExclusivityFeedback = """
+finalize must be the only tool call in its message, so nothing in this message was executed. \
+Call the other tools on their own, then call finalize alone once you are ready to finish.
+"""
+
 struct CustomCompletionRunTests {
     @Test
     func theCompletionResultIsTheExactRunResult() async throws {
@@ -116,6 +121,57 @@ struct CustomCompletionRunTests {
         #expect(requests.count == 1)
         #expect(requests.first?.toolName == "finalize")
         #expect(requests.first?.arguments == #"{"summary": "ready"}"#)
+    }
+
+    @Test
+    func theCompletionToolExecutesTheApproversModifiedArguments() async throws {
+        let finalize = try makeFinalizeTool { params, context in
+            report(documentID: context.documentID, summary: params.summary)
+        }
+        let client = MockLLMClient(responses: [
+            AssistantMessage(content: "", toolCalls: [finalizeCall(summary: "draft")])
+        ])
+        let agent = Agent<ReportContext>(
+            client: client, tools: [], completionTool: finalize,
+            configuration: AgentConfiguration(approvalPolicy: .allTools)
+        )
+        let approvals = CountingApprovalHandler(
+            decisions: ["finalize": .approveWithModifiedArguments(#"{"summary": "reviewed"}"#)]
+        )
+
+        let result = try await agent.run(
+            userMessage: "Summarize", context: ReportContext(documentID: "doc-1"),
+            approvalHandler: approvals.handler
+        )
+
+        #expect(try requireContent(result) == encodedReport(documentID: "doc-1", summary: "reviewed"))
+        #expect(await approvals.requests.first?.arguments == #"{"summary": "draft"}"#)
+    }
+
+    @Test
+    func approveAlwaysAllowlistsTheCompletionToolAcrossItsRetry() async throws {
+        let finalize = try makeFinalizeTool { params, context in
+            guard params.summary != "draft" else { throw CustomCompletionTestError.draftRejected }
+            return report(documentID: context.documentID, summary: params.summary)
+        }
+        let client = MockLLMClient(responses: [
+            AssistantMessage(content: "", toolCalls: [finalizeCall(id: "call_finalize_1", summary: "draft")]),
+            AssistantMessage(content: "", toolCalls: [finalizeCall(id: "call_finalize_2", summary: "final")])
+        ])
+        let agent = Agent<ReportContext>(
+            client: client, tools: [], completionTool: finalize,
+            configuration: AgentConfiguration(approvalPolicy: .allTools)
+        )
+        let approvals = CountingApprovalHandler(defaultDecision: .approveAlways)
+
+        let result = try await agent.run(
+            userMessage: "Summarize", context: ReportContext(documentID: "doc-1"),
+            approvalHandler: approvals.handler
+        )
+
+        #expect(try requireContent(result) == encodedReport(documentID: "doc-1", summary: "final"))
+        #expect(result.iterations == 2)
+        #expect(await approvals.requestCount == 1)
     }
 
     @Test
@@ -241,7 +297,7 @@ struct CustomCompletionRunTests {
     }
 
     @Test
-    func aSuccessfulCompletionAdvancesBudgetStateWithoutMutatingItsExactResult() async throws {
+    func aCommittedCompletionPreservesItsExactResultUnderAContextBudget() async throws {
         let lookup = try makeLookupTool { _, _ in LookupOutput(matches: 3) }
         let finalize = try makeFinalizeTool { params, context in
             report(documentID: context.documentID, summary: params.summary)
@@ -285,6 +341,68 @@ struct CustomCompletionRunTests {
             return
         }
         #expect(terminal == expected)
+    }
+
+    @Test
+    func aCommittedCompletionOutranksAnExceededTokenBudget() async throws {
+        let finalize = try makeFinalizeTool { params, context in
+            report(documentID: context.documentID, summary: params.summary)
+        }
+        let client = MockLLMClient(responses: [
+            AssistantMessage(
+                content: "",
+                toolCalls: [finalizeCall(summary: "all done")],
+                tokenUsage: TokenUsage(input: 100, output: 100)
+            )
+        ])
+        let agent = Agent<ReportContext>(client: client, tools: [], completionTool: finalize)
+
+        let result = try await agent.run(
+            userMessage: "Summarize", context: ReportContext(documentID: "doc-1"), tokenBudget: 50
+        )
+
+        #expect(result.finishReason == .completed)
+        #expect(try requireContent(result) == encodedReport(documentID: "doc-1", summary: "all done"))
+    }
+
+    @Test
+    func aSubAgentCompletionToolCommitsItsChildResultVerbatim() async throws {
+        let childAgent = Agent<SubAgentContext<EmptyContext>>(
+            client: MockLLMClient(responses: [
+                AssistantMessage(content: "", toolCalls: [
+                    ToolCall(id: "child_finish", name: "finish", arguments: #"{"content":"child result"}"#)
+                ])
+            ]),
+            tools: []
+        )
+        let delegate = try SubAgentTool<LookupParams, EmptyContext>(
+            name: "delegate",
+            description: "Delegates the final answer. Call it alone.",
+            agent: childAgent,
+            messageBuilder: { $0.query }
+        )
+        let agent = Agent<SubAgentContext<EmptyContext>>(
+            client: MockLLMClient(responses: [
+                AssistantMessage(content: "", toolCalls: [
+                    ToolCall(id: "delegate_call", name: "delegate", arguments: #"{"query": "wrap up"}"#)
+                ])
+            ]),
+            tools: [], completionTool: delegate
+        )
+
+        let result = try await agent.run(
+            userMessage: "Go", context: SubAgentContext(inner: EmptyContext(), maxDepth: 3)
+        )
+
+        #expect(result.finishReason == .completed)
+        #expect(try requireContent(result) == "child result")
+        guard case let .tool(id, name, content) = result.history.last else {
+            Issue.record("Expected the delegated result as the final history entry")
+            return
+        }
+        #expect(id == "delegate_call")
+        #expect(name == "delegate")
+        #expect(content == "child result")
     }
 }
 
@@ -344,21 +462,11 @@ struct CustomCompletionRequestBoundaryTests {
 }
 
 struct CustomCompletionExclusivityTests {
-    @Test
-    func synthesizedExclusivityFeedbackMarksEveryCallAsAnError() {
-        let calls = [
-            ToolCall(id: "call_lookup", name: "lookup", arguments: "{}"),
-            ToolCall(id: "call_finalize_1", name: "finalize", arguments: "{}")
-        ]
-        let results = exclusivityFeedbackResults(for: calls, toolName: "finalize")
-        #expect(results.count == 2)
-        for entry in results {
-            #expect(entry.result.isError)
-        }
-    }
-
-    @Test
-    func aCompletionCallBesideAnotherToolExecutesNothingAndRecoversOnTheNextTurn() async throws {
+    @Test(arguments: [
+        [lookupCall, finalizeCall(id: "call_finalize_1", summary: "early")],
+        [finalizeCall(id: "call_finalize_1", summary: "early"), lookupCall]
+    ])
+    func aCompletionCallBesideAnotherToolExecutesNothingAndRecovers(batch: [ToolCall]) async throws {
         let lookupInvocations = ToolInvocationCounter()
         let completionInvocations = ToolInvocationCounter()
         let lookup = try makeLookupTool { _, _ in
@@ -370,9 +478,7 @@ struct CustomCompletionExclusivityTests {
             return report(documentID: context.documentID, summary: params.summary)
         }
         let client = MockLLMClient(responses: [
-            AssistantMessage(content: "", toolCalls: [
-                lookupCall, finalizeCall(id: "call_finalize_1", summary: "early")
-            ]),
+            AssistantMessage(content: "", toolCalls: batch),
             AssistantMessage(content: "", toolCalls: [finalizeCall(id: "call_finalize_2", summary: "all done")])
         ])
         let agent = Agent<ReportContext>(client: client, tools: [lookup], completionTool: finalize)
@@ -386,15 +492,16 @@ struct CustomCompletionExclusivityTests {
         #expect(await completionInvocations.value == 1)
 
         #expect(result.history.count == 6)
-        guard case let .tool(lookupID, lookupName, lookupFeedback) = result.history[2],
-              case let .tool(completionID, completionName, completionFeedback) = result.history[3]
+        guard case let .tool(firstID, firstName, firstFeedback) = result.history[2],
+              case let .tool(secondID, secondName, secondFeedback) = result.history[3]
         else {
             Issue.record("Expected one synthesized result per call in the violating batch")
             return
         }
-        #expect([lookupID, completionID] == ["call_lookup", "call_finalize_1"])
-        #expect([lookupName, completionName] == ["lookup", "finalize"])
-        #expect(lookupFeedback == completionFeedback)
+        #expect([firstID, secondID] == batch.map(\.id))
+        #expect([firstName, secondName] == batch.map(\.name))
+        #expect(firstFeedback == finalizeExclusivityFeedback)
+        #expect(secondFeedback == finalizeExclusivityFeedback)
     }
 
     @Test
@@ -419,6 +526,70 @@ struct CustomCompletionExclusivityTests {
         #expect(try requireContent(result) == expected)
         #expect(await invocations.value == 1)
         #expect(toolMessageContents(result.history).count == 3)
+    }
+
+    @Test
+    func aViolatingBatchIsNeverSentForApproval() async throws {
+        let lookupInvocations = ToolInvocationCounter()
+        let lookup = try makeLookupTool { _, _ in
+            await lookupInvocations.increment()
+            return LookupOutput(matches: 1)
+        }
+        let finalize = try makeFinalizeTool { params, context in
+            report(documentID: context.documentID, summary: params.summary)
+        }
+        let client = MockLLMClient(responses: [
+            AssistantMessage(content: "", toolCalls: [
+                lookupCall, finalizeCall(id: "call_finalize_1", summary: "early")
+            ]),
+            AssistantMessage(content: "", toolCalls: [finalizeCall(id: "call_finalize_2", summary: "all done")])
+        ])
+        let agent = Agent<ReportContext>(
+            client: client, tools: [lookup], completionTool: finalize,
+            configuration: AgentConfiguration(approvalPolicy: .allTools)
+        )
+        let approvals = CountingApprovalHandler()
+
+        let result = try await agent.run(
+            userMessage: "Go", context: ReportContext(documentID: "doc-1"),
+            approvalHandler: approvals.handler
+        )
+
+        #expect(try requireContent(result) == encodedReport(documentID: "doc-1", summary: "all done"))
+        #expect(await lookupInvocations.value == 0)
+        #expect(await approvals.requests.map(\.toolCallId) == ["call_finalize_2"])
+    }
+
+    @Test
+    func aViolatingBatchStillAdvancesTheContextBudget() async throws {
+        let lookup = try makeLookupTool { _, _ in LookupOutput(matches: 1) }
+        let finalize = try makeFinalizeTool { params, context in
+            report(documentID: context.documentID, summary: params.summary)
+        }
+        let client = StreamingMockLLMClient(
+            generateResponses: [
+                AssistantMessage(
+                    content: "",
+                    toolCalls: [lookupCall, finalizeCall(id: "call_finalize_1", summary: "early")],
+                    tokenUsage: TokenUsage(input: 80, output: 10)
+                ),
+                AssistantMessage(content: "", toolCalls: [finalizeCall(id: "call_finalize_2", summary: "all done")])
+            ],
+            contextWindowSize: 100
+        )
+        let agent = Agent<ReportContext>(
+            client: client, tools: [lookup], completionTool: finalize,
+            configuration: AgentConfiguration(contextBudget: ContextBudgetConfig(softThreshold: 0.1))
+        )
+
+        let result = try await agent.run(userMessage: "Go", context: ReportContext(documentID: "doc-1"))
+
+        #expect(try requireContent(result) == encodedReport(documentID: "doc-1", summary: "all done"))
+        #expect(result.history.count == 7)
+        guard case .user = result.history[4] else {
+            Issue.record("Expected the violating turn's usage to deliver a budget advisory")
+            return
+        }
     }
 
     @Test

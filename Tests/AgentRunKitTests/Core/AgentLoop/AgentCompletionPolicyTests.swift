@@ -28,6 +28,13 @@ struct BuiltInFinishClassificationTests {
     }
 
     @Test
+    func finishLeadingTheBatchAlsoThrows() {
+        #expect(throws: AgentError.malformedHistory(.finishMustBeExclusive)) {
+            try policy.classify([finishCall, searchCall])
+        }
+    }
+
+    @Test
     func repeatedFinishThrows() {
         #expect(throws: AgentError.malformedHistory(.finishMustBeExclusive)) {
             try policy.classify([finishCall, finishCall])
@@ -65,6 +72,18 @@ struct ExecutableCompletionClassificationTests {
     }
 
     @Test
+    func aCompletionCallLeadingTheBatchIsAlsoAViolation() throws {
+        #expect(
+            try policy.classify([finalizeCall, searchCall])
+                == .exclusivityViolation(toolName: "finalize", calls: [finalizeCall, searchCall])
+        )
+        #expect(
+            try policy.classify([finalizeCall, pruneCall])
+                == .exclusivityViolation(toolName: "finalize", calls: [finalizeCall, pruneCall])
+        )
+    }
+
+    @Test
     func repeatedCompletionIsAViolation() throws {
         #expect(
             try policy.classify([finalizeCall, finalizeCall])
@@ -81,6 +100,9 @@ struct ExecutableCompletionClassificationTests {
     func hallucinatedFinishBesideAnotherCallStillThrows() {
         #expect(throws: AgentError.malformedHistory(.finishMustBeExclusive)) {
             try policy.classify([finalizeCall, finishCall])
+        }
+        #expect(throws: AgentError.malformedHistory(.finishMustBeExclusive)) {
+            try policy.classify([finishCall, finalizeCall])
         }
     }
 
