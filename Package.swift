@@ -15,7 +15,7 @@ let package = Package(
         .library(name: "AgentRunKitFoundationModels", targets: ["AgentRunKitFoundationModels"])
     ],
     dependencies: [
-        .package(url: "https://github.com/ml-explore/mlx-swift-lm", .upToNextMinor(from: "2.30.0")),
+        .package(url: "https://github.com/ml-explore/mlx-swift-lm", .upToNextMinor(from: "3.31.3")),
         .package(url: "https://github.com/apple/swift-docc-plugin", from: "1.4.3"),
     ],
     targets: [
