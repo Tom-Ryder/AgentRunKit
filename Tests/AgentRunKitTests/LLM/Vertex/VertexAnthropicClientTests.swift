@@ -36,6 +36,26 @@ struct VertexAnthropicURLTests {
         #expect(url.host == "us-east5-aiplatform.googleapis.com")
     }
 
+    @Test(arguments: [false, true])
+    func nestedSchemaBodyHasDeterministicObjectOrder(stream: Bool) throws {
+        let client = try makeClient()
+        let tool = ToolDefinition(
+            name: "inspect", description: "Inspect", parametersSchema: HTTPJSONTestParameters.jsonSchema
+        )
+        let request = try client.anthropic.buildRequest(
+            messages: [.user("z"), .user("a")], tools: [tool], stream: stream, transport: .vertex
+        )
+        let wrapped = VertexAnthropicRequest(inner: request)
+        let urlRequest = try client.buildVertexURLRequest(wrapped, stream: stream, token: "tok")
+        let streamJSON = stream ? #""stream":true,"# : ""
+        let expected = #"{"anthropic_version":"vertex-2023-10-16","max_tokens":8192,"messages":["#
+            + #"{"content":"z","role":"user"},{"content":"a","role":"user"}],"# + streamJSON
+            + #""tools":[{"description":"Inspect","input_schema":"#
+            + HTTPJSONTestParameters.schemaJSON + #","name":"inspect"}]}"#
+
+        #expect(urlRequest.httpBody == Data(expected.utf8))
+    }
+
     @Test
     func vertexStreamURLUsesStreamRawPredict() throws {
         let client = try makeClient()

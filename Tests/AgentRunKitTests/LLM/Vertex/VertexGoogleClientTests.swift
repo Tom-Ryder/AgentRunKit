@@ -86,6 +86,22 @@ struct VertexGoogleURLTests {
         #expect(parts?[0]["text"] as? String == "Hello")
     }
 
+    @Test(arguments: [false, true])
+    func nestedSchemaBodyHasDeterministicObjectOrder(stream: Bool) throws {
+        let client = makeClient()
+        let tool = ToolDefinition(
+            name: "inspect", description: "Inspect", parametersSchema: HTTPJSONTestParameters.jsonSchema
+        )
+        let request = try client.gemini.buildRequest(messages: [.user("z"), .user("a")], tools: [tool])
+        let urlRequest = try client.buildVertexURLRequest(request, stream: stream, token: "tok")
+        let expected = #"{"contents":[{"parts":[{"text":"z"}],"role":"user"},{"parts":[{"text":"a"}],"role":"user"}],"#
+            + #""generationConfig":{"maxOutputTokens":8192},"toolConfig":{"functionCallingConfig":{"mode":"AUTO"}},"#
+            + #""tools":[{"functionDeclarations":[{"description":"Inspect","name":"inspect","parameters":"#
+            + HTTPJSONTestParameters.geminiSchemaJSON + #"}]}]}"#
+
+        #expect(urlRequest.httpBody == Data(expected.utf8))
+    }
+
     @Test
     func differentLocationsChangeHost() throws {
         let client = makeClient(location: "europe-west1")

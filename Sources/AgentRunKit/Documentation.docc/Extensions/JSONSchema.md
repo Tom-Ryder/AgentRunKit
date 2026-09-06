@@ -1,5 +1,7 @@
 # ``AgentRunKit/JSONSchema``
 
+See <doc:LLMProviders#Request-Serialization> for object ordering in HTTP requests and the boundary with caller-owned encoders.
+
 ## Topics
 
 ### Schema Types

@@ -260,6 +260,14 @@ let client = OpenAIClient(
 )
 ```
 
+## Request Serialization
+
+All six HTTP clients sort JSON object members when encoding request bodies, including nested tool schemas. A stable encoded structure has a deterministic object-member order on the supported Foundation runtime. Tool lists, messages, schema `required` and `enum` arrays, alternatives, and content blocks retain their supplied order.
+
+HTTP serialization preserves string values, including JSON-looking tool arguments and opaque reasoning or signatures. It does not parse and rewrite authored strings. Schema properties remain unordered dictionaries; encoding a ``JSONSchema`` with your own `JSONEncoder` uses that encoder's settings.
+
+This guarantee concerns HTTP request serialization, not universal JSON canonicalization or a downstream model's prompt renderer. Custom `Encodable` implementations must still produce stable values and ordered arrays, and Foundation's object-ordering behavior can differ across runtimes. Provider cache reuse remains dependent on the endpoint's caching and routing behavior.
+
 ## RequestContext
 
 ``RequestContext`` carries per-request metadata through the ``LLMClient`` call.

@@ -331,6 +331,23 @@ struct AnthropicAgentBehaviorTests {
 }
 
 struct AnthropicURLRequestTests {
+    @Test(arguments: [false, true])
+    func nestedSchemaBodyHasDeterministicObjectOrder(stream: Bool) throws {
+        let client = try AnthropicClient(apiKey: "test-key", model: "test", maxTokens: 16)
+        let tool = ToolDefinition(
+            name: "inspect", description: "Inspect", parametersSchema: HTTPJSONTestParameters.jsonSchema
+        )
+        let request = try client.buildRequest(messages: [.user("z"), .user("a")], tools: [tool], stream: stream)
+        let urlRequest = try client.buildURLRequest(request)
+        let streamJSON = stream ? #""stream":true,"# : ""
+        let expected = #"{"max_tokens":16,"messages":[{"content":"z","role":"user"},{"content":"a","role":"user"}],"#
+            + #""model":"test","# + streamJSON
+            + #""tools":[{"description":"Inspect","input_schema":"#
+            + HTTPJSONTestParameters.schemaJSON + #","name":"inspect"}]}"#
+
+        #expect(urlRequest.httpBody == Data(expected.utf8))
+    }
+
     @Test
     func setsCorrectHeaders() throws {
         let client = try AnthropicClient(

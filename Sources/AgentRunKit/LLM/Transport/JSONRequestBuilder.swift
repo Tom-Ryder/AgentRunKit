@@ -20,7 +20,7 @@ func buildJSONPostRequest(
         request.setValue(value, forHTTPHeaderField: field)
     }
     do {
-        request.httpBody = try JSONEncoder().encode(body)
+        request.httpBody = try encodeDeterministicJSON(body)
     } catch {
         throw AgentError.llmError(.encodingFailed(error))
     }

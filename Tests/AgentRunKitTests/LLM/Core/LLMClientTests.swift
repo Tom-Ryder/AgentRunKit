@@ -464,6 +464,23 @@ struct OpenAIClientInitTests {
 }
 
 struct OpenAIClientURLRequestTests {
+    @Test(arguments: [false, true])
+    func nestedSchemaBodyHasDeterministicObjectOrder(stream: Bool) throws {
+        let client = OpenAIClient(model: "test", maxTokens: 16, baseURL: OpenAIClient.openAIBaseURL)
+        let tool = ToolDefinition(
+            name: "inspect", description: "Inspect", parametersSchema: HTTPJSONTestParameters.jsonSchema
+        )
+        let request = try client.buildRequest(messages: [.user("z"), .user("a")], tools: [tool], stream: stream)
+        let urlRequest = try client.buildURLRequest(request)
+        let streamJSON = stream ? #""stream":true,"stream_options":{"include_usage":true},"# : ""
+        let expected = #"{"max_tokens":16,"messages":[{"content":"z","role":"user"},{"content":"a","role":"user"}],"#
+            + #""model":"test","# + streamJSON
+            + #""tool_choice":"auto","tools":[{"function":{"description":"Inspect","name":"inspect","parameters":"#
+            + HTTPJSONTestParameters.schemaJSON + #"},"type":"function"}]}"#
+
+        #expect(urlRequest.httpBody == Data(expected.utf8))
+    }
+
     @Test
     func buildURLRequestSetsCorrectProperties() throws {
         let client = OpenAIClient(

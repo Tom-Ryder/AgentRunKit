@@ -317,6 +317,22 @@ struct GeminiRequestSerializationTests {
 // MARK: - URL Request Tests
 
 struct GeminiURLRequestTests {
+    @Test(arguments: [false, true])
+    func nestedSchemaBodyHasDeterministicObjectOrder(stream: Bool) throws {
+        let client = GeminiClient(apiKey: "test-key", model: "gemini-2.5-pro", maxOutputTokens: 16)
+        let tool = ToolDefinition(
+            name: "inspect", description: "Inspect", parametersSchema: HTTPJSONTestParameters.jsonSchema
+        )
+        let request = try client.buildRequest(messages: [.user("z"), .user("a")], tools: [tool])
+        let urlRequest = try client.buildURLRequest(request, stream: stream)
+        let expected = #"{"contents":[{"parts":[{"text":"z"}],"role":"user"},{"parts":[{"text":"a"}],"role":"user"}],"#
+            + #""generationConfig":{"maxOutputTokens":16},"toolConfig":{"functionCallingConfig":{"mode":"AUTO"}},"#
+            + #""tools":[{"functionDeclarations":[{"description":"Inspect","name":"inspect","parameters":"#
+            + HTTPJSONTestParameters.geminiSchemaJSON + #"}]}]}"#
+
+        #expect(urlRequest.httpBody == Data(expected.utf8))
+    }
+
     @Test
     func setsCorrectURL() throws {
         let client = GeminiClient(
