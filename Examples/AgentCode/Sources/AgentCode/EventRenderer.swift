@@ -129,9 +129,10 @@ final class EventRenderer {
         Terminal.writeLine("\(Terminal.pill("finished", style: .green)) \(status) · \(usage.total) tokens")
     }
 
-    private func renderIteration(usage: TokenUsage, iteration: Int) {
+    private func renderIteration(usage: TokenUsage?, iteration: Int) {
         if !Terminal.isInteractiveOutput() {
-            Terminal.writeLine(Terminal.style("round \(iteration) · \(usage.total) tokens", .dim))
+            let measurement = usage.map { "\($0.total) tokens" } ?? "usage unavailable"
+            Terminal.writeLine(Terminal.style("round \(iteration) · \(measurement)", .dim))
         }
     }
 

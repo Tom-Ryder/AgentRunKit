@@ -29,7 +29,7 @@ public final class AgentStream<C: ToolContext> {
     public private(set) var terminalContent: String?
     public private(set) var history: [ChatMessage] = []
     public private(set) var toolCalls: [ToolCallInfo] = []
-    public private(set) var iterationUsages: [TokenUsage] = []
+    public private(set) var iterationUsages: [TokenUsage?] = []
     public private(set) var contextBudget: ContextBudget?
     public private(set) var sessionID: SessionID?
     public private(set) var iterationsReplayed: Int = 0
@@ -269,7 +269,7 @@ extension AgentStream {
     }
 
     private func handleIterationCompleted(
-        usage: TokenUsage, messages: [ChatMessage], origin: EventOrigin, toolCallIdPath: [String]
+        usage: TokenUsage?, messages: [ChatMessage], origin: EventOrigin, toolCallIdPath: [String]
     ) {
         guard toolCallIdPath.isEmpty else { return }
         iterationUsages.append(usage)

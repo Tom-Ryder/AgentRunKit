@@ -181,6 +181,48 @@ struct StreamEventWireFormatTests {
         #expect(history.isEmpty)
     }
 
+    @Test func iterationCompletedWithoutUsageFixtureIsStable() throws {
+        let event = try StreamEvent(
+            id: EventID(rawValue: uuid("00000000-0000-0000-0000-000000000402")),
+            timestamp: fixedDate(millisecondsSince1970: 1_774_880_527_123),
+            kind: .iterationCompleted(usage: nil, iteration: 2, history: [.user("Hi")])
+        )
+        let expected = [
+            #"{"id":"00000000-0000-0000-0000-000000000402","#,
+            #""kind":{"history":[{"content":"Hi","role":"user"}],"#,
+            #""iteration":2,"type":"iterationCompleted"},"#,
+            #""timestamp":"2026-03-30T14:22:07.123Z"}"#,
+        ].joined()
+
+        #expect(try StreamEventJSONCodec.encode(event) == Data(expected.utf8))
+        let decoded = try StreamEventJSONCodec.decode(Data(expected.utf8))
+        #expect(decoded.kind == event.kind)
+        #expect(decoded.id == event.id)
+        #expect(decoded.timestamp == event.timestamp)
+    }
+
+    @Test(arguments: [
+        #"{"iteration":2,"type":"iterationCompleted"}"#,
+        #"{"iteration":2,"type":"iterationCompleted","usage":null}"#,
+    ])
+    func iterationCompletedDecodesUnavailableUsage(archive: String) throws {
+        let decoded = try StreamEventJSONCodec.makeDecoder().decode(StreamEvent.Kind.self, from: Data(archive.utf8))
+        #expect(decoded == .iterationCompleted(usage: nil, iteration: 2, history: []))
+        #expect(decoded != .iterationCompleted(usage: TokenUsage(), iteration: 2, history: []))
+    }
+
+    @Test(arguments: [
+        #"{"iteration":2,"type":"iterationCompleted","history":null}"#,
+        #"{"iteration":2,"type":"iterationCompleted","history":{}}"#,
+        #"{"iteration":2,"type":"iterationCompleted","usage":"unavailable"}"#,
+        #"{"iteration":2,"type":"iterationCompleted","usage":{}}"#,
+    ])
+    func iterationCompletedRejectsMalformedPayload(archive: String) throws {
+        #expect(throws: DecodingError.self) {
+            try StreamEventJSONCodec.makeDecoder().decode(StreamEvent.Kind.self, from: Data(archive.utf8))
+        }
+    }
+
     @Test func replayedOriginRoundTripsWithCheckpointID() throws {
         let checkpointID = try CheckpointID(rawValue: uuid("00000000-0000-0000-0000-000000000501"))
         let event = try StreamEvent(

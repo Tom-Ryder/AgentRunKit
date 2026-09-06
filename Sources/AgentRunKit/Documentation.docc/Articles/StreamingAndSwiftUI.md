@@ -117,7 +117,7 @@ Cases are grouped below by category.
 | Case | Payload | Description |
 |---|---|---|
 | ``StreamEvent/Kind/finished(tokenUsage:content:reason:history:)`` | ``TokenUsage``, content, reason, history | Agent loop completed |
-| ``StreamEvent/Kind/iterationCompleted(usage:iteration:history:)`` | ``TokenUsage``, iteration number, post-append message snapshot | One generate or tool-call cycle completed |
+| ``StreamEvent/Kind/iterationCompleted(usage:iteration:history:)`` | ``TokenUsage``?, iteration number, post-append message snapshot | A provider turn completed, including turns without usage |
 | ``StreamEvent/Kind/compacted(totalTokens:windowSize:)`` | `totalTokens`, `windowSize` | Context was compacted to fit the window |
 | ``StreamEvent/Kind/budgetUpdated(budget:)`` | ``ContextBudget`` | Latest budget snapshot after a provider response |
 | ``StreamEvent/Kind/budgetAdvisory(budget:)`` | ``ContextBudget`` | Soft threshold was crossed |
@@ -145,6 +145,8 @@ let restored = try StreamEventJSONCodec.decode(data)
 
 This canonical codec uses the framework's fixed JSON settings for event transcripts. Plain `Codable` conformance remains available for ordinary Swift use, but transcript persistence should go through ``StreamEventJSONCodec``.
 
+Iteration events omit `usage` when it is unavailable; absent or null usage decodes as `nil`. Older iteration archives without `history` still decode with an empty history, while present null or malformed history remains a decoding error.
+
 ## AgentStream for SwiftUI
 
 ``AgentStream`` is an `@Observable`, `@MainActor` class that consumes a stream and exposes collected state. Create one from an ``Agent``:
@@ -166,11 +168,11 @@ This canonical codec uses the framework's fixed JSON settings for event transcri
 | `terminalContent` | `String?` | Content of the top-level `.finished` event; `nil` until the run completes and for structural terminations |
 | `history` | `[ChatMessage]` | Full conversation history from `.finished` |
 | `toolCalls` | [``ToolCallInfo``] | Top-level and nested tool calls with live state (`.running`, `.awaitingApproval`, `.completed`, `.failed`) |
-| `iterationUsages` | [``TokenUsage``] | Per-iteration usage, one entry per `.iterationCompleted` |
+| `iterationUsages` | [``TokenUsage``?] | One sample per `.iterationCompleted`, retaining `nil` for unavailable usage |
 | `contextBudget` | ``ContextBudget``? | Latest budget snapshot from `.budgetUpdated` |
 | `sessionID` | ``SessionID``? | Session identity threaded through emitted events |
 | `currentCheckpoint` | ``CheckpointID``? | Most recent checkpoint saved by the live run, preloaded on resume |
-| `iterationsReplayed` | `Int` | Count of replayed `.iterationCompleted` events; only incremented on `.replayed` origin |
+| `iterationsReplayed` | `Int` | Count of replayed iteration snapshots, including snapshots without usage |
 
 **Methods:**
 
@@ -235,11 +237,17 @@ struct ChatView: View {
 
 ## Per-Iteration Token Tracking
 
-Each iteration yields `.iterationCompleted` with that iteration's ``TokenUsage``. ``AgentStream`` collects these into `iterationUsages`. The `.finished` event carries the cumulative total.
+Every completed Agent provider turn yields `.iterationCompleted` with that iteration's optional ``TokenUsage``. Missing usage preserves the iteration number and history; it never becomes a zero measurement. Foundation Models, which does not report token usage, therefore emits an iteration event with `nil` usage too. The `.finished` event carries the cumulative total.
+
+``AgentStream`` collects samples in event order, retaining missing positions in `iterationUsages`. Resume contributes the saved iteration snapshot before live samples; it does not reconstruct earlier samples. Use the event's `iteration` value when the original iteration number matters.
 
 ```swift
 for (index, usage) in stream.iterationUsages.enumerated() {
-    print("Iteration \(index + 1): \(usage.input)in / \(usage.output)out")
+    if let usage {
+        print("Sample \(index + 1): \(usage.input)in / \(usage.output)out")
+    } else {
+        print("Sample \(index + 1): usage unavailable")
+    }
 }
 ```
 

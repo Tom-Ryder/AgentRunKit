@@ -39,6 +39,7 @@ private func makeEchoCallDeltas(id: String, message: String) -> [StreamDelta] {
 }
 
 private func makeReplayedIterationEvent(
+    usage: TokenUsage?,
     iteration: Int,
     history: [ChatMessage],
     sessionID: SessionID,
@@ -49,13 +50,13 @@ private func makeReplayedIterationEvent(
         sessionID: sessionID,
         runID: runID,
         origin: .replayed(from: checkpointID),
-        kind: .iterationCompleted(usage: TokenUsage(input: 1, output: 1), iteration: iteration, history: history)
+        kind: .iterationCompleted(usage: usage, iteration: iteration, history: history)
     )
 }
 
 struct AgentStreamResumeObserverTests {
-    @MainActor @Test
-    func handleReplayedIterationUpdatesCheckpointCountAndHistory() {
+    @MainActor @Test(arguments: [TokenUsage(input: 1, output: 1), nil])
+    func handleReplayedIterationUpdatesCheckpointCountAndHistory(usage: TokenUsage?) {
         let agent = Agent<EmptyContext>(
             client: StreamingMockLLMClient(streamSequences: []), tools: []
         )
@@ -64,19 +65,21 @@ struct AgentStreamResumeObserverTests {
         let runID = RunID()
         let checkpointID = CheckpointID()
         let event = makeReplayedIterationEvent(
+            usage: usage,
             iteration: 1,
             history: [.user("Hi"), .assistant(AssistantMessage(content: "first"))],
             sessionID: session, runID: runID, checkpointID: checkpointID
         )
         stream.handle(event, toolCallIdPath: [], toolNamePath: [])
         #expect(stream.iterationsReplayed == 1)
+        #expect(stream.iterationUsages == [usage])
         #expect(stream.history.count == 2)
         #expect(stream.currentCheckpoint == checkpointID)
         #expect(stream.sessionID == session)
     }
 
-    @MainActor @Test
-    func liveEventsDoNotMutateReplayObservers() {
+    @MainActor @Test(arguments: [TokenUsage(input: 1, output: 1), nil])
+    func liveEventsDoNotMutateReplayObservers(usage: TokenUsage?) {
         let agent = Agent<EmptyContext>(
             client: StreamingMockLLMClient(streamSequences: []), tools: []
         )
@@ -84,11 +87,12 @@ struct AgentStreamResumeObserverTests {
         let liveEvent = StreamEvent(
             sessionID: SessionID(), runID: RunID(), origin: .live,
             kind: .iterationCompleted(
-                usage: TokenUsage(input: 1, output: 1), iteration: 1, history: [.user("Hi")]
+                usage: usage, iteration: 1, history: [.user("Hi")]
             )
         )
         stream.handle(liveEvent, toolCallIdPath: [], toolNamePath: [])
         #expect(stream.iterationsReplayed == 0)
+        #expect(stream.iterationUsages == [usage])
         #expect(stream.currentCheckpoint == nil)
         #expect(stream.history.isEmpty)
     }
@@ -102,7 +106,7 @@ struct AgentStreamResumeObserverTests {
             messages: [.user("Hi"), .assistant(AssistantMessage(content: "ok"))],
             iteration: 1,
             tokenUsage: TokenUsage(input: 1, output: 1),
-            iterationUsage: TokenUsage(input: 1, output: 1),
+            iterationUsage: nil,
             sessionID: session, runID: RunID(), checkpointID: checkpointID
         ))
 
@@ -124,16 +128,19 @@ struct AgentStreamResumeObserverTests {
         let stream = AgentStream(agent: agent, bufferCapacity: 64)
         try await stream.resume(from: checkpointID, checkpointer: backend, context: EmptyContext())
         await awaitStreamCompletion(stream)
-        #expect(stream.iterationsReplayed >= 1)
+        #expect(stream.iterationsReplayed == 1)
+        #expect(stream.iterationUsages == [nil, TokenUsage(input: 1, output: 1)])
 
         stream.send("Fresh", context: EmptyContext())
+        #expect(stream.iterationUsages.isEmpty)
         await awaitStreamCompletion(stream)
         #expect(stream.iterationsReplayed == 0)
+        #expect(stream.iterationUsages == [TokenUsage(input: 1, output: 1)])
         #expect(stream.currentCheckpoint == nil)
     }
 
-    @MainActor @Test
-    func resumePreloadsCheckpointAndContinuesLive() async throws {
+    @MainActor @Test(arguments: [TokenUsage(input: 5, output: 5), nil])
+    func resumePreloadsCheckpointAndContinuesLive(usage: TokenUsage?) async throws {
         let backend = InMemoryCheckpointer()
         let session = SessionID()
         let checkpointID = CheckpointID()
@@ -141,7 +148,7 @@ struct AgentStreamResumeObserverTests {
             messages: [.user("Hi"), .assistant(AssistantMessage(content: "first"))],
             iteration: 1,
             tokenUsage: TokenUsage(input: 5, output: 5),
-            iterationUsage: TokenUsage(input: 5, output: 5),
+            iterationUsage: usage,
             sessionID: session, runID: RunID(), checkpointID: checkpointID
         ))
         let agent = Agent<EmptyContext>(
@@ -156,11 +163,17 @@ struct AgentStreamResumeObserverTests {
         )
         let stream = AgentStream(agent: agent, bufferCapacity: 64)
         try await stream.resume(from: checkpointID, checkpointer: backend, context: EmptyContext())
+        #expect(stream.history == [.user("Hi"), .assistant(AssistantMessage(content: "first"))])
+        #expect(stream.tokenUsage == TokenUsage(input: 5, output: 5))
+        #expect(stream.iterationUsages.isEmpty)
+        #expect(stream.iterationsReplayed == 0)
         await awaitStreamCompletion(stream)
-        #expect(stream.iterationsReplayed >= 1)
+        #expect(stream.iterationsReplayed == 1)
+        #expect(stream.iterationUsages == [usage, TokenUsage(input: 7, output: 7)])
         #expect(stream.currentCheckpoint == checkpointID)
         #expect(stream.sessionID == session)
         #expect(stream.finishReason == .completed)
+        #expect(stream.error == nil)
     }
 
     @MainActor @Test
@@ -240,8 +253,8 @@ struct AgentStreamResumeObserverTests {
         }
     }
 
-    @MainActor @Test
-    func resumeRecordsReplayedEventsInBuffer() async throws {
+    @MainActor @Test(arguments: [TokenUsage(input: 5, output: 5), nil])
+    func resumeRecordsReplayedEventsInBuffer(usage: TokenUsage?) async throws {
         let backend = InMemoryCheckpointer()
         let session = SessionID()
         let checkpointID = CheckpointID()
@@ -249,7 +262,7 @@ struct AgentStreamResumeObserverTests {
             messages: [.user("Hi"), .assistant(AssistantMessage(content: "cached"))],
             iteration: 1,
             tokenUsage: TokenUsage(input: 5, output: 5),
-            iterationUsage: TokenUsage(input: 5, output: 5),
+            iterationUsage: usage,
             sessionID: session, runID: RunID(), checkpointID: checkpointID
         ))
         let agent = Agent<EmptyContext>(
@@ -271,7 +284,8 @@ struct AgentStreamResumeObserverTests {
             return
         }
         #expect(firstEvent.origin == .replayed(from: checkpointID))
-        if case let .iterationCompleted(_, iteration, history) = firstEvent.kind {
+        if case let .iterationCompleted(replayedUsage, iteration, history) = firstEvent.kind {
+            #expect(replayedUsage == usage)
             #expect(iteration == 1)
             #expect(history == [.user("Hi"), .assistant(AssistantMessage(content: "cached"))])
         } else {
@@ -495,8 +509,8 @@ struct AgentStreamCheckpointObservationTests {
         #expect(!stream.isStreaming)
     }
 
-    @MainActor @Test
-    func terminalResumePreloadsCommittedStateBeforeReplayIsObserved() async throws {
+    @MainActor @Test(arguments: [TokenUsage(input: 5, output: 2), nil])
+    func terminalResumePreloadsCommittedStateBeforeReplayIsObserved(usage: TokenUsage?) async throws {
         let backend = InMemoryCheckpointer()
         let checkpointID = CheckpointID()
         let session = SessionID()
@@ -512,7 +526,7 @@ struct AgentStreamCheckpointObservationTests {
             messages: messages,
             iteration: 1,
             tokenUsage: TokenUsage(input: 9, output: 4),
-            iterationUsage: TokenUsage(input: 5, output: 2),
+            iterationUsage: usage,
             contextBudgetState: nil,
             historyWasRewrittenLocally: false,
             sessionAllowlist: [],
@@ -542,6 +556,7 @@ struct AgentStreamCheckpointObservationTests {
         #expect(stream.tokenUsage == TokenUsage(input: 9, output: 4))
         #expect(stream.sessionID == session)
         #expect(stream.iterationsReplayed == 0)
+        #expect(stream.iterationUsages.isEmpty)
 
         await awaitStreamCompletion(stream)
 
@@ -550,6 +565,7 @@ struct AgentStreamCheckpointObservationTests {
         #expect(stream.currentCheckpoint == checkpointID)
         #expect(stream.history == messages)
         #expect(stream.iterationsReplayed == 1)
+        #expect(stream.iterationUsages == [usage])
         #expect(stream.error == nil)
     }
 

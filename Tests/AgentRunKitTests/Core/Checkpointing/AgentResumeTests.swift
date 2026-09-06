@@ -123,8 +123,8 @@ struct AgentResumeTests {
         }
     }
 
-    @Test
-    func resumeReplaysTargetCheckpointAsReplayed() async throws {
+    @Test(arguments: [TokenUsage(input: 5, output: 5), nil])
+    func resumeReplaysTargetCheckpointAsReplayed(usage: TokenUsage?) async throws {
         let backend = InMemoryCheckpointer()
         let session = SessionID()
         let runID = RunID()
@@ -133,7 +133,7 @@ struct AgentResumeTests {
             messages: [.user("Hi"), .assistant(AssistantMessage(content: "first"))],
             iteration: 1,
             tokenUsage: TokenUsage(input: 5, output: 5),
-            iterationUsage: TokenUsage(input: 5, output: 5),
+            iterationUsage: usage,
             sessionID: session, runID: runID, checkpointID: checkpointID
         )
         try await backend.save(checkpoint)
@@ -151,6 +151,11 @@ struct AgentResumeTests {
         }
         #expect(replayed.count == 1)
         #expect(replayed.first?.origin == .replayed(from: checkpointID))
+        #expect(replayed.first?.sessionID == session)
+        #expect(replayed.first?.runID == runID)
+        #expect(replayed.first?.kind == .iterationCompleted(
+            usage: usage, iteration: 1, history: checkpoint.messages
+        ))
     }
 
     @Test
@@ -583,25 +588,34 @@ struct AgentTerminalResumeTests {
     }
 
     @Test
-    func terminalReplayFabricatesNoIterationEventWithoutSavedIterationUsage() async throws {
+    func terminalReplayPreservesMissingIterationUsageWithoutLiveWork() async throws {
         let backend = InMemoryCheckpointer()
         let target = makeTerminalCheckpoint(iterationUsage: nil)
         try await backend.save(target)
-        let agent = try makeFinalizingAgent(
-            client: StreamingMockLLMClient(streamSequences: [secondFinishDeltas])
-        )
+        let observer = SaveCountingCheckpointer(inner: backend)
+        let client = StreamingMockLLMClient(streamSequences: [secondFinishDeltas])
+        let invocations = ToolInvocationCounter()
+        let agent = try makeFinalizingAgent(client: client, invocations: invocations)
 
         let events = try await collect(agent.resume(
-            from: target.checkpointID, checkpointer: backend, context: EmptyContext()
+            from: target.checkpointID, checkpointer: observer, context: EmptyContext()
         ))
 
-        #expect(events.count == 1)
-        guard case let .finished(_, content, reason, _) = events.first?.kind else {
-            Issue.record("Expected a live .finished")
-            return
-        }
-        #expect(content == terminalOutcome.content)
-        #expect(reason == .completed)
+        #expect(events.map(\.kind) == [
+            .iterationCompleted(usage: nil, iteration: 1, history: terminalMessages),
+            .finished(
+                tokenUsage: TokenUsage(input: 9, output: 4),
+                content: terminalOutcome.content, reason: .completed, history: terminalMessages
+            ),
+        ])
+        #expect(events.first?.origin == .replayed(from: target.checkpointID))
+        #expect(events.first?.runID == target.runID)
+        #expect(events.first?.sessionID == target.sessionID)
+        #expect(events.last?.origin == .live)
+        #expect(events.last?.sessionID == target.sessionID)
+        #expect(await client.allCapturedTools.isEmpty)
+        #expect(await invocations.value == 0)
+        #expect(await observer.saveCount == 0)
     }
 
     @Test

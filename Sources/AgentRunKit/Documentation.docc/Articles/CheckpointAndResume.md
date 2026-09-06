@@ -72,7 +72,7 @@ Omitting `checkpointer:` writes no checkpoint. Omitting `sessionID:` still write
 
 ## Resuming a Run
 
-``Agent/resume(from:checkpointer:context:tokenBudget:requestContext:approvalHandler:)`` loads the named checkpoint, replays its history as one synthetic ``StreamEvent/Kind/iterationCompleted(usage:iteration:history:)`` event tagged with ``EventOrigin/replayed(from:)``, then continues from `iteration + 1`.
+``Agent/resume(from:checkpointer:context:tokenBudget:requestContext:approvalHandler:)`` loads the named checkpoint, replays its history as one synthetic ``StreamEvent/Kind/iterationCompleted(usage:iteration:history:)`` event tagged with ``EventOrigin/replayed(from:)``, then continues from `iteration + 1`. The event preserves the saved `iterationUsage`, including `nil` when usage was unavailable.
 
 ```swift
 let stream = try await agent.resume(
@@ -109,7 +109,7 @@ See <doc:MCPIntegration> for how MCP tools are discovered.
 
 An agent built with a `completionTool:` (see <doc:AgentAndChat#Custom-Completion-Tools>) writes one final checkpoint when that tool succeeds. It carries an ``AgentTerminalOutcome`` holding the exact result and the name of the tool that produced it, and it is saved before the top-level `.finished` event is emitted. Every other terminal path — the built-in `finish` tool, content-only completion, max iterations, token budget exhaustion — keeps its existing cadence and writes no outcome, and so does a failed or exclusivity-violating completion attempt, which saves an ordinary snapshot and lets the run continue.
 
-Resuming a terminal checkpoint replays the committed result instead of continuing the run. ``Agent/resume(from:checkpointer:context:tokenBudget:requestContext:approvalHandler:)`` validates the saved message structure, checks outcome identity, then emits the saved iteration event (only when the original run reported per-iteration usage) followed by `.finished` with the stored content and ``FinishReason/completed``, and closes. It makes no LLM request, executes no tool, requires no approval handler and no live MCP bindings, applies no budget or iteration preflight, and writes no new checkpoint.
+Resuming a terminal checkpoint replays the committed result instead of continuing the run. ``Agent/resume(from:checkpointer:context:tokenBudget:requestContext:approvalHandler:)`` validates the saved message structure, checks outcome identity, then emits the saved iteration event followed by `.finished` with the stored content and ``FinishReason/completed``, and closes. The iteration event carries the saved history and optional usage even when the original run reported no measurement. It makes no LLM request, executes no tool, requires no approval handler and no live MCP bindings, applies no budget or iteration preflight, and writes no new checkpoint.
 
 Identity is checked because a terminal checkpoint asserts success on behalf of one specific completion contract. If the resuming agent completes through a different tool, or through the built-in `finish` tool, resume throws ``AgentCheckpointError/completionToolMismatch(checkpointed:live:)`` before any event is yielded.
 
@@ -154,7 +154,7 @@ When `resume` returns, these properties are already populated from the checkpoin
 | ``AgentStream/terminalContent`` | `target.terminalOutcome.content`, on a terminal checkpoint only |
 | ``AgentStream/finishReason`` | ``FinishReason/completed``, on a terminal checkpoint only |
 
-The live continuation runs in a background task; ``AgentStream/iterationsReplayed`` increments once the synthetic replay event is observed, then the live iteration cycle proceeds normally. ``AgentStream/iterationsReplayed`` only counts replayed iterations, so callers can distinguish a fresh send from a resume.
+A background task consumes the replay and any live continuation. Observing the synthetic replay event appends its optional usage to ``AgentStream/iterationUsages`` and increments ``AgentStream/iterationsReplayed``, including when usage is `nil`. The counter measures replayed iteration snapshots, not responses with measurements. Reading buffered events through ``AgentStream/replay(from:)`` does not apply them to observable state again.
 
 See <doc:StreamingAndSwiftUI> for the full SwiftUI contract.
 

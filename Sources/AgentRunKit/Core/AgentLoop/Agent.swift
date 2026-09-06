@@ -399,7 +399,7 @@ extension Agent {
             options: iterationContext.options
         )
         state.messages.append(.assistant(iteration.toAssistantMessage()))
-        yieldIterationCompletedIfPossible(
+        yieldIterationCompleted(
             iteration: iteration, iterationNumber: iterationNumber,
             messages: state.messages, context: iterationContext.context,
             eventFactory: factory, continuation: continuation

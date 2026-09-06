@@ -75,11 +75,11 @@ struct AgentContentOnlyRunTests {
 }
 
 struct AgentContentOnlyStreamTests {
-    @Test
-    func streamTerminatesOnContentOnlyIterationForContentOnlyClient() async throws {
+    @Test(arguments: [TokenUsage(input: 3, output: 5), nil])
+    func streamTerminatesOnContentOnlyIterationForContentOnlyClient(usage: TokenUsage?) async throws {
         let deltas: [StreamDelta] = [
             .content("The answer is 42."),
-            .finished(usage: TokenUsage(input: 3, output: 5))
+            .finished(usage: usage)
         ]
         let client = ContentOnlyTerminatingMockLLMClient(streamSequences: [deltas])
         let agent = Agent<EmptyContext>(client: client, tools: [])
@@ -89,17 +89,24 @@ struct AgentContentOnlyStreamTests {
             events.append(event)
         }
 
-        let deltaEvents = events.filter {
-            if case .delta = $0.kind { true } else { false }
-        }
-        #expect(deltaEvents.count == 1)
-        #expect(deltaEvents.first?.kind == .delta("The answer is 42."))
+        try #require(events.count == 3)
+        #expect(events.first?.kind == .delta("The answer is 42."))
+        #expect(events[1].kind == .iterationCompleted(
+            usage: usage,
+            iteration: 1,
+            history: [
+                .user("Q"),
+                .assistant(AssistantMessage(content: "The answer is 42.", tokenUsage: usage)),
+            ]
+        ))
 
         guard case let .finished(tokenUsage, content, reason, _) = events.last?.kind else {
             Issue.record("Expected finished event")
             return
         }
-        #expect(tokenUsage == TokenUsage(input: 3, output: 5))
+        if let usage {
+            #expect(tokenUsage == usage)
+        }
         #expect(content == "The answer is 42.")
         #expect(reason == .completed)
 

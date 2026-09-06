@@ -1,7 +1,7 @@
 import Foundation
 
 extension Agent {
-    func yieldIterationCompletedIfPossible(
+    func yieldIterationCompleted(
         iteration: StreamIteration,
         iterationNumber: Int,
         messages: [ChatMessage],
@@ -9,9 +9,8 @@ extension Agent {
         eventFactory: StreamEventFactory,
         continuation: AsyncThrowingStream<StreamEvent, Error>.Continuation
     ) {
-        guard let usage = iteration.usage else { return }
         continuation.yield(eventFactory.make(.iterationCompleted(
-            usage: usage,
+            usage: iteration.usage,
             iteration: iterationNumber,
             history: emittedIterationHistory(messages: messages, context: context)
         )))

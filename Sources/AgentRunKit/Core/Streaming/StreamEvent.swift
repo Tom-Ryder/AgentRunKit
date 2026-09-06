@@ -52,7 +52,7 @@ public struct StreamEvent: Sendable, Identifiable {
         case subAgentStarted(toolCallId: String, toolName: String)
         indirect case subAgentEvent(toolCallId: String, toolName: String, event: StreamEvent)
         case subAgentCompleted(toolCallId: String, toolName: String, result: ToolResult)
-        case iterationCompleted(usage: TokenUsage, iteration: Int, history: [ChatMessage])
+        case iterationCompleted(usage: TokenUsage?, iteration: Int, history: [ChatMessage])
         case compacted(totalTokens: Int, windowSize: Int)
         /// Emitted after each provider response when a budget snapshot is available.
         case budgetUpdated(budget: ContextBudget)
@@ -183,7 +183,7 @@ extension StreamEvent.Kind: Codable {
                 ? try container.decode([ChatMessage].self, forKey: .history)
                 : []
             self = try .iterationCompleted(
-                usage: container.decode(TokenUsage.self, forKey: .usage),
+                usage: container.decodeIfPresent(TokenUsage.self, forKey: .usage),
                 iteration: container.decode(Int.self, forKey: .iteration),
                 history: history
             )
@@ -263,7 +263,7 @@ extension StreamEvent.Kind: Codable {
             try container.encode(result, forKey: .result)
         case let .iterationCompleted(usage, iteration, history):
             try container.encode("iterationCompleted", forKey: .type)
-            try container.encode(usage, forKey: .usage)
+            try container.encodeIfPresent(usage, forKey: .usage)
             try container.encode(iteration, forKey: .iteration)
             try container.encode(history, forKey: .history)
         case let .compacted(totalTokens, windowSize):
@@ -390,11 +390,7 @@ extension StreamEvent: Codable {
     }
 
     private static func encodeTimestamp(_ date: Date, codingPath: [any CodingKey]) throws -> String {
-        let milliseconds = (date.timeIntervalSince1970 * 1000).rounded()
-        guard milliseconds.isFinite,
-              milliseconds >= Double(Int64.min),
-              milliseconds <= Double(Int64.max)
-        else {
+        guard let milliseconds = Int64(exactly: (date.timeIntervalSince1970 * 1000).rounded()) else {
             throw EncodingError.invalidValue(
                 date,
                 EncodingError.Context(
@@ -404,8 +400,8 @@ extension StreamEvent: Codable {
             )
         }
 
-        var seconds = Int64(milliseconds) / 1000
-        var millisecond = Int(Int64(milliseconds) % 1000)
+        var seconds = milliseconds / 1000
+        var millisecond = Int(milliseconds % 1000)
         if millisecond < 0 {
             seconds -= 1
             millisecond += 1000
@@ -455,11 +451,11 @@ extension StreamEvent: Codable {
     private static func parseInteger(_ bytes: [UInt8], in range: Range<Int>) -> Int? {
         var value = 0
         for index in range {
-            let digit = bytes[index] - UInt8(ascii: "0")
-            guard digit <= 9 else {
+            let byte = bytes[index]
+            guard byte >= UInt8(ascii: "0"), byte <= UInt8(ascii: "9") else {
                 return nil
             }
-            value = (value * 10) + Int(digit)
+            value = (value * 10) + Int(byte - UInt8(ascii: "0"))
         }
         return value
     }

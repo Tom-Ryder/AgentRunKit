@@ -62,9 +62,7 @@ extension Agent {
         eventFactory: StreamEventFactory
     ) -> AsyncThrowingStream<StreamEvent, Error> {
         AsyncThrowingStream { continuation in
-            if let iterationUsage = target.iterationUsage {
-                continuation.yield(replayedIterationEvent(target: target, usage: iterationUsage))
-            }
+            continuation.yield(replayedIterationEvent(target: target))
             finishStreaming(
                 continuation: continuation,
                 event: makeFinishedEvent(
@@ -78,13 +76,13 @@ extension Agent {
         }
     }
 
-    private func replayedIterationEvent(target: AgentCheckpoint, usage: TokenUsage) -> StreamEvent {
+    private func replayedIterationEvent(target: AgentCheckpoint) -> StreamEvent {
         StreamEventFactory(
             sessionID: target.sessionID,
             runID: target.runID,
             origin: .replayed(from: target.checkpointID)
         ).make(.iterationCompleted(
-            usage: usage,
+            usage: target.iterationUsage,
             iteration: target.iteration,
             history: target.messages
         ))
@@ -107,9 +105,7 @@ extension Agent {
         options: InvocationOptions,
         continuation: AsyncThrowingStream<StreamEvent, Error>.Continuation
     ) async throws {
-        continuation.yield(replayedIterationEvent(
-            target: target, usage: target.iterationUsage ?? TokenUsage()
-        ))
+        continuation.yield(replayedIterationEvent(target: target))
         var state = AgentLoopState(
             messages: target.messages,
             historyWasRewrittenLocally: true,

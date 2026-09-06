@@ -103,9 +103,10 @@ struct StreamEventKindCodableTests {
         #expect(try roundTrip(kind) == kind)
     }
 
-    @Test func iterationCompletedRoundTrips() throws {
+    @Test(arguments: [TokenUsage(input: 200, output: 80, reasoning: 10), nil])
+    func iterationCompletedRoundTrips(usage: TokenUsage?) throws {
         let kind = StreamEvent.Kind.iterationCompleted(
-            usage: TokenUsage(input: 200, output: 80, reasoning: 10),
+            usage: usage,
             iteration: 3,
             history: [.user("Hi"), .tool(id: "tc_1", name: "echo", content: "{\"echoed\":\"hi\"}")]
         )
@@ -293,16 +294,62 @@ struct StreamEventEnvelopeCodableTests {
         #expect(abs(decoded.timestamp.timeIntervalSince1970 - 1_711_800_000.123) < 0.001)
     }
 
-    @Test func timestampEncodesAsStableISO8601String() throws {
+    @Test(arguments: [
+        (0.123, "1970-01-01T00:00:00.123Z"),
+        (-0.123, "1969-12-31T23:59:59.877Z"),
+        (0.9996, "1970-01-01T00:00:01.000Z"),
+        (-0.9996, "1969-12-31T23:59:59.000Z"),
+    ])
+    func timestampEncodesAsStableISO8601String(secondsSince1970: TimeInterval, timestamp: String) throws {
         let event = StreamEvent(
-            timestamp: Date(timeIntervalSince1970: 0.123),
+            timestamp: Date(timeIntervalSince1970: secondsSince1970),
             kind: .delta("ts")
         )
 
         let data = try JSONEncoder().encode(event)
-        let json = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        let json = try JSONDecoder().decode([String: JSONValue].self, from: data)
 
-        #expect(json["timestamp"] as? String == "1970-01-01T00:00:00.123Z")
+        #expect(json["timestamp"] == .string(timestamp))
+    }
+
+    @Test(arguments: [
+        Double(Int64.max) / 1000,
+        (Double(Int64.min) / 1000).nextDown,
+        Double.greatestFiniteMagnitude,
+        Double.infinity,
+        -Double.infinity,
+        Double.nan,
+    ])
+    func unrepresentableTimestampThrowsEncodingError(secondsSince1970: TimeInterval) throws {
+        let event = StreamEvent(
+            timestamp: Date(timeIntervalSince1970: secondsSince1970),
+            kind: .delta("ts")
+        )
+
+        do {
+            _ = try JSONEncoder().encode(event)
+            Issue.record("Expected EncodingError.invalidValue")
+        } catch let EncodingError.invalidValue(_, context) {
+            #expect(context.codingPath.map(\.stringValue) == ["timestamp"])
+        }
+    }
+
+    @Test(arguments: [
+        ("1970-01-01T00:00:00.000Z", 0.0),
+        ("2026-03-30T14:22:09.123Z", 1_774_880_529.123),
+    ])
+    func timestampArchiveDecodesToExpectedDate(timestamp: String, secondsSince1970: TimeInterval) throws {
+        let json = """
+        {
+            "id": "00000000-0000-0000-0000-000000000001",
+            "timestamp": "\(timestamp)",
+            "kind": {"type": "delta", "text": "hello"}
+        }
+        """
+
+        let event = try JSONDecoder().decode(StreamEvent.self, from: Data(json.utf8))
+        #expect(event.timestamp == Date(timeIntervalSince1970: secondsSince1970))
+        #expect(event.kind == .delta("hello"))
     }
 
     @Test func nilOptionalFieldsOmittedFromJSON() throws {
@@ -496,19 +543,29 @@ struct StreamEventDiscriminatorTests {
         }
     }
 
-    @Test func invalidTimestampThrowsDecodingError() throws {
+    @Test(arguments: [
+        "not-a-date",
+        "2026-03-30T14:22:0/.123Z",
+        "2026-03-30T14:22:0:.123Z",
+        "2026-03-30T14:22:07.12/Z",
+        "2026-03-30T14:22:07.12:Z",
+    ])
+    func invalidTimestampThrowsDecodingError(timestamp: String) throws {
         let json = """
         {
             "id": "00000000-0000-0000-0000-000000000001",
-            "timestamp": "not-a-date",
+            "timestamp": "\(timestamp)",
             "kind": {
                 "type": "delta",
                 "text": "hello"
             }
         }
         """
-        #expect(throws: DecodingError.self) {
-            try JSONDecoder().decode(StreamEvent.self, from: Data(json.utf8))
+        do {
+            _ = try JSONDecoder().decode(StreamEvent.self, from: Data(json.utf8))
+            Issue.record("Expected DecodingError.dataCorrupted")
+        } catch let DecodingError.dataCorrupted(context) {
+            #expect(context.codingPath.map(\.stringValue) == ["timestamp"])
         }
     }
 

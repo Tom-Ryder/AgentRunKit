@@ -70,9 +70,11 @@ struct AgentStreamReplayTests {
         }
     }
 
-    @MainActor @Test
-    func bufferEnabledReplayYieldsRecordedEvents() async throws {
-        let stream = makeBufferedStream()
+    @MainActor @Test(arguments: [TokenUsage(input: 10, output: 5), nil])
+    func bufferEnabledReplayYieldsRecordedEvents(usage: TokenUsage?) async throws {
+        let stream = makeBufferedStream(sequences: [
+            Array(firstSendDeltas.dropLast()) + [.finished(usage: usage)],
+        ])
         stream.send("Hi", context: EmptyContext())
         await awaitStreamCompletion(stream)
 
@@ -86,12 +88,28 @@ struct AgentStreamReplayTests {
         guard let finishedEvent = events.last(where: { event in
             if case .finished = event.kind { return true }
             return false
-        }), case let .finished(usage, content, _, _) = finishedEvent.kind else {
+        }), case let .finished(totalUsage, content, _, _) = finishedEvent.kind else {
             Issue.record("Expected .finished event in replay")
             return
         }
         #expect(content == "done1")
-        #expect(usage == TokenUsage(input: 10, output: 5))
+        if let usage {
+            #expect(totalUsage == usage)
+        }
+        let iterations = events.filter {
+            if case .iterationCompleted = $0.kind { true } else { false }
+        }
+        #expect(iterations.count == 1)
+        guard case let .iterationCompleted(replayedUsage, iteration, history) = iterations.first?.kind else {
+            Issue.record("Expected iterationCompleted in replay")
+            return
+        }
+        #expect(replayedUsage == usage)
+        #expect(iteration == 1)
+        #expect(history.first == .user("Hi"))
+        #expect(iterations.first?.origin == .live)
+        #expect(stream.iterationUsages == [usage])
+        #expect(stream.iterationsReplayed == 0)
 
         let cursor = await stream.bufferedCursor
         #expect(cursor == UInt64(events.count))

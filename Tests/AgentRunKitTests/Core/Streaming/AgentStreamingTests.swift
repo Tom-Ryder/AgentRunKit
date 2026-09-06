@@ -745,7 +745,7 @@ struct AgentIterationCompletedTests {
         let client = StreamingMockLLMClient(streamSequences: [iteration1, iteration2])
         let agent = Agent<EmptyContext>(client: client, tools: [echoTool])
 
-        var iterationEvents: [(usage: TokenUsage, iteration: Int)] = []
+        var iterationEvents: [(usage: TokenUsage?, iteration: Int)] = []
         for try await event in agent.stream(userMessage: "Go", context: EmptyContext()) {
             if case let .iterationCompleted(usage, iteration, _) = event.kind {
                 iterationEvents.append((usage, iteration))
@@ -779,7 +779,7 @@ struct AgentIterationCompletedTests {
         let client = StreamingMockLLMClient(streamSequences: [iteration1, iteration2])
         let agent = Agent<EmptyContext>(client: client, tools: [echoTool])
 
-        var iterationEvents: [(usage: TokenUsage, iteration: Int)] = []
+        var iterationEvents: [(usage: TokenUsage?, iteration: Int)] = []
         for try await event in agent.stream(userMessage: "Go", context: EmptyContext()) {
             if case let .iterationCompleted(usage, iteration, _) = event.kind {
                 iterationEvents.append((usage, iteration))
@@ -791,7 +791,7 @@ struct AgentIterationCompletedTests {
     }
 
     @Test
-    func iterationCompletedNotEmittedWhenUsageNil() async throws {
+    func iterationCompletedPreservesHistoryWhenUsageNil() async throws {
         let deltas: [StreamDelta] = [
             .toolCallStart(index: 0, id: "call_1", name: "finish", kind: .function),
             .toolCallDelta(index: 0, arguments: #"{"content": "done"}"#),
@@ -801,14 +801,33 @@ struct AgentIterationCompletedTests {
         let client = StreamingMockLLMClient(streamSequences: [deltas])
         let agent = Agent<EmptyContext>(client: client, tools: [])
 
-        var iterationEvents: [StreamEvent] = []
+        var events: [StreamEvent] = []
         for try await event in agent.stream(userMessage: "Go", context: EmptyContext()) {
-            if case .iterationCompleted = event.kind {
-                iterationEvents.append(event)
-            }
+            events.append(event)
         }
 
-        #expect(iterationEvents.isEmpty)
+        let iterationEvents = events.filter {
+            if case .iterationCompleted = $0.kind { true } else { false }
+        }
+        #expect(iterationEvents.count == 1)
+        #expect(iterationEvents.first?.origin == .live)
+        #expect(iterationEvents.first?.kind == .iterationCompleted(
+            usage: nil,
+            iteration: 1,
+            history: [
+                .user("Go"),
+                .assistant(AssistantMessage(content: "", toolCalls: [
+                    ToolCall(id: "call_1", name: "finish", arguments: #"{"content": "done"}"#),
+                ])),
+            ]
+        ))
+        #expect(events.dropLast().last?.id == iterationEvents.first?.id)
+        guard case let .finished(_, content, reason, _) = events.last?.kind else {
+            Issue.record("Expected finished event after the iteration")
+            return
+        }
+        #expect(content == "done")
+        #expect(reason == .completed)
     }
 
     @Test

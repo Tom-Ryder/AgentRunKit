@@ -336,22 +336,29 @@ struct AgentStreamTests {
             .finished(usage: TokenUsage(input: 10, output: 5)),
         ]
         let secondDeltas: [StreamDelta] = [
-            .toolCallStart(index: 0, id: "call_2", name: "finish", kind: .function),
+            .toolCallStart(index: 0, id: "call_2", name: "echo", kind: .function),
+            .toolCallDelta(index: 0, arguments: #"{"message": "again"}"#),
+            .finished(usage: nil),
+        ]
+        let thirdDeltas: [StreamDelta] = [
+            .toolCallStart(index: 0, id: "call_3", name: "finish", kind: .function),
             .toolCallDelta(index: 0, arguments: #"{"content": "done"}"#),
             .finished(usage: TokenUsage(input: 20, output: 10)),
         ]
 
         let stream = makeAgentStreamWithTools(
-            streamSequences: [firstDeltas, secondDeltas],
+            streamSequences: [firstDeltas, secondDeltas, thirdDeltas],
             tools: [echoTool]
         )
 
         stream.send("Go", context: EmptyContext())
         await awaitStreamCompletion(stream)
 
-        #expect(stream.iterationUsages.count == 2)
-        #expect(stream.iterationUsages[0] == TokenUsage(input: 10, output: 5))
-        #expect(stream.iterationUsages[1] == TokenUsage(input: 20, output: 10))
+        #expect(stream.iterationUsages == [
+            TokenUsage(input: 10, output: 5), nil, TokenUsage(input: 20, output: 10),
+        ])
+        #expect(stream.iterationsReplayed == 0)
+        #expect(stream.error == nil)
     }
 
     @MainActor @Test
@@ -359,7 +366,7 @@ struct AgentStreamTests {
         let deltas1: [StreamDelta] = [
             .toolCallStart(index: 0, id: "call_1", name: "finish", kind: .function),
             .toolCallDelta(index: 0, arguments: #"{"content": "done1"}"#),
-            .finished(usage: TokenUsage(input: 10, output: 5)),
+            .finished(usage: nil),
         ]
         let deltas2: [StreamDelta] = [
             .toolCallStart(index: 0, id: "call_2", name: "finish", kind: .function),
@@ -373,9 +380,10 @@ struct AgentStreamTests {
 
         stream.send("First", context: EmptyContext())
         await awaitStreamCompletion(stream)
-        #expect(stream.iterationUsages.count == 1)
+        #expect(stream.iterationUsages == [nil])
 
         stream.send("Second", context: EmptyContext())
+        #expect(stream.iterationUsages.isEmpty)
         await awaitStreamCompletion(stream)
         #expect(stream.iterationUsages.count == 1)
         #expect(stream.iterationUsages[0] == TokenUsage(input: 20, output: 10))
@@ -734,8 +742,8 @@ struct AgentStreamNestedEventTests {
         return Agent<SubAgentContext<EmptyContext>>(client: client, tools: [delegateTool])
     }
 
-    @MainActor @Test
-    func nestedEventsCannotOverwriteRootState() {
+    @MainActor @Test(arguments: [TokenUsage(input: 10, output: 5), nil], [TokenUsage(input: 3, output: 2), nil])
+    func nestedEventsCannotOverwriteRootState(rootUsage: TokenUsage?, childUsage: TokenUsage?) {
         let stream = makeAgentStream(streamSequences: [])
         let rootHistory: [ChatMessage] = [
             .user("Go"),
@@ -747,7 +755,7 @@ struct AgentStreamNestedEventTests {
             StreamEvent(
                 origin: .replayed(from: checkpointID),
                 kind: .iterationCompleted(
-                    usage: TokenUsage(input: 10, output: 5), iteration: 1, history: rootHistory
+                    usage: rootUsage, iteration: 1, history: rootHistory
                 )
             ),
             toolCallIdPath: [], toolNamePath: []
@@ -777,7 +785,7 @@ struct AgentStreamNestedEventTests {
         stream.handle(
             subAgentEvent(
                 wrapping: .iterationCompleted(
-                    usage: TokenUsage(input: 3, output: 2), iteration: 1, history: [.user("child task")]
+                    usage: childUsage, iteration: 1, history: [.user("child task")]
                 ),
                 origin: .replayed(from: checkpointID)
             ),
@@ -796,7 +804,7 @@ struct AgentStreamNestedEventTests {
         #expect(stream.content == "parent result")
         #expect(stream.terminalContent == "parent result")
         #expect(stream.contextBudget == rootBudget)
-        #expect(stream.iterationUsages == [TokenUsage(input: 10, output: 5)])
+        #expect(stream.iterationUsages == [rootUsage])
         #expect(stream.iterationsReplayed == 1)
     }
 
