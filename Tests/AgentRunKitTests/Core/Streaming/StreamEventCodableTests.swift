@@ -55,7 +55,7 @@ struct StreamEventKindCodableTests {
 
     @Test func finishedRoundTrips() throws {
         let kind = StreamEvent.Kind.finished(
-            tokenUsage: TokenUsage(input: 100, output: 50),
+            tokenUsage: makeTokenUsageTotals(TokenUsage(input: 100, output: 50)),
             content: "Done.",
             reason: .completed,
             history: []
@@ -65,7 +65,7 @@ struct StreamEventKindCodableTests {
 
     @Test func finishedWithMaxIterationsReasonRoundTrips() throws {
         let kind = StreamEvent.Kind.finished(
-            tokenUsage: TokenUsage(input: 20, output: 10),
+            tokenUsage: makeTokenUsageTotals(TokenUsage(input: 20, output: 10)),
             content: nil,
             reason: .maxIterationsReached(limit: 4),
             history: []
@@ -75,7 +75,7 @@ struct StreamEventKindCodableTests {
 
     @Test func finishedWithTokenBudgetReasonRoundTrips() throws {
         let kind = StreamEvent.Kind.finished(
-            tokenUsage: TokenUsage(input: 30, output: 20),
+            tokenUsage: makeTokenUsageTotals(TokenUsage(input: 30, output: 20)),
             content: nil,
             reason: .tokenBudgetExceeded(budget: 40, used: 50),
             history: []
@@ -456,7 +456,9 @@ struct StreamEventFinishedCodableTests {
             .assistant(AssistantMessage(content: "The answer is 4.")),
         ]
         let kind = StreamEvent.Kind.finished(
-            tokenUsage: TokenUsage(input: 150, output: 30, reasoning: 5, cacheRead: 10, cacheWrite: 20),
+            tokenUsage: makeTokenUsageTotals(
+                TokenUsage(input: 150, output: 30, reasoning: 5, cacheRead: 10, cacheWrite: 20)
+            ),
             content: "The answer is 4.",
             reason: .completed,
             history: history
@@ -471,7 +473,7 @@ struct StreamEventFinishedCodableTests {
 
     @Test func nilContentAndReasonOmittedFromJSON() throws {
         let kind = StreamEvent.Kind.finished(
-            tokenUsage: TokenUsage(input: 10, output: 5),
+            tokenUsage: makeTokenUsageTotals(TokenUsage(input: 10, output: 5)),
             content: nil,
             reason: nil,
             history: []

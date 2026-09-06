@@ -15,7 +15,7 @@ private func makeCheckpoint(
     AgentCheckpoint(
         messages: [.user("Hello"), .assistant(AssistantMessage(content: "Hi"))],
         iteration: iteration,
-        tokenUsage: TokenUsage(input: 5, output: 5),
+        tokenUsage: makeTokenUsageTotals(TokenUsage(input: 5, output: 5)),
         iterationUsage: TokenUsage(input: 2, output: 3),
         contextBudgetState: ContextBudgetCheckpointState(
             config: ContextBudgetConfig(softThreshold: 0.5),
@@ -132,6 +132,9 @@ struct AgentCheckpointCodableTests {
         decoder.dateDecodingStrategy = .iso8601
         let decoded = try decoder.decode(AgentCheckpoint.self, from: Data(json.utf8))
         #expect(decoded.iterationUsage == nil)
+        #expect(decoded.tokenUsage.total == 0 && decoded.tokenUsage.coverage == .partial)
+        #expect(decoded.tokenUsage.cacheRead == 0 && decoded.tokenUsage.cacheReadCoverage == .partial)
+        #expect(decoded.tokenUsage.cacheWrite == 0 && decoded.tokenUsage.cacheWriteCoverage == .partial)
         #expect(decoded.contextBudgetState == nil)
         #expect(decoded.historyWasRewrittenLocally == false)
         #expect(decoded.sessionAllowlist.isEmpty)
@@ -158,6 +161,53 @@ struct AgentCheckpointCodableTests {
         } catch is DecodingError {
         } catch {
             Issue.record("Expected DecodingError, got \(error)")
+        }
+    }
+}
+
+struct AgentCheckpointAccountingWireTests {
+    @Test
+    func currentCheckpointEncodingIncludesAccounting() throws {
+        let checkpoint = try AgentCheckpoint(
+            messages: [.user("Hi")], iteration: 1,
+            tokenUsage: makeTokenUsageTotals(TokenUsage(input: 7, output: 3, cacheRead: 0), nil),
+            sessionID: SessionID(rawValue: #require(UUID(uuidString: "00000000-0000-0000-0000-000000000001"))),
+            runID: RunID(rawValue: #require(UUID(uuidString: "00000000-0000-0000-0000-000000000002"))),
+            checkpointID: CheckpointID(rawValue: #require(UUID(uuidString: "00000000-0000-0000-0000-000000000003"))),
+            timestamp: Date(timeIntervalSince1970: 0)
+        )
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        encoder.dateEncodingStrategy = .iso8601
+        let expected = [
+            #"{"checkpointID":"00000000-0000-0000-0000-000000000003","iteration":1,"#,
+            #""messages":[{"content":"Hi","role":"user"}],"#,
+            #""runID":"00000000-0000-0000-0000-000000000002","#,
+            #""sessionID":"00000000-0000-0000-0000-000000000001","timestamp":"1970-01-01T00:00:00Z","#,
+            #""tokenUsage":{"accounting":{"cacheRead":"partial","cacheWrite":"unavailable","#,
+            #""type":"observed","usage":"partial"},"cacheRead":0,"input":7,"output":3,"reasoning":0}}"#,
+        ].joined()
+        #expect(try encoder.encode(checkpoint) == Data(expected.utf8))
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let decoded = try decoder.decode(AgentCheckpoint.self, from: Data(expected.utf8))
+        #expect(decoded.tokenUsage.input == 7 && decoded.tokenUsage.output == 3)
+        #expect(decoded.tokenUsage.coverage == .partial)
+        #expect(decoded.tokenUsage.cacheRead == 0 && decoded.tokenUsage.cacheReadCoverage == .partial)
+        #expect(decoded.tokenUsage.cacheWriteCoverage == .unavailable)
+    }
+
+    @Test(arguments: ["null", #"{"type":"unknown"}"#])
+    func presentCorruptAccountingCannotDecodeAsLegacy(accounting: String) throws {
+        let json = #"""
+        {"messages":[],"iteration":1,
+         "tokenUsage":{"input":0,"output":0,"reasoning":0,"accounting":\#(accounting)},
+         "sessionID":"00000000-0000-0000-0000-000000000001",
+         "runID":"00000000-0000-0000-0000-000000000002",
+         "checkpointID":"00000000-0000-0000-0000-000000000003","timestamp":0}
+        """#
+        #expect(throws: DecodingError.self) {
+            try JSONDecoder().decode(AgentCheckpoint.self, from: Data(json.utf8))
         }
     }
 }

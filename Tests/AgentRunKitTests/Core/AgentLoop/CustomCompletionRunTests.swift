@@ -56,7 +56,10 @@ struct CustomCompletionRunTests {
         #expect(try requireContent(result) == expected)
         #expect(result.finishReason == .completed)
         #expect(result.iterations == 1)
-        #expect(result.totalTokenUsage == TokenUsage(input: 12, output: 4))
+        #expect(result.totalTokenUsage.input == 12)
+        #expect(result.totalTokenUsage.output == 4)
+        #expect(result.totalTokenUsage.reasoning == 0)
+        #expect(result.totalTokenUsage.coverage == .complete)
         #expect(await invocations.value == 1)
 
         #expect(result.history.count == 3)

@@ -10,33 +10,12 @@ struct TokenUsageTests {
     }
 
     @Test
-    func addition() {
-        let lhs = TokenUsage(input: 100, output: 50, reasoning: 10)
-        let rhs = TokenUsage(input: 200, output: 75, reasoning: 15)
-        let sum = lhs + rhs
-        #expect(sum.input == 300)
-        #expect(sum.output == 125)
-        #expect(sum.reasoning == 25)
-        #expect(sum.total == 450)
-    }
-
-    @Test
     func defaultsToZero() {
         let usage = TokenUsage()
         #expect(usage.input == 0)
         #expect(usage.output == 0)
         #expect(usage.reasoning == 0)
         #expect(usage.total == 0)
-    }
-
-    @Test
-    func additionSaturatesOnOverflow() {
-        let nearMax = TokenUsage(input: Int.max - 10, output: Int.max - 10, reasoning: Int.max - 10)
-        let small = TokenUsage(input: 100, output: 100, reasoning: 100)
-        let result = nearMax + small
-        #expect(result.input == Int.max)
-        #expect(result.output == Int.max)
-        #expect(result.reasoning == Int.max)
     }
 
     @Test

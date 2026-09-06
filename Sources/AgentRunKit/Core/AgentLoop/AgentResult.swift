@@ -87,14 +87,14 @@ extension FinishReason: Codable {
 public struct AgentResult: Sendable, Equatable {
     public let finishReason: FinishReason
     public let content: String?
-    public let totalTokenUsage: TokenUsage
+    public let totalTokenUsage: TokenUsageTotals
     public let iterations: Int
     public let history: [ChatMessage]
 
     public init(
         finishReason: FinishReason,
         content: String?,
-        totalTokenUsage: TokenUsage,
+        totalTokenUsage: TokenUsageTotals,
         iterations: Int,
         history: [ChatMessage] = []
     ) {

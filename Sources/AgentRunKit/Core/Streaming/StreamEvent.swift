@@ -48,7 +48,7 @@ public struct StreamEvent: Sendable, Identifiable {
         case audioData(Data)
         case audioTranscript(String)
         case audioFinished(id: String, expiresAt: Int, data: Data)
-        case finished(tokenUsage: TokenUsage, content: String?, reason: FinishReason?, history: [ChatMessage])
+        case finished(tokenUsage: TokenUsageTotals, content: String?, reason: FinishReason?, history: [ChatMessage])
         case subAgentStarted(toolCallId: String, toolName: String)
         indirect case subAgentEvent(toolCallId: String, toolName: String, event: StreamEvent)
         case subAgentCompleted(toolCallId: String, toolName: String, result: ToolResult)
@@ -156,7 +156,7 @@ extension StreamEvent.Kind: Codable {
             )
         case "finished":
             self = try .finished(
-                tokenUsage: container.decode(TokenUsage.self, forKey: .tokenUsage),
+                tokenUsage: container.decode(TokenUsageTotals.self, forKey: .tokenUsage),
                 content: container.decodeIfPresent(String.self, forKey: .content),
                 reason: container.decodeIfPresent(FinishReason.self, forKey: .reason),
                 history: container.decode([ChatMessage].self, forKey: .history)

@@ -99,7 +99,9 @@ Budget features require the client to report `contextWindowSize`. ``ContextBudge
 
 Cache-inclusive input can make advisories, ceilings, and compaction activate earlier than counts that omitted cached tokens. Compaction rewrites history and can change a reusable prompt prefix. Appending an advisory does not itself invalidate an earlier cache breakpoint; accurate measurement remains the input to each policy.
 
-Missing or numerically inconsistent usage leaves the last budget snapshot unchanged, and cumulative ceilings can undercount across those gaps. Blocking execution retains its last known compaction estimate; streaming stores the latest iteration's optional total, so a missing measurement skips the next proactive threshold check. The next reported measurement resumes tracking. The framework does not estimate missing tokens.
+Missing or numerically inconsistent usage leaves the last budget snapshot unchanged, and cumulative ceilings can undercount across those gaps. Blocking execution retains its last known compaction estimate; streaming stores the latest iteration's optional total, so a missing measurement skips the next proactive threshold check. The next reported measurement resumes tracking. ``TokenUsageTotals`` exposes those gaps through partial or unavailable coverage; the framework does not estimate missing tokens. See <doc:TokenAccounting>.
+
+Returned summarization responses contribute to the cumulative ceiling even when their content is rejected. Local pruning, truncation, and summary requests that fail before returning a response do not add usage.
 
 ## Streaming Events
 

@@ -45,13 +45,14 @@ let result = try await agent.run(
 if let content = result.content {
     print(content)
 }
-print(result.totalTokenUsage.total) // Total tokens consumed
+print(result.totalTokenUsage.total) // Reported token subtotal
+print(result.totalTokenUsage.coverage)
 print(result.iterations)            // Number of generate/tool cycles
 ```
 
 ## What Happened
 
-``Agent`` sent the user message to the LLM, which responded with a `get_weather` tool call. The agent executed the tool, fed the result back, and the LLM called the built-in `finish` tool with its final answer. The returned ``AgentResult`` contains optional finish text, cumulative ``TokenUsage``, the terminal ``FinishReason``, and the number of loop iterations. If the loop hits `maxIterations` or `tokenBudget` before `finish`, `run()` still returns an ``AgentResult`` and `content` is `nil`.
+``Agent`` sent the user message to the LLM, which responded with a `get_weather` tool call. The agent executed the tool, fed the result back, and the LLM called the built-in `finish` tool with its final answer. The returned ``AgentResult`` contains optional finish text, cumulative ``TokenUsageTotals`` with measurement coverage, the terminal ``FinishReason``, and the number of loop iterations. If the loop hits `maxIterations` or `tokenBudget` before `finish`, `run()` still returns an ``AgentResult`` and `content` is `nil`.
 
 ## Next Steps
 

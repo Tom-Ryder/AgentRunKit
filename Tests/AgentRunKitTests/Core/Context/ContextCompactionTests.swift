@@ -259,7 +259,7 @@ struct CompactionFallbackTests {
             .tool(id: "call_1", name: "search", content: String(repeating: "x", count: 10)),
             .assistant(AssistantMessage(content: "Done")),
         ]
-        var usage = TokenUsage()
+        var usage = TokenUsageTotals()
 
         for _ in 0 ..< 3 {
             try await compactor.compactOrTruncateIfNeeded(
@@ -274,6 +274,8 @@ struct CompactionFallbackTests {
         )
         let callsAfterSkip = await client.generateCallCount
         #expect(callsAfterSkip == 3)
+        #expect(usage.total == 0 && usage.coverage == .complete)
+        #expect(usage.cacheRead == 0 && usage.cacheWrite == 0)
     }
 
     @Test
@@ -291,7 +293,7 @@ struct CompactionFallbackTests {
             .user("Hello"),
             .assistant(AssistantMessage(content: "Done")),
         ]
-        var usage = TokenUsage()
+        var usage = TokenUsageTotals()
 
         let result = try await compactor.compactOrTruncateIfNeeded(
             &messages, lastTotalTokens: 900, totalUsage: &usage
@@ -325,7 +327,7 @@ struct CompactionFallbackTests {
             .tool(id: "call_2", name: "read_file", content: String(repeating: "x", count: 5000)),
             .assistant(AssistantMessage(content: "Done")),
         ]
-        var usage = TokenUsage()
+        var usage = TokenUsageTotals()
 
         for _ in 0 ..< 2 {
             try await compactor.compactOrTruncateIfNeeded(
@@ -394,7 +396,7 @@ struct ReactiveCompactionTests {
             .assistant(AssistantMessage(content: "two")),
             .user("three"),
         ]
-        var totalUsage = TokenUsage()
+        var totalUsage = TokenUsageTotals()
         let shrunk = try await compactor.reactiveCompact(&messages, totalUsage: &totalUsage)
 
         #expect(shrunk == .rewritten)
@@ -402,6 +404,8 @@ struct ReactiveCompactionTests {
 
         let unchanged = try await compactor.reactiveCompact(&messages, totalUsage: &totalUsage)
         #expect(unchanged == .unchanged)
+        #expect(totalUsage.total == 0 && totalUsage.coverage == .complete)
+        #expect(totalUsage.cacheRead == 0 && totalUsage.cacheWrite == 0)
     }
 
     @Test
@@ -424,11 +428,13 @@ struct ReactiveCompactionTests {
             .assistant(AssistantMessage(content: "Working state")),
             .user("Continue"),
         ]
-        var totalUsage = TokenUsage()
+        var totalUsage = TokenUsageTotals()
         let outcome = try await compactor.reactiveCompact(&messages, totalUsage: &totalUsage)
 
         #expect(outcome == .rewritten)
         #expect(await client.generateCallCount == 0)
+        #expect(totalUsage.total == 0 && totalUsage.coverage == .complete)
+        #expect(totalUsage.cacheRead == 0 && totalUsage.cacheWrite == 0)
         guard case let .tool(_, _, content) = messages[2] else {
             Issue.record("Expected pruned tool message")
             return
@@ -453,7 +459,7 @@ struct ReactiveCompactionTests {
             .user("Continue"),
         ]
         let original = messages
-        var totalUsage = TokenUsage()
+        var totalUsage = TokenUsageTotals()
         let outcome = try await compactor.reactiveCompact(&messages, totalUsage: &totalUsage)
 
         #expect(outcome == .unchanged)
@@ -478,7 +484,7 @@ struct ReactiveCompactionTests {
             .user("Continue"),
         ]
         let original = messages
-        var totalUsage = TokenUsage()
+        var totalUsage = TokenUsageTotals()
         let outcome = try await compactor.reactiveCompact(&messages, totalUsage: &totalUsage)
 
         #expect(outcome == .unchanged)
@@ -612,7 +618,7 @@ struct CompactionContextPreservationTests {
             .tool(id: "call_1", name: "noop", content: "result"),
             .assistant(AssistantMessage(content: "All done.")),
         ]
-        let (compacted, _) = try await compactor.summarize(messages)
+        let compacted = try await compactor.summarize(messages)
 
         #expect(hasCompactionBridge(compacted))
         guard case let .assistant(ack) = compacted.last else {

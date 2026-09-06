@@ -159,7 +159,7 @@ struct StreamObserverTests {
             eventFactory: observerFactory
         )
         let (_, continuation) = AsyncThrowingStream<StreamEvent, Error>.makeStream()
-        var totalUsage = TokenUsage()
+        var totalUsage = TokenUsageTotals()
         var emittedOutput = false
 
         _ = try await processor.process(
@@ -202,7 +202,7 @@ struct StreamObserverTests {
             eventFactory: observerFactory
         )
         let (_, continuation) = AsyncThrowingStream<StreamEvent, Error>.makeStream()
-        var totalUsage = TokenUsage()
+        var totalUsage = TokenUsageTotals()
         var emittedOutput = false
 
         _ = try await processor.process(
@@ -243,7 +243,7 @@ struct StreamObserverTests {
                 eventFactory: observerFactory
             )
             let (_, continuation) = AsyncThrowingStream<StreamEvent, Error>.makeStream()
-            var totalUsage = TokenUsage()
+            var totalUsage = TokenUsageTotals()
             var emittedOutput = false
 
             do {
@@ -275,7 +275,7 @@ struct StreamObserverTests {
             eventFactory: observerFactory
         )
         let (_, continuation) = AsyncThrowingStream<StreamEvent, Error>.makeStream()
-        var totalUsage = TokenUsage()
+        var totalUsage = TokenUsageTotals()
         var emittedOutput = false
 
         do {
@@ -312,7 +312,7 @@ struct StreamObserverTests {
             eventFactory: observerFactory
         )
         let (_, continuation) = AsyncThrowingStream<StreamEvent, Error>.makeStream()
-        var totalUsage = TokenUsage()
+        var totalUsage = TokenUsageTotals()
         var emittedOutput = false
 
         do {
@@ -347,7 +347,7 @@ struct StreamObserverTests {
             eventFactory: observerFactory
         )
         let (_, continuation) = AsyncThrowingStream<StreamEvent, Error>.makeStream()
-        var totalUsage = TokenUsage()
+        var totalUsage = TokenUsageTotals()
         var emittedOutput = false
 
         do {
@@ -377,7 +377,7 @@ struct StreamObserverTests {
             eventFactory: observerFactory
         )
         let (_, continuation) = AsyncThrowingStream<StreamEvent, Error>.makeStream()
-        var totalUsage = TokenUsage()
+        var totalUsage = TokenUsageTotals()
         var emittedOutput = false
 
         do {
@@ -486,7 +486,7 @@ struct StreamObserverTests {
         try await backend.save(AgentCheckpoint(
             messages: [.user("Hi"), .assistant(AssistantMessage(content: "first"))],
             iteration: 1,
-            tokenUsage: TokenUsage(input: 5, output: 5),
+            tokenUsage: makeTokenUsageTotals(TokenUsage(input: 5, output: 5)),
             iterationUsage: TokenUsage(input: 5, output: 5),
             sessionID: SessionID(),
             runID: RunID(),

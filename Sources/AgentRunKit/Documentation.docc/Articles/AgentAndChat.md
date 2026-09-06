@@ -166,9 +166,11 @@ See <doc:ContextManagement> for details on compaction and context budgets.
 |---|---|---|
 | `content` | `String?` | The text passed to the finish tool or returned by the completion tool, or `nil` when the loop ends structurally without one |
 | `finishReason` | ``FinishReason`` | `.completed`, `.error`, `.maxIterationsReached(limit:)`, `.tokenBudgetExceeded(budget:used:)`, or `.custom(_:)` |
-| `totalTokenUsage` | ``TokenUsage`` | Accumulated input/output tokens across all iterations |
+| `totalTokenUsage` | ``TokenUsageTotals`` | Reported usage and coverage across returned responses, including summarization |
 | `iterations` | `Int` | Number of generate/tool-call cycles executed |
 | `history` | `[ChatMessage]` | Full conversation including system prompt, user messages, assistant responses, and tool results |
+
+Totals preserve missing measurements as partial or unavailable coverage. Streaming ``Agent`` and ``Chat`` publish the same aggregate type in their final event. See <doc:TokenAccounting> before interpreting a subtotal as complete usage.
 
 Completed paths — the `finish` tool, a successful completion tool, or a content-only iteration from an on-device client — produce non-`nil` content. Structural runtime termination does not synthesize an empty string.
 

@@ -103,7 +103,6 @@ private struct StreamAccumulation {
     mutating func apply(
         _ input: RunStreamElement,
         policy: StreamPolicy,
-        totalUsage: inout TokenUsage,
         continuation: AsyncThrowingStream<StreamEvent, Error>.Continuation,
         eventObserver: (@Sendable (StreamEvent) -> Void)?
     ) throws {
@@ -112,7 +111,6 @@ private struct StreamAccumulation {
             apply(
                 delta,
                 policy: policy,
-                totalUsage: &totalUsage,
                 continuation: continuation,
                 eventObserver: eventObserver
             )
@@ -124,7 +122,6 @@ private struct StreamAccumulation {
     private mutating func apply(
         _ delta: StreamDelta,
         policy: StreamPolicy,
-        totalUsage: inout TokenUsage,
         continuation: AsyncThrowingStream<StreamEvent, Error>.Continuation,
         eventObserver: (@Sendable (StreamEvent) -> Void)?
     ) {
@@ -155,8 +152,6 @@ private struct StreamAccumulation {
             yield(.audioTranscript(text), continuation: continuation, eventObserver: eventObserver)
         case let .finished(iterationUsage):
             sawFinished = true
-            guard let iterationUsage else { return }
-            totalUsage += iterationUsage
             usage = iterationUsage
         case let .streamClosed(markerSeen):
             terminalMarkerSeen = markerSeen
@@ -268,7 +263,7 @@ struct StreamProcessor {
 
     func process(
         messages: [ChatMessage],
-        totalUsage: inout TokenUsage,
+        totalUsage: inout TokenUsageTotals,
         emittedOutput: inout Bool,
         continuation: AsyncThrowingStream<StreamEvent, Error>.Continuation,
         requestContext: RequestContext? = nil,
@@ -289,7 +284,6 @@ struct StreamProcessor {
                 try state.apply(
                     input,
                     policy: policy,
-                    totalUsage: &totalUsage,
                     continuation: continuation,
                     eventObserver: eventObserver
                 )
@@ -332,6 +326,7 @@ struct StreamProcessor {
         emittedOutput = true
         state.finishAudio(continuation: continuation, eventObserver: eventObserver)
         completionObserver?(.success(diagnostics: state.completionDiagnostics))
+        totalUsage.record(state.usage)
         return state.iteration
     }
 }

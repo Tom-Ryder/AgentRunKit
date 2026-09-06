@@ -3,7 +3,7 @@ import Foundation
 extension Agent {
     func compactStreamingMessagesIfNeeded(
         _ messages: inout [ChatMessage],
-        totalUsage: inout TokenUsage,
+        totalUsage: inout TokenUsageTotals,
         lastTotalTokens: Int?,
         compactor: inout ContextCompactor,
         historyWasRewrittenLocally: inout Bool,
@@ -30,7 +30,7 @@ extension Agent {
     func resolveStreamingIteration(
         iteration: StreamIteration,
         iterationNumber: Int,
-        totalUsage: TokenUsage,
+        totalUsage: TokenUsageTotals,
         iterationContext: StreamIterationContext,
         state: inout AgentLoopState
     ) async throws -> Bool {
@@ -96,7 +96,7 @@ extension Agent {
         call: ToolCall,
         iteration: StreamIteration,
         iterationNumber: Int,
-        totalUsage: TokenUsage,
+        totalUsage: TokenUsageTotals,
         iterationContext: StreamIterationContext,
         state: inout AgentLoopState
     ) async throws -> Bool {
@@ -187,7 +187,7 @@ extension Agent {
     func generateStreamingResponse(
         processor: StreamProcessor,
         messages: inout [ChatMessage],
-        totalUsage: inout TokenUsage,
+        totalUsage: inout TokenUsageTotals,
         compactor: inout ContextCompactor,
         historyWasRewrittenLocally: inout Bool,
         continuation: AsyncThrowingStream<StreamEvent, Error>.Continuation,

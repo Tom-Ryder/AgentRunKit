@@ -11,14 +11,44 @@ struct StreamEventWireFormatTests {
         try #require(UUID(uuidString: string))
     }
 
-    @Test func finishedEventFixtureIsStable() throws {
+    @Test func legacyFinishedEventPreservesPartialAccounting() throws {
+        let archive = [
+            #"{"id":"00000000-0000-0000-0000-000000000101","#,
+            #""kind":{"content":"Done.","history":[],"#,
+            #""reason":{"type":"completed"},"#,
+            #""tokenUsage":{"input":100,"output":50,"reasoning":0},"#,
+            #""type":"finished"},"#,
+            #""runID":"66666666-7777-8888-9999-AAAAAAAAAAAA","#,
+            #""sessionID":"11111111-2222-3333-4444-555555555555","#,
+            #""timestamp":"2026-03-30T14:22:07.123Z"}"#,
+        ].joined()
+        let decoded = try StreamEventJSONCodec.decode(Data(archive.utf8))
+        #expect(try decoded.id == EventID(rawValue: uuid("00000000-0000-0000-0000-000000000101")))
+        #expect(decoded.timestamp == fixedDate(millisecondsSince1970: 1_774_880_527_123))
+        #expect(try decoded.sessionID == SessionID(rawValue: uuid("11111111-2222-3333-4444-555555555555")))
+        #expect(try decoded.runID == RunID(rawValue: uuid("66666666-7777-8888-9999-AAAAAAAAAAAA")))
+        guard case let .finished(usage, content, reason, history) = decoded.kind else {
+            Issue.record("Expected finished event")
+            return
+        }
+        #expect(usage.input == 100)
+        #expect(usage.output == 50)
+        #expect(usage.coverage == .partial)
+        #expect(usage.cacheReadCoverage == .unavailable)
+        #expect(usage.cacheWriteCoverage == .unavailable)
+        #expect(content == "Done.")
+        #expect(reason == .completed)
+        #expect(history.isEmpty)
+    }
+
+    @Test func finishedEventWithAccountingFixtureIsStable() throws {
         let event = try StreamEvent(
             id: EventID(rawValue: uuid("00000000-0000-0000-0000-000000000101")),
             timestamp: fixedDate(millisecondsSince1970: 1_774_880_527_123),
             sessionID: SessionID(rawValue: uuid("11111111-2222-3333-4444-555555555555")),
             runID: RunID(rawValue: uuid("66666666-7777-8888-9999-AAAAAAAAAAAA")),
             kind: .finished(
-                tokenUsage: TokenUsage(input: 100, output: 50),
+                tokenUsage: makeTokenUsageTotals(TokenUsage(input: 100, output: 50)),
                 content: "Done.",
                 reason: .completed,
                 history: []
@@ -32,7 +62,8 @@ struct StreamEventWireFormatTests {
             #"{"id":"00000000-0000-0000-0000-000000000101","#,
             #""kind":{"content":"Done.","history":[],"#,
             #""reason":{"type":"completed"},"#,
-            #""tokenUsage":{"input":100,"output":50,"reasoning":0},"#,
+            #""tokenUsage":{"accounting":{"cacheRead":"unavailable","cacheWrite":"unavailable","#,
+            #""type":"observed","usage":"complete"},"input":100,"output":50,"reasoning":0},"#,
             #""type":"finished"},"#,
             #""runID":"66666666-7777-8888-9999-AAAAAAAAAAAA","#,
             #""sessionID":"11111111-2222-3333-4444-555555555555","#,
@@ -102,21 +133,8 @@ struct StreamEventWireFormatTests {
         #expect(reencodedString == string)
     }
 
-    @Test func structuralFinishedEventFixtureIsStable() throws {
-        let event = try StreamEvent(
-            id: EventID(rawValue: uuid("00000000-0000-0000-0000-000000000301")),
-            timestamp: fixedDate(millisecondsSince1970: 1_774_880_528_123),
-            kind: .finished(
-                tokenUsage: TokenUsage(input: 80, output: 20),
-                content: nil,
-                reason: .maxIterationsReached(limit: 3),
-                history: []
-            )
-        )
-
-        let data = try StreamEventJSONCodec.encode(event)
-        let string = try #require(String(data: data, encoding: .utf8))
-        let expected = [
+    @Test func legacyStructuralFinishedEventPreservesPartialAccounting() throws {
+        let archive = [
             #"{"id":"00000000-0000-0000-0000-000000000301","#,
             #""kind":{"history":[],"#,
             #""reason":{"limit":3,"type":"maxIterationsReached"},"#,
@@ -124,10 +142,17 @@ struct StreamEventWireFormatTests {
             #""type":"finished"},"#,
             #""timestamp":"2026-03-30T14:22:08.123Z"}"#,
         ].joined()
-        #expect(string == expected)
-
-        let decoded = try StreamEventJSONCodec.decode(data)
-        #expect(decoded.kind == event.kind)
+        let decoded = try StreamEventJSONCodec.decode(Data(archive.utf8))
+        guard case let .finished(usage, content, reason, history) = decoded.kind else {
+            Issue.record("Expected finished event")
+            return
+        }
+        #expect(usage.input == 80)
+        #expect(usage.output == 20)
+        #expect(usage.coverage == .partial)
+        #expect(content == nil)
+        #expect(reason == .maxIterationsReached(limit: 3))
+        #expect(history.isEmpty)
     }
 
     @Test func iterationCompletedWithHistoryFixtureIsStable() throws {

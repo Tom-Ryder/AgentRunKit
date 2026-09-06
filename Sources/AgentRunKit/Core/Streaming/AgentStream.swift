@@ -24,7 +24,7 @@ public final class AgentStream<C: ToolContext> {
     public private(set) var reasoning: String = ""
     public private(set) var isStreaming: Bool = false
     public private(set) var error: (any Error & Sendable)?
-    public private(set) var tokenUsage: TokenUsage?
+    public private(set) var tokenUsage: TokenUsageTotals?
     public private(set) var finishReason: FinishReason?
     public private(set) var terminalContent: String?
     public private(set) var history: [ChatMessage] = []
@@ -255,7 +255,7 @@ extension AgentStream {
     }
 
     private func handleFinished(
-        usage: TokenUsage, finishContent: String?, reason: FinishReason?, messages: [ChatMessage],
+        usage: TokenUsageTotals, finishContent: String?, reason: FinishReason?, messages: [ChatMessage],
         toolCallIdPath: [String]
     ) {
         guard toolCallIdPath.isEmpty else { return }

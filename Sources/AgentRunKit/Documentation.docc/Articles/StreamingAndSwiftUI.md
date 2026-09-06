@@ -27,7 +27,11 @@ for try await event in stream {
     case .toolCallCompleted(_, let name, let result):
         print("[\(name) returned \(result.content)]")
     case .finished(let usage, _, let reason, _):
-        print("\nTokens: \(usage.total)")
+        switch usage.coverage {
+        case .complete: print("\nTokens: \(usage.total)")
+        case .partial: print("\nReported subtotal: \(usage.total) tokens")
+        case .unavailable: print("\nUsage unavailable")
+        }
         if let reason {
             print("Reason: \(reason)")
         }
@@ -116,7 +120,7 @@ Cases are grouped below by category.
 
 | Case | Payload | Description |
 |---|---|---|
-| ``StreamEvent/Kind/finished(tokenUsage:content:reason:history:)`` | ``TokenUsage``, content, reason, history | Agent loop completed |
+| ``StreamEvent/Kind/finished(tokenUsage:content:reason:history:)`` | ``TokenUsageTotals``, content, reason, history | Agent or Chat completed with aggregate measurement coverage |
 | ``StreamEvent/Kind/iterationCompleted(usage:iteration:history:)`` | ``TokenUsage``?, iteration number, post-append message snapshot | A provider turn completed, including turns without usage |
 | ``StreamEvent/Kind/compacted(totalTokens:windowSize:)`` | `totalTokens`, `windowSize` | Context was compacted to fit the window |
 | ``StreamEvent/Kind/budgetUpdated(budget:)`` | ``ContextBudget`` | Latest budget snapshot after a provider response |
@@ -145,7 +149,7 @@ let restored = try StreamEventJSONCodec.decode(data)
 
 This canonical codec uses the framework's fixed JSON settings for event transcripts. Plain `Codable` conformance remains available for ordinary Swift use, but transcript persistence should go through ``StreamEventJSONCodec``.
 
-Iteration events omit `usage` when it is unavailable; absent or null usage decodes as `nil`. Older iteration archives without `history` still decode with an empty history, while present null or malformed history remains a decoding error.
+Finished events persist aggregate coverage; legacy totals decode with conservative partial coverage. Iteration events omit `usage` when it is unavailable; absent or null usage decodes as `nil`. Older iteration archives without `history` still decode with an empty history, while present null or malformed history remains a decoding error.
 
 ## AgentStream for SwiftUI
 
@@ -163,7 +167,7 @@ Iteration events omit `usage` when it is unavailable; absent or null usage decod
 | `reasoning` | `String` | Accumulated reasoning from `.reasoningDelta` events |
 | `isStreaming` | `Bool` | True while a stream is active |
 | `error` | `(any Error & Sendable)?` | Set if the stream throws |
-| `tokenUsage` | ``TokenUsage``? | Final cumulative usage from `.finished` |
+| `tokenUsage` | ``TokenUsageTotals``? | Aggregate usage and coverage from `.finished` or checkpoint preload |
 | `finishReason` | `FinishReason?` | Reason from `.finished`, including structural max-iterations or token-budget limits |
 | `terminalContent` | `String?` | Content of the top-level `.finished` event; `nil` until the run completes and for structural terminations |
 | `history` | `[ChatMessage]` | Full conversation history from `.finished` |
@@ -237,7 +241,7 @@ struct ChatView: View {
 
 ## Per-Iteration Token Tracking
 
-Every completed Agent provider turn yields `.iterationCompleted` with that iteration's optional ``TokenUsage``. Missing usage preserves the iteration number and history; it never becomes a zero measurement. Foundation Models, which does not report token usage, therefore emits an iteration event with `nil` usage too. The `.finished` event carries the cumulative total.
+Every completed Agent provider turn yields `.iterationCompleted` with that iteration's optional ``TokenUsage``. Missing usage preserves the iteration number and history; it never becomes a zero measurement. Foundation Models, which does not report token usage, therefore emits an iteration event with `nil` usage too. The `.finished` event carries ``TokenUsageTotals``, including measurement coverage and any returned summarization responses. See <doc:TokenAccounting>.
 
 ``AgentStream`` collects samples in event order, retaining missing positions in `iterationUsages`. Resume contributes the saved iteration snapshot before live samples; it does not reconstruct earlier samples. Use the event's `iteration` value when the original iteration number matters.
 

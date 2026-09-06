@@ -162,7 +162,10 @@ struct CustomCompletionStreamTests {
             Issue.record("Expected a committed finished event")
             return
         }
-        #expect(usage == TokenUsage(input: 12, output: 4))
+        #expect(usage.input == 12)
+        #expect(usage.output == 4)
+        #expect(usage.reasoning == 0)
+        #expect(usage.coverage == .complete)
         #expect(content == expected)
         #expect(reason == .completed)
         #expect(history.count == 3)
@@ -215,7 +218,10 @@ struct CustomCompletionStreamTests {
         #expect(checkpoint.messages == history)
         #expect(toolMessageContents(checkpoint.messages) == [expected])
         #expect(checkpoint.iteration == 1)
-        #expect(checkpoint.tokenUsage == TokenUsage(input: 12, output: 4))
+        #expect(checkpoint.tokenUsage.input == 12)
+        #expect(checkpoint.tokenUsage.output == 4)
+        #expect(checkpoint.tokenUsage.reasoning == 0)
+        #expect(checkpoint.tokenUsage.coverage == .complete)
         #expect(checkpoint.sessionID == session)
     }
 
@@ -553,7 +559,10 @@ struct CustomCompletionStreamBudgetTests {
             Issue.record("Expected a committed finished event")
             return
         }
-        #expect(usage == TokenUsage(input: 100, output: 100))
+        #expect(usage.input == 100)
+        #expect(usage.output == 100)
+        #expect(usage.reasoning == 0)
+        #expect(usage.coverage == .complete)
         #expect(content == expected)
         #expect(reason == .completed)
     }

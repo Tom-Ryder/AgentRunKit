@@ -203,7 +203,7 @@ extension Agent {
         ))
         try state.messages.validateForAgentHistory()
 
-        var totalUsage = TokenUsage()
+        var totalUsage = TokenUsageTotals()
         var lastTotalTokens: Int?
         var compactor = ContextCompactor(client: client, configuration: configuration)
         state.budgetPhase = try makeBudgetPhase()
@@ -304,7 +304,7 @@ extension Agent {
         state.budgetPhase = try makeBudgetPhase()
         try await performStreamLoop(
             state: &state, startIteration: 1,
-            totalUsage: TokenUsage(), lastTotalTokens: nil,
+            totalUsage: TokenUsageTotals(), lastTotalTokens: nil,
             context: context, options: options,
             continuation: continuation
         )
@@ -313,7 +313,7 @@ extension Agent {
     func performStreamLoop(
         state: inout AgentLoopState,
         startIteration: Int,
-        totalUsage: TokenUsage,
+        totalUsage: TokenUsageTotals,
         lastTotalTokens: Int?,
         context: C,
         options: InvocationOptions,
@@ -373,7 +373,7 @@ extension Agent {
     private func runStreamIteration(
         iterationNumber: Int,
         state: inout AgentLoopState,
-        totalUsage: inout TokenUsage,
+        totalUsage: inout TokenUsageTotals,
         lastTotalTokens: inout Int?,
         compactor: inout ContextCompactor,
         iterationContext: StreamIterationContext

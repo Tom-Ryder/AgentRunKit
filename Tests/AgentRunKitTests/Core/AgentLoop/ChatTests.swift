@@ -25,7 +25,10 @@ struct ChatTests {
             Issue.record("Expected finished event")
             return
         }
-        #expect(tokenUsage == TokenUsage(input: 10, output: 5))
+        #expect(tokenUsage.input == 10)
+        #expect(tokenUsage.output == 5)
+        #expect(tokenUsage.reasoning == 0)
+        #expect(tokenUsage.coverage == .complete)
         #expect(content == nil)
         #expect(reason == nil)
         #expect(history.count == 2)
@@ -453,7 +456,10 @@ struct ChatTests {
             Issue.record("Expected finished event")
             return
         }
-        #expect(tokenUsage == TokenUsage(input: 20, output: 10))
+        #expect(tokenUsage.input == 20)
+        #expect(tokenUsage.output == 10)
+        #expect(tokenUsage.reasoning == 0)
+        #expect(tokenUsage.coverage == .complete)
         #expect(content == nil)
         #expect(reason == .maxIterationsReached(limit: 2))
         #expect(history.count == 5)
@@ -763,5 +769,47 @@ struct ChatAudioStreamingTests {
             }
         }
         #expect(audioEvents.isEmpty)
+    }
+}
+
+struct ChatUsageAccountingTests {
+    @Test(arguments: [
+        ([nil, TokenUsage(input: 20, output: 4, cacheRead: 0), nil], .partial),
+        ([nil, nil, nil], .unavailable),
+        ([TokenUsage(cacheRead: 0), TokenUsage(cacheRead: 0), TokenUsage(cacheRead: 0)], .complete),
+    ] as [([TokenUsage?], TokenUsageCoverage)])
+    func toolRoundsPreserveMissingAndZeroMeasurements(
+        usages: [TokenUsage?], coverage: TokenUsageCoverage
+    ) async throws {
+        let echo = try Tool<NoopParams, NoopOutput, EmptyContext>(
+            name: "echo", description: "Returns a result", executor: { _, _ in NoopOutput() }
+        )
+        let sequences: [[StreamDelta]] = [
+            [.toolCallStart(index: 0, id: "first", name: "echo", kind: .function),
+             .toolCallDelta(index: 0, arguments: "{}"), .finished(usage: usages[0])],
+            [.toolCallStart(index: 0, id: "second", name: "echo", kind: .function),
+             .toolCallDelta(index: 0, arguments: "{}"), .finished(usage: usages[1])],
+            [.content("done"), .finished(usage: usages[2])],
+        ]
+        let client = StreamingMockLLMClient(streamSequences: sequences)
+        let chat = Chat<EmptyContext>(client: client, tools: [echo])
+        var events: [StreamEvent] = []
+        for try await event in chat.stream("Echo twice", context: EmptyContext()) {
+            events.append(event)
+        }
+        guard case let .finished(totals, _, reason, history) = events.last?.kind else {
+            Issue.record("Expected finished event")
+            return
+        }
+        #expect(totals.input == (coverage == .partial ? 20 : 0))
+        #expect(totals.output == (coverage == .partial ? 4 : 0))
+        #expect(totals.cacheRead == (coverage == .unavailable ? nil : 0))
+        #expect(totals.coverage == coverage && totals.cacheReadCoverage == coverage)
+        #expect(totals.cacheWrite == nil && totals.cacheWriteCoverage == .unavailable)
+        #expect(reason == nil)
+        #expect(history.count == 6)
+        #expect(history.last == .assistant(AssistantMessage(content: "done", tokenUsage: usages[2])))
+        #expect(events.count(where: { if case .toolCallCompleted = $0.kind { true } else { false } }) == 2)
+        #expect(await client.allCapturedTools.count == 3)
     }
 }

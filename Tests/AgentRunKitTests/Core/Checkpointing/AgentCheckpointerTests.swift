@@ -6,12 +6,13 @@ private func makeCheckpoint(
     sessionID: SessionID,
     iteration: Int,
     timestamp: Date = Date(),
+    tokenUsage: TokenUsageTotals = makeTokenUsageTotals(TokenUsage(input: 1, output: 1)),
     terminalOutcome: AgentTerminalOutcome? = nil
 ) -> AgentCheckpoint {
     AgentCheckpoint(
         messages: [.user("Hi")],
         iteration: iteration,
-        tokenUsage: TokenUsage(input: 1, output: 1),
+        tokenUsage: tokenUsage,
         iterationUsage: nil,
         contextBudgetState: nil,
         historyWasRewrittenLocally: false,
@@ -210,5 +211,28 @@ struct AgentCheckpointerTests {
 
         let ids = try await backend.list(session: session)
         #expect(ids == [valid.checkpointID])
+    }
+}
+
+struct CheckpointerAccountingTests {
+    @Test(arguments: [
+        TokenUsageTotals(),
+        makeTokenUsageTotals(nil),
+        makeTokenUsageTotals(TokenUsage(input: 7, output: 3, cacheRead: 0), nil),
+        makeTokenUsageTotals(TokenUsage(input: 7, output: 3, cacheRead: 0, cacheWrite: 0)),
+    ])
+    func backendsPreserveEveryAccountingState(totals: TokenUsageTotals) async throws {
+        let directory = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let backends: [any AgentCheckpointer] = [InMemoryCheckpointer(), FileCheckpointer(directory: directory)]
+        let checkpoint = makeCheckpoint(sessionID: SessionID(), iteration: 1, tokenUsage: totals)
+        for backend in backends {
+            try await backend.save(checkpoint)
+            let loaded = try await backend.load(checkpoint.checkpointID)
+            #expect(loaded.tokenUsage == totals)
+            #expect(loaded.checkpointID == checkpoint.checkpointID)
+            #expect(loaded.messages == checkpoint.messages)
+            #expect(try await backend.list(session: checkpoint.sessionID) == [checkpoint.checkpointID])
+        }
     }
 }

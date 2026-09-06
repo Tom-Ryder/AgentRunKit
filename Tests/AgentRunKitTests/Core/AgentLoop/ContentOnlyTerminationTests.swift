@@ -9,6 +9,34 @@ private let contentOnlyFinishDeltas: [StreamDelta] = [
 ]
 
 struct AgentContentOnlyRunTests {
+    @Test(arguments: [TokenUsage(cacheRead: 0, cacheWrite: 0), nil])
+    func contentOnlyCompletionPreservesMeasurementAvailability(usage: TokenUsage?) async throws {
+        let client = ContentOnlyTerminatingMockLLMClient(
+            generateResponses: [AssistantMessage(content: "done", tokenUsage: usage)],
+            streamSequences: [[.content("done"), .finished(usage: usage)]]
+        )
+        let agent = Agent<EmptyContext>(client: client, tools: [])
+        let result = try await agent.run(userMessage: "Q", context: EmptyContext())
+        var events: [StreamEvent] = []
+        for try await event in agent.stream(userMessage: "Q", context: EmptyContext()) {
+            events.append(event)
+        }
+        guard case let .finished(streamedTotals, content, reason, _) = events.last?.kind else {
+            Issue.record("Expected finished event")
+            return
+        }
+        for totals in [result.totalTokenUsage, streamedTotals] {
+            #expect(totals.total == 0)
+            #expect(totals.coverage == (usage == nil ? .unavailable : .complete))
+            #expect(totals.cacheRead == (usage == nil ? nil : 0))
+            #expect(totals.cacheWrite == (usage == nil ? nil : 0))
+        }
+        #expect(content == "done" && result.content == "done")
+        #expect(reason == .completed && result.finishReason == .completed)
+        #expect(events.count == 3)
+        #expect(await client.invocationCount == 2)
+    }
+
     @Test
     func runDoesNotTerminateContentOnlyResponseWithToolCalls() async throws {
         let probe = ContentOnlyToolProbe()
@@ -104,9 +132,10 @@ struct AgentContentOnlyStreamTests {
             Issue.record("Expected finished event")
             return
         }
-        if let usage {
-            #expect(tokenUsage == usage)
-        }
+        #expect(tokenUsage.input == (usage == nil ? 0 : 3))
+        #expect(tokenUsage.output == (usage == nil ? 0 : 5))
+        #expect(tokenUsage.coverage == (usage == nil ? .unavailable : .complete))
+        #expect(tokenUsage.cacheReadCoverage == .unavailable)
         #expect(content == "The answer is 42.")
         #expect(reason == .completed)
 

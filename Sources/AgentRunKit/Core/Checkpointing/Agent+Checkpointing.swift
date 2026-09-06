@@ -5,7 +5,7 @@ extension Agent {
     func checkpointIfConfigured(
         iterationNumber: Int,
         state: AgentLoopState,
-        totalUsage: TokenUsage,
+        totalUsage: TokenUsageTotals,
         iterationUsage: TokenUsage?,
         eventFactory: StreamEventFactory,
         checkpointer: (any AgentCheckpointer)?,

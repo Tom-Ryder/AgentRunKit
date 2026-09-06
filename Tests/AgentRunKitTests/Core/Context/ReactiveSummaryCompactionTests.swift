@@ -63,7 +63,7 @@ struct ReactiveSummaryCompactionTests {
             .assistant(AssistantMessage(content: "short")),
             .user("Continue"),
         ]
-        var totalUsage = TokenUsage()
+        var totalUsage = TokenUsageTotals()
         let outcome = try await compactor.reactiveCompact(&messages, totalUsage: &totalUsage)
 
         #expect(outcome == .compacted)
@@ -87,7 +87,7 @@ struct ReactiveSummaryCompactionTests {
             .assistant(AssistantMessage(content: "short")),
             .user("Continue"),
         ]
-        var totalUsage = TokenUsage()
+        var totalUsage = TokenUsageTotals()
 
         let outcome = try await compactor.reactiveCompact(&messages, totalUsage: &totalUsage)
 
@@ -97,12 +97,13 @@ struct ReactiveSummaryCompactionTests {
         #expect(capturedTools[0].isEmpty)
     }
 
-    @Test
-    func toolCallOnlySummaryResponseIsRejected() async throws {
+    @Test(arguments: [TokenUsage(input: 10, output: 5, cacheRead: 0), nil])
+    func toolCallOnlySummaryResponseIsRejected(summaryUsage: TokenUsage?) async throws {
         let client = SummaryMockLLMClient(
             responses: [AssistantMessage(
                 content: "",
-                toolCalls: [ToolCall(id: "call_1", name: "search", arguments: "{}")]
+                toolCalls: [ToolCall(id: "call_1", name: "search", arguments: "{}")],
+                tokenUsage: summaryUsage
             )],
             contextWindowSize: 1000
         )
@@ -115,18 +116,25 @@ struct ReactiveSummaryCompactionTests {
             .assistant(AssistantMessage(content: "short")),
             .user("Continue"),
         ]
-        var totalUsage = TokenUsage()
+        var totalUsage = TokenUsageTotals()
 
         let outcome = try await compactor.reactiveCompact(&messages, totalUsage: &totalUsage)
 
         #expect(outcome == .unchanged)
         #expect(await client.generateCallCount == 1)
+        #expect(totalUsage.input == (summaryUsage == nil ? 0 : 10))
+        #expect(totalUsage.output == (summaryUsage == nil ? 0 : 5))
+        #expect(totalUsage.coverage == (summaryUsage == nil ? .unavailable : .complete))
+        #expect(totalUsage.cacheRead == (summaryUsage == nil ? nil : 0))
     }
 
     @Test
     func emptyTaggedSummaryResponseIsRejected() async throws {
         let client = SummaryMockLLMClient(
-            responses: [AssistantMessage(content: "<analysis>draft</analysis><summary>   </summary>")],
+            responses: [AssistantMessage(
+                content: "<analysis>draft</analysis><summary>   </summary>",
+                tokenUsage: TokenUsage(input: 8, output: 2, cacheRead: 0)
+            )],
             contextWindowSize: 1000
         )
         var compactor = ContextCompactor(
@@ -138,12 +146,14 @@ struct ReactiveSummaryCompactionTests {
             .assistant(AssistantMessage(content: "short")),
             .user("Continue"),
         ]
-        var totalUsage = TokenUsage()
+        var totalUsage = TokenUsageTotals()
 
         let outcome = try await compactor.reactiveCompact(&messages, totalUsage: &totalUsage)
 
         #expect(outcome == .unchanged)
         #expect(await client.generateCallCount == 1)
+        #expect(totalUsage.input == 8 && totalUsage.output == 2)
+        #expect(totalUsage.coverage == .complete)
     }
 
     @Test
@@ -158,7 +168,7 @@ struct ReactiveSummaryCompactionTests {
             .assistant(AssistantMessage(content: "short")),
             .user("Continue"),
         ]
-        var totalUsage = TokenUsage()
+        var totalUsage = TokenUsageTotals()
         let outcome = try await compactor.reactiveCompact(&messages, totalUsage: &totalUsage)
 
         #expect(outcome == .unchanged)
@@ -181,7 +191,7 @@ struct ReactiveSummaryCompactionTests {
             .assistant(AssistantMessage(content: "short")),
             .user("Continue"),
         ]
-        var totalUsage = TokenUsage()
+        var totalUsage = TokenUsageTotals()
 
         for _ in 0 ..< 3 {
             let outcome = try await compactor.reactiveCompact(&messages, totalUsage: &totalUsage)
@@ -209,10 +219,12 @@ struct ReactiveSummaryCompactionTests {
             .assistant(AssistantMessage(content: "short")),
             .user("Continue"),
         ]
-        var totalUsage = TokenUsage()
+        var totalUsage = TokenUsageTotals()
         let outcome = try await compactor.reactiveCompact(&messages, totalUsage: &totalUsage)
 
         #expect(outcome == .unchanged)
         #expect(await client.generateCallCount == 1)
+        #expect(totalUsage.total == 0 && totalUsage.coverage == .complete)
+        #expect(totalUsage.cacheRead == 0 && totalUsage.cacheWrite == 0)
     }
 }

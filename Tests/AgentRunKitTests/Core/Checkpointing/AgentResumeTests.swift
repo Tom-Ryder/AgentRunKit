@@ -43,7 +43,7 @@ private let terminalMessages: [ChatMessage] = [
 private func makeTerminalCheckpoint(
     messages: [ChatMessage] = terminalMessages,
     iteration: Int = 1,
-    tokenUsage: TokenUsage = TokenUsage(input: 9, output: 4),
+    tokenUsage: TokenUsageTotals = makeTokenUsageTotals(TokenUsage(input: 9, output: 4)),
     iterationUsage: TokenUsage? = TokenUsage(input: 5, output: 2),
     mcpToolBindings: Set<MCPToolBinding> = [],
     sessionID: SessionID = SessionID(),
@@ -132,7 +132,7 @@ struct AgentResumeTests {
         let checkpoint = AgentCheckpoint(
             messages: [.user("Hi"), .assistant(AssistantMessage(content: "first"))],
             iteration: 1,
-            tokenUsage: TokenUsage(input: 5, output: 5),
+            tokenUsage: makeTokenUsageTotals(TokenUsage(input: 5, output: 5)),
             iterationUsage: usage,
             sessionID: session, runID: runID, checkpointID: checkpointID
         )
@@ -167,7 +167,7 @@ struct AgentResumeTests {
         try await backend.save(AgentCheckpoint(
             messages: [.user("Sibling"), .assistant(AssistantMessage(content: "sibling"))],
             iteration: 1,
-            tokenUsage: TokenUsage(input: 3, output: 3),
+            tokenUsage: makeTokenUsageTotals(TokenUsage(input: 3, output: 3)),
             iterationUsage: TokenUsage(input: 3, output: 3),
             sessionID: session,
             runID: RunID(),
@@ -177,7 +177,7 @@ struct AgentResumeTests {
         try await backend.save(AgentCheckpoint(
             messages: [.user("Target"), .assistant(AssistantMessage(content: "target"))],
             iteration: 1,
-            tokenUsage: TokenUsage(input: 5, output: 5),
+            tokenUsage: makeTokenUsageTotals(TokenUsage(input: 5, output: 5)),
             iterationUsage: TokenUsage(input: 5, output: 5),
             sessionID: session,
             runID: RunID(),
@@ -211,7 +211,7 @@ struct AgentResumeTests {
         let earlier = AgentCheckpoint(
             messages: [.user("Hi"), .assistant(AssistantMessage(content: "first"))],
             iteration: 1,
-            tokenUsage: TokenUsage(input: 5, output: 5),
+            tokenUsage: makeTokenUsageTotals(TokenUsage(input: 5, output: 5)),
             sessionID: session, runID: originalRun, checkpointID: checkpointID
         )
         try await backend.save(earlier)
@@ -239,7 +239,7 @@ struct AgentResumeTests {
         let checkpoint = AgentCheckpoint(
             messages: [.user("Hi"), .assistant(AssistantMessage(content: "done"))],
             iteration: 5,
-            tokenUsage: TokenUsage(input: 1, output: 1),
+            tokenUsage: makeTokenUsageTotals(TokenUsage(input: 1, output: 1)),
             sessionID: session, runID: RunID(), checkpointID: checkpointID
         )
         try await backend.save(checkpoint)
@@ -272,7 +272,7 @@ struct AgentResumeTests {
         let checkpoint = AgentCheckpoint(
             messages: [.user("Hi"), .assistant(AssistantMessage(content: "done"))],
             iteration: 1,
-            tokenUsage: TokenUsage(input: 100, output: 100),
+            tokenUsage: makeTokenUsageTotals(TokenUsage(input: 100, output: 100)),
             sessionID: session, runID: RunID(), checkpointID: checkpointID
         )
         try await backend.save(checkpoint)
@@ -317,7 +317,7 @@ struct AgentResumeTests {
         let checkpoint = AgentCheckpoint(
             messages: [.user("Hi"), .assistant(AssistantMessage(content: "first"))],
             iteration: 2,
-            tokenUsage: TokenUsage(input: 5, output: 5),
+            tokenUsage: makeTokenUsageTotals(TokenUsage(input: 5, output: 5)),
             sessionID: session, runID: RunID(), checkpointID: checkpointID
         )
         try await backend.save(checkpoint)
@@ -350,7 +350,7 @@ struct AgentResumeTests {
         try await backend.save(AgentCheckpoint(
             messages: [.user("Hi"), .assistant(AssistantMessage(content: "first"))],
             iteration: 1,
-            tokenUsage: TokenUsage(input: 5, output: 5),
+            tokenUsage: makeTokenUsageTotals(TokenUsage(input: 5, output: 5)),
             iterationUsage: TokenUsage(input: 5, output: 5),
             sessionID: session, runID: RunID(), checkpointID: checkpointID
         ))
@@ -387,7 +387,7 @@ struct AgentResumeTests {
         try await backend.save(AgentCheckpoint(
             messages: [.user("Hi"), .assistant(assistantCall), toolResultMessage],
             iteration: 1,
-            tokenUsage: TokenUsage(input: 5, output: 5),
+            tokenUsage: makeTokenUsageTotals(TokenUsage(input: 5, output: 5)),
             iterationUsage: TokenUsage(input: 5, output: 5),
             sessionID: session, runID: RunID(), checkpointID: checkpointID
         ))
@@ -411,7 +411,7 @@ struct AgentResumeTests {
         try await backend.save(AgentCheckpoint(
             messages: [.user("Hi"), .assistant(AssistantMessage(content: "first"))],
             iteration: 1,
-            tokenUsage: TokenUsage(input: 5, output: 5),
+            tokenUsage: makeTokenUsageTotals(TokenUsage(input: 5, output: 5)),
             iterationUsage: TokenUsage(input: 5, output: 5),
             sessionAllowlist: ["echo"],
             sessionID: session, runID: RunID(), checkpointID: checkpointID
@@ -442,6 +442,41 @@ struct AgentResumeTests {
         _ = try await collect(stream)
         let count = await approvalRequests.value
         #expect(count == 0)
+    }
+}
+
+struct LegacyCheckpointResumeTests {
+    @Test
+    func liveResponseCannotUpgradeLegacyAccounting() async throws {
+        let archive = #"""
+        {"messages":[{"role":"user","content":"Hi"}],"iteration":1,
+         "tokenUsage":{"input":5,"output":5,"reasoning":0,"cacheRead":0},
+         "sessionID":"00000000-0000-0000-0000-000000000001",
+         "runID":"00000000-0000-0000-0000-000000000002",
+         "checkpointID":"00000000-0000-0000-0000-000000000003","timestamp":0}
+        """#
+        let target = try JSONDecoder().decode(AgentCheckpoint.self, from: Data(archive.utf8))
+        let backend = InMemoryCheckpointer()
+        try await backend.save(target)
+        let client = StreamingMockLLMClient(streamSequences: [secondFinishDeltas])
+        let agent = Agent<EmptyContext>(client: client, tools: [])
+        let events = try await collect(agent.resume(
+            from: target.checkpointID, checkpointer: backend, context: EmptyContext()
+        ))
+        #expect(events.first?.kind == .iterationCompleted(usage: nil, iteration: 1, history: target.messages))
+        guard case let .finished(totals, content, reason, _) = events.last?.kind else {
+            Issue.record("Expected finished event")
+            return
+        }
+        #expect(totals.input == 12 && totals.output == 12)
+        #expect(totals.coverage == .partial)
+        #expect(totals.cacheRead == 0 && totals.cacheReadCoverage == .partial)
+        #expect(totals.cacheWrite == nil && totals.cacheWriteCoverage == .unavailable)
+        #expect(content == "live continuation" && reason == .completed)
+        #expect(await client.allCapturedTools.count == 1)
+        let encoded = try JSONEncoder().encode(totals)
+        let restored = try JSONDecoder().decode(TokenUsageTotals.self, from: encoded)
+        #expect(restored.input == 12 && restored.output == 12 && restored.coverage == .partial)
     }
 }
 
@@ -535,7 +570,7 @@ struct AgentTerminalResumeTests {
         try await backend.save(AgentCheckpoint(
             messages: [.user("Hi"), .tool(id: "orphan", name: "echo", content: "{}")],
             iteration: 1,
-            tokenUsage: TokenUsage(input: 5, output: 5),
+            tokenUsage: makeTokenUsageTotals(TokenUsage(input: 5, output: 5)),
             sessionID: SessionID(), runID: RunID(), checkpointID: checkpointID
         ))
         let agent = Agent<EmptyContext>(
@@ -578,7 +613,10 @@ struct AgentTerminalResumeTests {
             Issue.record("Expected a live .finished")
             return
         }
-        #expect(usage == TokenUsage(input: 9, output: 4))
+        #expect(usage.input == 9)
+        #expect(usage.output == 4)
+        #expect(usage.reasoning == 0)
+        #expect(usage.coverage == .complete)
         #expect(content == terminalOutcome.content)
         #expect(reason == .completed)
         #expect(history == terminalMessages)
@@ -604,7 +642,7 @@ struct AgentTerminalResumeTests {
         #expect(events.map(\.kind) == [
             .iterationCompleted(usage: nil, iteration: 1, history: terminalMessages),
             .finished(
-                tokenUsage: TokenUsage(input: 9, output: 4),
+                tokenUsage: makeTokenUsageTotals(TokenUsage(input: 9, output: 4)),
                 content: terminalOutcome.content, reason: .completed, history: terminalMessages
             ),
         ])

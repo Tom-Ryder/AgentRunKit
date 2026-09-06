@@ -203,7 +203,7 @@ struct AgentStreamingTests {
             Issue.record("Expected finished event")
             return
         }
-        #expect(tokenUsage == TokenUsage())
+        #expect(tokenUsage.total == 0 && tokenUsage.coverage == .unavailable)
         #expect(content == nil)
         #expect(reason == .maxIterationsReached(limit: 3))
         #expect(history.count == 7)
@@ -886,7 +886,7 @@ struct AgentStreamingTokenBudgetTests {
             Issue.record("Expected finished event")
             return
         }
-        #expect(tokenUsage == TokenUsage(input: 40, output: 40))
+        #expect(tokenUsage.input == 40 && tokenUsage.output == 40 && tokenUsage.coverage == .complete)
         #expect(content == nil)
         #expect(reason == .tokenBudgetExceeded(budget: 50, used: 80))
         #expect(history.count == 3)

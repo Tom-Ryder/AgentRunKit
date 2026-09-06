@@ -173,21 +173,21 @@ struct AgentCheckpointingIntegrationTests {
         }
     }
 
-    @Test
-    func streamSavesCheckpointMetadataAfterEachNonTerminalIteration() async throws {
+    @Test(arguments: [TokenUsage(input: 10, output: 5), nil])
+    func streamSavesCheckpointMetadataAfterEachNonTerminalIteration(firstUsage: TokenUsage?) async throws {
         let backend = InMemoryCheckpointer()
         let session = SessionID()
         let echoIteration1: [StreamDelta] = [
             .toolCallStart(index: 0, id: "call_1", name: "echo", kind: .function),
             .toolCallDelta(index: 0, arguments: #"{"message":"first"}"#),
-            .finished(usage: TokenUsage(input: 10, output: 5)),
+            .finished(usage: firstUsage),
         ]
         let echoIteration2: [StreamDelta] = [
             .toolCallStart(index: 0, id: "call_2", name: "echo", kind: .function),
             .toolCallDelta(index: 0, arguments: #"{"message":"second"}"#),
             .finished(usage: TokenUsage(input: 17, output: 11)),
         ]
-        _ = try await runStream(
+        let events = try await runStream(
             sequences: [echoIteration1, echoIteration2, finishDeltas],
             tools: [makeEchoTool()],
             checkpointer: backend,
@@ -199,13 +199,26 @@ struct AgentCheckpointingIntegrationTests {
         let secondCheckpoint = try await backend.load(ids[1])
 
         #expect(firstCheckpoint.iteration == 1)
-        #expect(firstCheckpoint.iterationUsage == TokenUsage(input: 10, output: 5))
-        #expect(firstCheckpoint.tokenUsage == TokenUsage(input: 10, output: 5))
+        #expect(firstCheckpoint.iterationUsage == firstUsage)
+        #expect(firstCheckpoint.tokenUsage.input == (firstUsage == nil ? 0 : 10))
+        #expect(firstCheckpoint.tokenUsage.output == (firstUsage == nil ? 0 : 5))
+        #expect(firstCheckpoint.tokenUsage.reasoning == 0)
+        #expect(firstCheckpoint.tokenUsage.coverage == (firstUsage == nil ? .unavailable : .complete))
         #expect(firstCheckpoint.sessionID == session)
 
         #expect(secondCheckpoint.iteration == 2)
         #expect(secondCheckpoint.iterationUsage == TokenUsage(input: 17, output: 11))
-        #expect(secondCheckpoint.tokenUsage == TokenUsage(input: 27, output: 16))
+        #expect(secondCheckpoint.tokenUsage.input == (firstUsage == nil ? 17 : 27))
+        #expect(secondCheckpoint.tokenUsage.output == (firstUsage == nil ? 11 : 16))
+        #expect(secondCheckpoint.tokenUsage.reasoning == 0)
+        #expect(secondCheckpoint.tokenUsage.coverage == (firstUsage == nil ? .partial : .complete))
+        guard case let .finished(totals, _, _, _) = events.last?.kind else {
+            Issue.record("Expected finished event")
+            return
+        }
+        #expect(totals.input == (firstUsage == nil ? 22 : 32))
+        #expect(totals.output == (firstUsage == nil ? 16 : 21))
+        #expect(totals.coverage == (firstUsage == nil ? .partial : .complete))
     }
 
     @Test

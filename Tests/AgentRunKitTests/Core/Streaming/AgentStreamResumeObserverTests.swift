@@ -105,7 +105,7 @@ struct AgentStreamResumeObserverTests {
         try await backend.save(AgentCheckpoint(
             messages: [.user("Hi"), .assistant(AssistantMessage(content: "ok"))],
             iteration: 1,
-            tokenUsage: TokenUsage(input: 1, output: 1),
+            tokenUsage: makeTokenUsageTotals(TokenUsage(input: 1, output: 1)),
             iterationUsage: nil,
             sessionID: session, runID: RunID(), checkpointID: checkpointID
         ))
@@ -147,7 +147,7 @@ struct AgentStreamResumeObserverTests {
         try await backend.save(AgentCheckpoint(
             messages: [.user("Hi"), .assistant(AssistantMessage(content: "first"))],
             iteration: 1,
-            tokenUsage: TokenUsage(input: 5, output: 5),
+            tokenUsage: makeTokenUsageTotals(TokenUsage(input: 5, output: 5), nil),
             iterationUsage: usage,
             sessionID: session, runID: RunID(), checkpointID: checkpointID
         ))
@@ -164,10 +164,15 @@ struct AgentStreamResumeObserverTests {
         let stream = AgentStream(agent: agent, bufferCapacity: 64)
         try await stream.resume(from: checkpointID, checkpointer: backend, context: EmptyContext())
         #expect(stream.history == [.user("Hi"), .assistant(AssistantMessage(content: "first"))])
-        #expect(stream.tokenUsage == TokenUsage(input: 5, output: 5))
+        #expect(stream.tokenUsage?.input == 5)
+        #expect(stream.tokenUsage?.output == 5)
+        #expect(stream.tokenUsage?.reasoning == 0)
+        #expect(stream.tokenUsage?.coverage == .partial)
         #expect(stream.iterationUsages.isEmpty)
         #expect(stream.iterationsReplayed == 0)
         await awaitStreamCompletion(stream)
+        #expect(stream.tokenUsage?.input == 12 && stream.tokenUsage?.output == 12)
+        #expect(stream.tokenUsage?.coverage == .partial)
         #expect(stream.iterationsReplayed == 1)
         #expect(stream.iterationUsages == [usage, TokenUsage(input: 7, output: 7)])
         #expect(stream.currentCheckpoint == checkpointID)
@@ -188,7 +193,7 @@ struct AgentStreamResumeObserverTests {
         try await backend.save(AgentCheckpoint(
             messages: messages,
             iteration: 1,
-            tokenUsage: TokenUsage(input: 42, output: 24),
+            tokenUsage: makeTokenUsageTotals(TokenUsage(input: 42, output: 24)),
             iterationUsage: TokenUsage(input: 42, output: 24),
             sessionID: session, runID: RunID(), checkpointID: checkpointID
         ))
@@ -207,7 +212,10 @@ struct AgentStreamResumeObserverTests {
 
         #expect(stream.sessionID == session)
         #expect(stream.history == messages)
-        #expect(stream.tokenUsage == TokenUsage(input: 42, output: 24))
+        #expect(stream.tokenUsage?.input == 42)
+        #expect(stream.tokenUsage?.output == 24)
+        #expect(stream.tokenUsage?.reasoning == 0)
+        #expect(stream.tokenUsage?.coverage == .complete)
         #expect(stream.currentCheckpoint == checkpointID)
     }
 
@@ -219,7 +227,7 @@ struct AgentStreamResumeObserverTests {
         try await backend.save(AgentCheckpoint(
             messages: [.user("Hi"), .assistant(AssistantMessage(content: "replay"))],
             iteration: 1,
-            tokenUsage: TokenUsage(input: 5, output: 5),
+            tokenUsage: makeTokenUsageTotals(TokenUsage(input: 5, output: 5)),
             iterationUsage: TokenUsage(input: 5, output: 5),
             sessionID: session, runID: RunID(), checkpointID: checkpointID
         ))
@@ -261,7 +269,7 @@ struct AgentStreamResumeObserverTests {
         try await backend.save(AgentCheckpoint(
             messages: [.user("Hi"), .assistant(AssistantMessage(content: "cached"))],
             iteration: 1,
-            tokenUsage: TokenUsage(input: 5, output: 5),
+            tokenUsage: makeTokenUsageTotals(TokenUsage(input: 5, output: 5)),
             iterationUsage: usage,
             sessionID: session, runID: RunID(), checkpointID: checkpointID
         ))
@@ -305,7 +313,7 @@ struct AgentStreamResumeObserverTests {
         try await backend.save(AgentCheckpoint(
             messages: [.user("Hi"), .assistant(AssistantMessage(content: "first"))],
             iteration: 1,
-            tokenUsage: TokenUsage(input: 5, output: 5),
+            tokenUsage: makeTokenUsageTotals(TokenUsage(input: 5, output: 5)),
             iterationUsage: TokenUsage(input: 5, output: 5),
             sessionID: session, runID: RunID(), checkpointID: checkpointID
         ))
@@ -362,7 +370,7 @@ struct AgentStreamResumeObserverTests {
         try await inner.save(AgentCheckpoint(
             messages: [.user("Hi"), .assistant(AssistantMessage(content: "first"))],
             iteration: 1,
-            tokenUsage: TokenUsage(input: 5, output: 5),
+            tokenUsage: makeTokenUsageTotals(TokenUsage(input: 5, output: 5)),
             iterationUsage: TokenUsage(input: 5, output: 5),
             sessionID: session, runID: RunID(), checkpointID: checkpointID
         ))
@@ -392,7 +400,7 @@ struct AgentStreamResumeObserverTests {
         try await backend.save(AgentCheckpoint(
             messages: [.user("Hi"), .assistant(AssistantMessage(content: "first"))],
             iteration: 1,
-            tokenUsage: TokenUsage(input: 5, output: 5),
+            tokenUsage: makeTokenUsageTotals(TokenUsage(input: 5, output: 5)),
             iterationUsage: TokenUsage(input: 5, output: 5),
             sessionID: session, runID: RunID(), checkpointID: checkpointID
         ))
@@ -479,7 +487,7 @@ struct AgentStreamCheckpointObservationTests {
         try await backend.save(AgentCheckpoint(
             messages: [.user("Summarize"), .assistant(AssistantMessage(content: "summarized"))],
             iteration: 1,
-            tokenUsage: TokenUsage(input: 9, output: 4),
+            tokenUsage: makeTokenUsageTotals(TokenUsage(input: 9, output: 4)),
             iterationUsage: TokenUsage(input: 5, output: 2),
             contextBudgetState: nil,
             historyWasRewrittenLocally: false,
@@ -525,7 +533,7 @@ struct AgentStreamCheckpointObservationTests {
         try await backend.save(AgentCheckpoint(
             messages: messages,
             iteration: 1,
-            tokenUsage: TokenUsage(input: 9, output: 4),
+            tokenUsage: makeTokenUsageTotals(TokenUsage(input: 9, output: 4), nil),
             iterationUsage: usage,
             contextBudgetState: nil,
             historyWasRewrittenLocally: false,
@@ -553,7 +561,10 @@ struct AgentStreamCheckpointObservationTests {
         #expect(stream.finishReason == .completed)
         #expect(stream.currentCheckpoint == checkpointID)
         #expect(stream.history == messages)
-        #expect(stream.tokenUsage == TokenUsage(input: 9, output: 4))
+        #expect(stream.tokenUsage?.input == 9)
+        #expect(stream.tokenUsage?.output == 4)
+        #expect(stream.tokenUsage?.reasoning == 0)
+        #expect(stream.tokenUsage?.coverage == .partial)
         #expect(stream.sessionID == session)
         #expect(stream.iterationsReplayed == 0)
         #expect(stream.iterationUsages.isEmpty)
@@ -564,6 +575,8 @@ struct AgentStreamCheckpointObservationTests {
         #expect(stream.finishReason == .completed)
         #expect(stream.currentCheckpoint == checkpointID)
         #expect(stream.history == messages)
+        #expect(stream.tokenUsage?.input == 9 && stream.tokenUsage?.output == 4)
+        #expect(stream.tokenUsage?.coverage == .partial)
         #expect(stream.iterationsReplayed == 1)
         #expect(stream.iterationUsages == [usage])
         #expect(stream.error == nil)
@@ -576,7 +589,7 @@ struct AgentStreamCheckpointObservationTests {
         let checkpoint = AgentCheckpoint(
             messages: [.user("Checkpointed"), .assistant(AssistantMessage(content: "earlier"))],
             iteration: 1,
-            tokenUsage: TokenUsage(input: 42, output: 24),
+            tokenUsage: makeTokenUsageTotals(TokenUsage(input: 42, output: 24)),
             iterationUsage: TokenUsage(input: 42, output: 24),
             sessionID: checkpointSession, runID: RunID(), checkpointID: checkpointID
         )
@@ -602,7 +615,10 @@ struct AgentStreamCheckpointObservationTests {
 
         #expect(stream.content == "fresh")
         #expect(stream.terminalContent == "fresh")
-        #expect(stream.tokenUsage == TokenUsage(input: 1, output: 1))
+        #expect(stream.tokenUsage?.input == 1)
+        #expect(stream.tokenUsage?.output == 1)
+        #expect(stream.tokenUsage?.reasoning == 0)
+        #expect(stream.tokenUsage?.coverage == .complete)
         #expect(stream.history.contains(.user("Fresh")))
         #expect(!stream.history.contains(.user("Checkpointed")))
         #expect(stream.sessionID != checkpointSession)
@@ -616,7 +632,7 @@ struct AgentStreamCheckpointObservationTests {
         let unresumable = AgentCheckpoint(
             messages: [.user("Checkpointed"), .assistant(AssistantMessage(content: "earlier"))],
             iteration: 1,
-            tokenUsage: TokenUsage(input: 42, output: 24),
+            tokenUsage: makeTokenUsageTotals(TokenUsage(input: 42, output: 24)),
             sessionID: SessionID(), runID: RunID(), checkpointID: checkpointID,
             mcpToolBindings: [MCPToolBinding(serverName: "alpha", toolName: "search")]
         )

@@ -119,14 +119,19 @@ final class EventRenderer {
             Terminal.style(format(elapsed), .dim)
     }
 
-    private func renderFinished(usage: TokenUsage, content: String?, reason: FinishReason?) {
+    private func renderFinished(usage: TokenUsageTotals, content: String?, reason: FinishReason?) {
         if let content, !content.isEmpty {
             Terminal.writeLine("")
             Terminal.writeLine(content)
         }
         Terminal.writeLine("")
         let status = reason?.description ?? "completed"
-        Terminal.writeLine("\(Terminal.pill("finished", style: .green)) \(status) · \(usage.total) tokens")
+        let measurement = switch usage.coverage {
+        case .complete: "\(usage.total) tokens"
+        case .partial: "\(usage.total) reported tokens (partial)"
+        case .unavailable: "usage unavailable"
+        }
+        Terminal.writeLine("\(Terminal.pill("finished", style: .green)) \(status) · \(measurement)")
     }
 
     private func renderIteration(usage: TokenUsage?, iteration: Int) {

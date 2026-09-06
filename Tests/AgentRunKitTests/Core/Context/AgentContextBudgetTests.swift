@@ -834,7 +834,9 @@ struct ContextBudgetMissingUsageBehaviorTests {
         #expect(try requireContent(result) == "done")
         #expect(result.iterations == 3)
         #expect(await counter.currentValue() == 2)
-        #expect(result.totalTokenUsage == iter2Usage + iter3Usage)
+        #expect(result.totalTokenUsage.input == 900)
+        #expect(result.totalTokenUsage.output == 50)
+        #expect(result.totalTokenUsage.coverage == .partial)
     }
 
     @Test func missingTokenUsageContinuesStreamAndResumesOnNextIteration() async throws {

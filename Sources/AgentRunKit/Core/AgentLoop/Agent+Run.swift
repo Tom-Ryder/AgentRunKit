@@ -3,7 +3,7 @@ import Foundation
 extension Agent {
     func executeRunIteration(
         messages: inout [ChatMessage],
-        totalUsage: inout TokenUsage,
+        totalUsage: inout TokenUsageTotals,
         lastTotalTokens: inout Int?,
         compactor: inout ContextCompactor,
         historyWasRewrittenLocally: inout Bool,
@@ -26,9 +26,9 @@ extension Agent {
             historyWasRewrittenLocally: &historyWasRewrittenLocally,
             requestContext: requestContext
         )
+        totalUsage.record(response.tokenUsage)
         messages.append(.assistant(response))
         if let usage = response.tokenUsage {
-            totalUsage += usage
             lastTotalTokens = usage.total
         }
         return response
@@ -36,7 +36,7 @@ extension Agent {
 
     func generateRunResponse(
         messages: inout [ChatMessage],
-        totalUsage: inout TokenUsage,
+        totalUsage: inout TokenUsageTotals,
         compactor: inout ContextCompactor,
         historyWasRewrittenLocally: inout Bool,
         requestContext: RequestContext?
@@ -67,7 +67,7 @@ extension Agent {
         response: AssistantMessage,
         context: C,
         iteration: Int,
-        totalUsage: TokenUsage,
+        totalUsage: TokenUsageTotals,
         options: InvocationOptions,
         state: inout AgentLoopState
     ) async throws -> AgentResult? {
@@ -117,7 +117,7 @@ extension Agent {
         call: ToolCall,
         context: C,
         iteration: Int,
-        totalUsage: TokenUsage,
+        totalUsage: TokenUsageTotals,
         budgetUsage: TokenUsage?,
         options: InvocationOptions,
         state: inout AgentLoopState
@@ -153,7 +153,7 @@ extension Agent {
         toolCalls: [ToolCall],
         context: C,
         iteration: Int,
-        totalUsage: TokenUsage,
+        totalUsage: TokenUsageTotals,
         budgetUsage: TokenUsage?,
         options: InvocationOptions,
         state: inout AgentLoopState
@@ -183,7 +183,7 @@ extension Agent {
     private func continueRunIteration(
         results: [IndexedToolResult],
         iteration: Int,
-        totalUsage: TokenUsage,
+        totalUsage: TokenUsageTotals,
         budgetUsage: TokenUsage?,
         options: InvocationOptions,
         state: inout AgentLoopState
@@ -226,7 +226,7 @@ extension Agent {
 
     func parseFinishResult(
         _ call: ToolCall,
-        tokenUsage: TokenUsage,
+        tokenUsage: TokenUsageTotals,
         iterations: Int,
         history: [ChatMessage]
     ) throws -> AgentResult {
@@ -242,7 +242,7 @@ extension Agent {
 
     func makeTerminalResult(
         reason: FinishReason,
-        tokenUsage: TokenUsage,
+        tokenUsage: TokenUsageTotals,
         iterations: Int,
         history: [ChatMessage]
     ) -> AgentResult {

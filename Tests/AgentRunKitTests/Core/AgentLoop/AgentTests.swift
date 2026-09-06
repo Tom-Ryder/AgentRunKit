@@ -2,6 +2,31 @@
 import Foundation
 import Testing
 
+private struct ResponseAccountingScenario {
+    let usages: [TokenUsage?]
+    let input: Int
+    let output: Int
+    let reasoning: Int
+    let cacheRead: Int?
+    let coverage: TokenUsageCoverage
+}
+
+private let measuredResponse = TokenUsage(input: 10, output: 3, reasoning: 2, cacheRead: 5, cacheWrite: 0)
+private let zeroResponse = TokenUsage(cacheRead: 0, cacheWrite: 0)
+private let responseAccountingScenarios: [ResponseAccountingScenario] = [
+    .init(usages: [measuredResponse, measuredResponse, measuredResponse],
+          input: 30, output: 9, reasoning: 6, cacheRead: 15, coverage: .complete),
+    .init(usages: [nil, measuredResponse, measuredResponse],
+          input: 20, output: 6, reasoning: 4, cacheRead: 10, coverage: .partial),
+    .init(usages: [measuredResponse, nil, measuredResponse],
+          input: 20, output: 6, reasoning: 4, cacheRead: 10, coverage: .partial),
+    .init(usages: [measuredResponse, measuredResponse, nil],
+          input: 20, output: 6, reasoning: 4, cacheRead: 10, coverage: .partial),
+    .init(usages: [nil, nil, nil], input: 0, output: 0, reasoning: 0, cacheRead: nil, coverage: .unavailable),
+    .init(usages: [zeroResponse, zeroResponse, zeroResponse],
+          input: 0, output: 0, reasoning: 0, cacheRead: 0, coverage: .complete),
+]
+
 struct AgentTests {
     @Test
     func basicCompletion() async throws {
@@ -494,6 +519,63 @@ struct AgentTokenBudgetTests {
 
         let result = try await agent.run(userMessage: "Go", context: EmptyContext(), tokenBudget: 50)
         #expect(try requireContent(result) == "completed")
+    }
+}
+
+private struct AgentUsageAccountingTests {
+    @Test(arguments: responseAccountingScenarios)
+    func runAndStreamRecordEveryReturnedResponse(scenario: ResponseAccountingScenario) async throws {
+        let usages = scenario.usages
+        let echo = try Tool<EchoParams, EchoOutput, EmptyContext>(
+            name: "echo", description: "Echoes input",
+            executor: { params, _ in EchoOutput(echoed: params.message) }
+        )
+        let calls = [
+            ToolCall(id: "first", name: "echo", arguments: #"{"message":"one"}"#),
+            ToolCall(id: "second", name: "echo", arguments: #"{"message":"two"}"#),
+            ToolCall(id: "final", name: "finish", arguments: #"{"content":"done"}"#),
+        ]
+        let responses = zip(calls, usages).map { call, usage in
+            AssistantMessage(content: "", toolCalls: [call], tokenUsage: usage)
+        }
+        let sequences: [[StreamDelta]] = zip(calls, usages).map { call, usage in
+            [
+                .toolCallStart(index: 0, id: call.id, name: call.name, kind: .function),
+                .toolCallDelta(index: 0, arguments: call.arguments),
+                .finished(usage: usage),
+            ]
+        }
+        let client = StreamingMockLLMClient(generateResponses: responses, streamSequences: sequences)
+        let agent = Agent<EmptyContext>(client: client, tools: [echo])
+        let result = try await agent.run(userMessage: "Echo twice", context: EmptyContext())
+        var events: [StreamEvent] = []
+        var samples: [TokenUsage?] = []
+        for try await event in agent.stream(userMessage: "Echo twice", context: EmptyContext()) {
+            events.append(event)
+            if case let .iterationCompleted(usage, _, _) = event.kind {
+                samples.append(usage)
+            }
+        }
+        guard case let .finished(streamedTotals, content, reason, history) = events.last?.kind else {
+            Issue.record("Expected finished event")
+            return
+        }
+        for totals in [result.totalTokenUsage, streamedTotals] {
+            #expect(totals.input == scenario.input)
+            #expect(totals.output == scenario.output)
+            #expect(totals.reasoning == scenario.reasoning)
+            #expect(totals.cacheRead == scenario.cacheRead)
+            #expect(totals.cacheWrite == (scenario.coverage == .unavailable ? nil : 0))
+            #expect(totals.coverage == scenario.coverage)
+            #expect(totals.cacheReadCoverage == scenario.coverage)
+            #expect(totals.cacheWriteCoverage == scenario.coverage)
+        }
+        #expect(samples == usages)
+        #expect(result.iterations == 3)
+        #expect(result.content == "done" && content == "done")
+        #expect(result.finishReason == .completed && reason == .completed)
+        #expect(history == result.history)
+        #expect(await client.allCapturedTools.count == 6)
     }
 }
 

@@ -1,6 +1,8 @@
 import Foundation
 
-/// Token counts for a single LLM request or accumulated across an agent run.
+/// Token counts reported for one returned model response.
+///
+/// For aggregate coverage, see <doc:TokenAccounting>.
 public struct TokenUsage: Sendable, Equatable, Codable {
     /// The complete input count, including reported cache reads and writes.
     public let input: Int
@@ -35,20 +37,6 @@ public struct TokenUsage: Sendable, Equatable, Codable {
         self.reasoning = reasoning
         self.cacheRead = cacheRead
         self.cacheWrite = cacheWrite
-    }
-
-    public static func + (lhs: TokenUsage, rhs: TokenUsage) -> TokenUsage {
-        TokenUsage(
-            input: saturatingTokenSum(lhs.input, rhs.input),
-            output: saturatingTokenSum(lhs.output, rhs.output),
-            reasoning: saturatingTokenSum(lhs.reasoning, rhs.reasoning),
-            cacheRead: optionalSaturatingAdd(lhs.cacheRead, rhs.cacheRead),
-            cacheWrite: optionalSaturatingAdd(lhs.cacheWrite, rhs.cacheWrite)
-        )
-    }
-
-    public static func += (lhs: inout TokenUsage, rhs: TokenUsage) {
-        lhs = lhs + rhs
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -98,13 +86,4 @@ extension KeyedDecodingContainer {
 func saturatingTokenSum(_ lhs: Int, _ rhs: Int) -> Int {
     let (result, overflow) = lhs.addingReportingOverflow(rhs)
     return overflow ? .max : result
-}
-
-private func optionalSaturatingAdd(_ lhs: Int?, _ rhs: Int?) -> Int? {
-    switch (lhs, rhs) {
-    case let (.some(left), .some(right)): saturatingTokenSum(left, right)
-    case let (.some(left), .none): left
-    case let (.none, .some(right)): right
-    case (.none, .none): nil
-    }
 }

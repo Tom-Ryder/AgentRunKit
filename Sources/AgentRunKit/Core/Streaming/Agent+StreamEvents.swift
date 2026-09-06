@@ -26,7 +26,7 @@ extension Agent {
 
     func parseFinishEvent(
         from finishCall: ToolCall,
-        tokenUsage: TokenUsage,
+        tokenUsage: TokenUsageTotals,
         history: [ChatMessage],
         eventFactory: StreamEventFactory
     ) throws -> StreamEvent {
@@ -41,7 +41,7 @@ extension Agent {
     }
 
     func makeFinishedEvent(
-        tokenUsage: TokenUsage,
+        tokenUsage: TokenUsageTotals,
         content: String?,
         reason: FinishReason?,
         history: [ChatMessage],
@@ -69,7 +69,7 @@ extension Agent {
 
     func finishIfOverBudget(
         _ tokenBudget: Int?,
-        totalUsage: TokenUsage,
+        totalUsage: TokenUsageTotals,
         history: [ChatMessage],
         eventFactory: StreamEventFactory,
         continuation: AsyncThrowingStream<StreamEvent, Error>.Continuation

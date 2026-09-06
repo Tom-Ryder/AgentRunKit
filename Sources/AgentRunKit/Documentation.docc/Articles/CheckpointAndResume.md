@@ -18,7 +18,7 @@ Checkpointing is a streaming capability by design. `run()` takes no session or c
 |---|---|
 | `messages` | Full conversation including system prompt, user, assistant, and tool messages |
 | `iteration` | One-based iteration number that produced this snapshot |
-| `tokenUsage` | Cumulative input/output usage across all iterations to date |
+| `tokenUsage` | ``TokenUsageTotals`` for returned responses, preserving measurement coverage |
 | `iterationUsage` | Token usage for this iteration alone, when the provider reported it |
 | `contextBudgetState` | ``ContextBudgetCheckpointState`` capturing config, window size, last budget snapshot, and the soft-advisory armed flag |
 | `historyWasRewrittenLocally` | Whether the agent rewrote history (compaction, pruning) before this iteration |
@@ -127,6 +127,8 @@ Because tool execution and checkpoint storage are separate awaited operations, a
 
 ### Reading Older Checkpoints
 
+Older aggregate values without accounting metadata preserve their numbers with partial overall coverage. Present cache subtotals remain partial; missing cache counters remain unavailable. New checkpoints persist this provenance explicitly. Resume restores it directly, and later responses cannot upgrade legacy uncertainty to complete coverage. Saved iteration numbers, histories, and optional iteration usage do not establish aggregate completeness. See <doc:TokenAccounting>.
+
 Checkpoints written before terminal outcomes existed decode normally and are treated as ordinary continuation snapshots. The compatibility runs one way only: an older binary decoding a newer terminal checkpoint ignores the outcome key and resumes the run live, re-executing a completion that already committed. Do not roll a deployment back onto checkpoints a newer runtime wrote.
 
 ## AgentStream Resume
@@ -154,7 +156,7 @@ When `resume` returns, these properties are already populated from the checkpoin
 | ``AgentStream/terminalContent`` | `target.terminalOutcome.content`, on a terminal checkpoint only |
 | ``AgentStream/finishReason`` | ``FinishReason/completed``, on a terminal checkpoint only |
 
-A background task consumes the replay and any live continuation. Observing the synthetic replay event appends its optional usage to ``AgentStream/iterationUsages`` and increments ``AgentStream/iterationsReplayed``, including when usage is `nil`. The counter measures replayed iteration snapshots, not responses with measurements. Reading buffered events through ``AgentStream/replay(from:)`` does not apply them to observable state again.
+A background task consumes the replay and any live continuation. Observing the synthetic replay event appends its optional usage to ``AgentStream/iterationUsages`` and increments ``AgentStream/iterationsReplayed``, including when usage is `nil`. The counter measures replayed iteration snapshots, not responses with measurements. Neither the synthetic replay nor buffered events record token usage again. Reading buffered events through ``AgentStream/replay(from:)`` does not apply them to observable state again.
 
 See <doc:StreamingAndSwiftUI> for the full SwiftUI contract.
 

@@ -582,7 +582,7 @@ struct TestLLMClientTests {
             events.append(event)
         }
 
-        let finished = events.compactMap { event -> TokenUsage? in
+        let finished = events.compactMap { event -> TokenUsageTotals? in
             guard case let .finished(tokenUsage, _, _, _) = event.kind else { return nil }
             return tokenUsage
         }
@@ -606,7 +606,7 @@ struct TestLLMClientTests {
         for try await event in chat.stream("Hello", context: EmptyContext()) {
             events.append(event)
         }
-        let finished = events.compactMap { event -> TokenUsage? in
+        let finished = events.compactMap { event -> TokenUsageTotals? in
             if case let .finished(usage, _, _, _) = event.kind { return usage }
             return nil
         }
@@ -636,7 +636,7 @@ struct TestLLMClientTests {
             return false
         }
         #expect(toolCompleted != nil)
-        let finished = events.compactMap { event -> TokenUsage? in
+        let finished = events.compactMap { event -> TokenUsageTotals? in
             if case let .finished(usage, _, _, _) = event.kind { return usage }
             return nil
         }

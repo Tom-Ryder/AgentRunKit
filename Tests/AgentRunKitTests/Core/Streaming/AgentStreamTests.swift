@@ -357,6 +357,8 @@ struct AgentStreamTests {
         #expect(stream.iterationUsages == [
             TokenUsage(input: 10, output: 5), nil, TokenUsage(input: 20, output: 10),
         ])
+        #expect(stream.tokenUsage?.input == 30 && stream.tokenUsage?.output == 15)
+        #expect(stream.tokenUsage?.coverage == .partial)
         #expect(stream.iterationsReplayed == 0)
         #expect(stream.error == nil)
     }
@@ -381,10 +383,14 @@ struct AgentStreamTests {
         stream.send("First", context: EmptyContext())
         await awaitStreamCompletion(stream)
         #expect(stream.iterationUsages == [nil])
+        #expect(stream.tokenUsage?.coverage == .unavailable)
 
         stream.send("Second", context: EmptyContext())
         #expect(stream.iterationUsages.isEmpty)
+        #expect(stream.tokenUsage == nil)
         await awaitStreamCompletion(stream)
+        #expect(stream.tokenUsage?.input == 20 && stream.tokenUsage?.output == 10)
+        #expect(stream.tokenUsage?.coverage == .complete)
         #expect(stream.iterationUsages.count == 1)
         #expect(stream.iterationUsages[0] == TokenUsage(input: 20, output: 10))
     }
@@ -765,7 +771,7 @@ struct AgentStreamNestedEventTests {
         )
         stream.handle(
             StreamEvent(kind: .finished(
-                tokenUsage: TokenUsage(input: 30, output: 15),
+                tokenUsage: makeTokenUsageTotals(TokenUsage(input: 30, output: 15), nil),
                 content: "parent result",
                 reason: .completed,
                 history: rootHistory
@@ -775,7 +781,7 @@ struct AgentStreamNestedEventTests {
 
         stream.handle(
             subAgentEvent(wrapping: .finished(
-                tokenUsage: TokenUsage(input: 3, output: 2),
+                tokenUsage: makeTokenUsageTotals(childUsage),
                 content: "child result",
                 reason: .maxIterationsReached(limit: 2),
                 history: [.user("child task")]
@@ -798,7 +804,10 @@ struct AgentStreamNestedEventTests {
             toolCallIdPath: [], toolNamePath: []
         )
 
-        #expect(stream.tokenUsage == TokenUsage(input: 30, output: 15))
+        #expect(stream.tokenUsage?.input == 30)
+        #expect(stream.tokenUsage?.output == 15)
+        #expect(stream.tokenUsage?.reasoning == 0)
+        #expect(stream.tokenUsage?.coverage == .partial)
         #expect(stream.finishReason == .completed)
         #expect(stream.history == rootHistory)
         #expect(stream.content == "parent result")
@@ -823,7 +832,7 @@ struct AgentStreamNestedEventTests {
         )
         stream.handle(
             subAgentEvent(wrapping: .finished(
-                tokenUsage: TokenUsage(input: 3, output: 2),
+                tokenUsage: makeTokenUsageTotals(TokenUsage(input: 3, output: 2)),
                 content: "child result",
                 reason: .completed,
                 history: [.user("child task")]
@@ -856,7 +865,10 @@ struct AgentStreamNestedEventTests {
 
         #expect(stream.content == "parent done")
         #expect(stream.finishReason == .completed)
-        #expect(stream.tokenUsage == TokenUsage(input: 30, output: 15))
+        #expect(stream.tokenUsage?.input == 30)
+        #expect(stream.tokenUsage?.output == 15)
+        #expect(stream.tokenUsage?.reasoning == 0)
+        #expect(stream.tokenUsage?.coverage == .complete)
         #expect(stream.iterationUsages == [
             TokenUsage(input: 10, output: 5),
             TokenUsage(input: 20, output: 10),
@@ -874,7 +886,10 @@ struct AgentStreamNestedEventTests {
 
         #expect(stream.content == "child result")
         #expect(stream.finishReason == .completed)
-        #expect(stream.tokenUsage == TokenUsage(input: 7, output: 3))
+        #expect(stream.tokenUsage?.input == 7)
+        #expect(stream.tokenUsage?.output == 3)
+        #expect(stream.tokenUsage?.reasoning == 0)
+        #expect(stream.tokenUsage?.coverage == .complete)
         #expect(stream.iterationUsages == [
             TokenUsage(input: 3, output: 2),
             TokenUsage(input: 4, output: 1),

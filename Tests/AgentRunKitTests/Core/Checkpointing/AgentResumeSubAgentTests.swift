@@ -87,7 +87,7 @@ struct AgentResumeSubAgentTests {
                 .tool(id: "call_sub", name: "delegate", content: "child completed"),
             ],
             iteration: 1,
-            tokenUsage: TokenUsage(input: 1, output: 1),
+            tokenUsage: makeTokenUsageTotals(TokenUsage(input: 1, output: 1)),
             iterationUsage: TokenUsage(input: 1, output: 1),
             sessionID: session, runID: RunID(), checkpointID: checkpointID
         )
@@ -139,7 +139,7 @@ struct AgentResumeSubAgentTests {
         try await backend.save(AgentCheckpoint(
             messages: [.user("Hi"), .assistant(AssistantMessage(content: "first"))],
             iteration: 1,
-            tokenUsage: TokenUsage(input: 5, output: 5),
+            tokenUsage: makeTokenUsageTotals(TokenUsage(input: 5, output: 5)),
             iterationUsage: TokenUsage(input: 5, output: 5),
             sessionID: session, runID: RunID(), checkpointID: checkpointID
         ))

@@ -30,7 +30,7 @@ struct AgentResumeMCPTests {
         let checkpoint = AgentCheckpoint(
             messages: [.user("Hi")],
             iteration: 1,
-            tokenUsage: TokenUsage(input: 1, output: 1),
+            tokenUsage: makeTokenUsageTotals(TokenUsage(input: 1, output: 1)),
             sessionID: session, runID: RunID(), checkpointID: checkpointID,
             mcpToolBindings: [MCPToolBinding(serverName: "alpha", toolName: "search")]
         )
@@ -59,7 +59,7 @@ struct AgentResumeMCPTests {
         let checkpoint = AgentCheckpoint(
             messages: [.user("Hi"), .assistant(AssistantMessage(content: "ok"))],
             iteration: 1,
-            tokenUsage: TokenUsage(input: 1, output: 1),
+            tokenUsage: makeTokenUsageTotals(TokenUsage(input: 1, output: 1)),
             sessionID: session, runID: RunID(), checkpointID: checkpointID
         )
         try await backend.save(checkpoint)

@@ -80,7 +80,7 @@ public struct MCPToolBinding: Sendable, Codable, Hashable {
 public struct AgentCheckpoint: Sendable, Codable, Identifiable {
     public let messages: [ChatMessage]
     public let iteration: Int
-    public let tokenUsage: TokenUsage
+    public let tokenUsage: TokenUsageTotals
     public let iterationUsage: TokenUsage?
     public let contextBudgetState: ContextBudgetCheckpointState?
     public let historyWasRewrittenLocally: Bool
@@ -99,7 +99,7 @@ public struct AgentCheckpoint: Sendable, Codable, Identifiable {
     public init(
         messages: [ChatMessage],
         iteration: Int,
-        tokenUsage: TokenUsage,
+        tokenUsage: TokenUsageTotals,
         iterationUsage: TokenUsage? = nil,
         contextBudgetState: ContextBudgetCheckpointState? = nil,
         historyWasRewrittenLocally: Bool = false,
@@ -130,7 +130,7 @@ public struct AgentCheckpoint: Sendable, Codable, Identifiable {
     init(
         messages: [ChatMessage],
         iteration: Int,
-        tokenUsage: TokenUsage,
+        tokenUsage: TokenUsageTotals,
         iterationUsage: TokenUsage?,
         contextBudgetState: ContextBudgetCheckpointState?,
         historyWasRewrittenLocally: Bool,
@@ -176,7 +176,7 @@ public struct AgentCheckpoint: Sendable, Codable, Identifiable {
         try self.init(
             messages: container.decode([ChatMessage].self, forKey: .messages),
             iteration: iteration,
-            tokenUsage: container.decode(TokenUsage.self, forKey: .tokenUsage),
+            tokenUsage: container.decode(TokenUsageTotals.self, forKey: .tokenUsage),
             iterationUsage: container.decodeIfPresent(TokenUsage.self, forKey: .iterationUsage),
             contextBudgetState: container.decodeIfPresent(
                 ContextBudgetCheckpointState.self, forKey: .contextBudgetState

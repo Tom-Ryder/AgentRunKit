@@ -726,22 +726,6 @@ struct AnthropicCacheUsageParsingTests {
                 + #"{"type":"thinking","thinking":"Thinking","signature":"opaque=="},"#
                 + #"{"type":"tool_use","id":"call_1","name":"lookup","input":{"value":1}}]\#(usageField)}"#).utf8)
     }
-
-    @Test
-    func tokenUsageAdditionWithCacheFields() {
-        let lhs = TokenUsage(input: 100, output: 50, cacheRead: 10, cacheWrite: 20)
-        let rhs = TokenUsage(input: 200, output: 100, cacheRead: 30, cacheWrite: nil)
-        let sum = lhs + rhs
-        #expect(sum.input == 300)
-        #expect(sum.output == 150)
-        #expect(sum.cacheRead == 40)
-        #expect(sum.cacheWrite == 20)
-
-        let noCacheLhs = TokenUsage(input: 50, output: 25)
-        let noCacheRhs = TokenUsage(input: 50, output: 25)
-        #expect((noCacheLhs + noCacheRhs).cacheRead == nil)
-        #expect((noCacheLhs + noCacheRhs).cacheWrite == nil)
-    }
 }
 
 struct AnthropicMessageTranslationTests {

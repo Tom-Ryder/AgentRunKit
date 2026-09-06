@@ -43,7 +43,7 @@ struct StreamProcessorEmittedOutputTests {
         let client = ScriptedStreamClient(deltas: [], error: promptTooLongError)
         let processor = StreamProcessor(client: client, toolDefinitions: [], policy: .chat, eventFactory: testFactory)
         let (_, eventContinuation) = AsyncThrowingStream<StreamEvent, Error>.makeStream()
-        var totalUsage = TokenUsage()
+        var totalUsage = TokenUsageTotals()
         var emittedOutput = true
 
         do {
@@ -67,7 +67,7 @@ struct StreamProcessorEmittedOutputTests {
         )
         let processor = StreamProcessor(client: client, toolDefinitions: [], policy: .chat, eventFactory: testFactory)
         let (_, eventContinuation) = AsyncThrowingStream<StreamEvent, Error>.makeStream()
-        var totalUsage = TokenUsage()
+        var totalUsage = TokenUsageTotals()
         var emittedOutput = false
 
         do {
@@ -91,7 +91,7 @@ struct StreamProcessorEmittedOutputTests {
         )
         let processor = StreamProcessor(client: client, toolDefinitions: [], policy: .chat, eventFactory: testFactory)
         let (_, eventContinuation) = AsyncThrowingStream<StreamEvent, Error>.makeStream()
-        var totalUsage = TokenUsage()
+        var totalUsage = TokenUsageTotals()
         var emittedOutput = false
 
         do {
@@ -117,7 +117,7 @@ struct StreamProcessorEmittedOutputTests {
             client: client, toolDefinitions: [], policy: .agent(.builtInFinish), eventFactory: testFactory
         )
         let (_, eventContinuation) = AsyncThrowingStream<StreamEvent, Error>.makeStream()
-        var totalUsage = TokenUsage()
+        var totalUsage = TokenUsageTotals()
         var emittedOutput = true
 
         do {
@@ -166,7 +166,7 @@ struct StreamPolicyDerivationTests {
             policy: .agent(.executableTool(name: "finalize")), eventFactory: testFactory
         )
         let (events, eventContinuation) = AsyncThrowingStream<StreamEvent, Error>.makeStream()
-        var totalUsage = TokenUsage()
+        var totalUsage = TokenUsageTotals()
         var emittedOutput = false
 
         let iteration = try await processor.process(
@@ -195,7 +195,7 @@ struct StreamProcessorCompletionTests {
         )
         let processor = StreamProcessor(client: client, toolDefinitions: [], policy: .chat, eventFactory: testFactory)
         let (_, eventContinuation) = AsyncThrowingStream<StreamEvent, Error>.makeStream()
-        var totalUsage = TokenUsage()
+        var totalUsage = TokenUsageTotals()
         var emittedOutput = false
 
         do {
@@ -238,7 +238,7 @@ struct StreamProcessorToolCallAccumulationTests {
         )
         let processor = StreamProcessor(client: client, toolDefinitions: [], policy: .chat, eventFactory: testFactory)
         let (_, eventContinuation) = AsyncThrowingStream<StreamEvent, Error>.makeStream()
-        var totalUsage = TokenUsage()
+        var totalUsage = TokenUsageTotals()
         var emittedOutput = false
 
         let iteration = try await processor.process(
@@ -272,7 +272,7 @@ struct StreamProcessorContinuityTests {
         ]])
         let processor = StreamProcessor(client: client, toolDefinitions: [], policy: .chat, eventFactory: testFactory)
         let (_, eventContinuation) = AsyncThrowingStream<StreamEvent, Error>.makeStream()
-        var totalUsage = TokenUsage()
+        var totalUsage = TokenUsageTotals()
         var emittedOutput = false
 
         let iteration = try await processor.process(
@@ -293,7 +293,7 @@ struct StreamProcessorContinuityTests {
         )
         let processor = StreamProcessor(client: client, toolDefinitions: [], policy: .chat, eventFactory: testFactory)
         let (_, eventContinuation) = AsyncThrowingStream<StreamEvent, Error>.makeStream()
-        var totalUsage = TokenUsage()
+        var totalUsage = TokenUsageTotals()
         var emittedOutput = false
 
         let iteration = try await processor.process(
@@ -322,7 +322,7 @@ struct StreamProcessorContinuityTests {
         ]])
         let processor = StreamProcessor(client: client, toolDefinitions: [], policy: .chat, eventFactory: testFactory)
         let (_, eventContinuation) = AsyncThrowingStream<StreamEvent, Error>.makeStream()
-        var totalUsage = TokenUsage()
+        var totalUsage = TokenUsageTotals()
         var emittedOutput = false
 
         do {
@@ -357,7 +357,7 @@ struct StreamProcessorContinuityTests {
         )
         let processor = StreamProcessor(client: client, toolDefinitions: [], policy: .chat, eventFactory: testFactory)
         let (_, eventContinuation) = AsyncThrowingStream<StreamEvent, Error>.makeStream()
-        var totalUsage = TokenUsage()
+        var totalUsage = TokenUsageTotals()
         var emittedOutput = true
 
         do {
@@ -371,5 +371,61 @@ struct StreamProcessorContinuityTests {
         } catch {
             #expect(!emittedOutput)
         }
+    }
+}
+
+private struct StreamProcessorAccountingTests {
+    @Test(arguments: [TokenUsage(input: 10, output: 5, cacheRead: 0), nil])
+    func successfulDrainRecordsOnlyTheFinalUsageSnapshot(usage: TokenUsage?) async throws {
+        let client = ScriptedStreamClient(
+            deltas: [
+                .content("done"), .finished(usage: TokenUsage(input: 90, output: 90)),
+                .finished(usage: usage),
+            ],
+            error: nil
+        )
+        let processor = StreamProcessor(client: client, toolDefinitions: [], policy: .chat, eventFactory: testFactory)
+        let (_, continuation) = AsyncThrowingStream<StreamEvent, Error>.makeStream()
+        defer { continuation.finish() }
+        var totals = TokenUsageTotals()
+        var emittedOutput = false
+        let iteration = try await processor.process(
+            messages: [.user("Hi")], totalUsage: &totals,
+            emittedOutput: &emittedOutput, continuation: continuation
+        )
+        #expect(iteration.content == "done" && iteration.usage == usage)
+        #expect(totals.input == (usage == nil ? 0 : 10))
+        #expect(totals.output == (usage == nil ? 0 : 5))
+        #expect(totals.coverage == (usage == nil ? .unavailable : .complete))
+        #expect(totals.cacheRead == (usage == nil ? nil : 0))
+        #expect(totals.cacheReadCoverage == (usage == nil ? .unavailable : .complete))
+    }
+
+    @Test(arguments: [
+        ScriptedStreamClient(deltas: [.finished(usage: TokenUsage(input: 90, output: 90))],
+                             error: promptTooLongError),
+        ScriptedStreamClient(deltas: [.finished(usage: TokenUsage(input: 90, output: 90))],
+                             error: CancellationError()),
+        ScriptedStreamClient(deltas: [.toolCallDelta(index: 1, arguments: "{}"),
+                                      .finished(usage: TokenUsage(input: 90, output: 90))], error: nil),
+        ScriptedStreamClient(deltas: [.content("unfinished")], error: nil),
+    ])
+    func failedDrainPreservesExistingTotals(client: ScriptedStreamClient) async throws {
+        let processor = StreamProcessor(client: client, toolDefinitions: [], policy: .chat, eventFactory: testFactory)
+        let (_, continuation) = AsyncThrowingStream<StreamEvent, Error>.makeStream()
+        defer { continuation.finish() }
+        var totals = makeTokenUsageTotals(TokenUsage(input: 7, output: 3, cacheRead: 0), nil)
+        let original = totals
+        var emittedOutput = false
+        await #expect(throws: (any Error).self) {
+            try await processor.process(
+                messages: [.user("Hi")], totalUsage: &totals,
+                emittedOutput: &emittedOutput, continuation: continuation
+            )
+        }
+        #expect(totals == original)
+        #expect(totals.input == 7 && totals.output == 3)
+        #expect(totals.coverage == .partial && totals.cacheReadCoverage == .partial)
+        #expect(totals.cacheRead == 0)
     }
 }

@@ -78,7 +78,10 @@ struct AgentStreamReplayTests {
         stream.send("Hi", context: EmptyContext())
         await awaitStreamCompletion(stream)
 
+        let originalTotals = stream.tokenUsage
         let events = try await collectReplay(stream.replay(from: 0))
+        _ = try await collectReplay(stream.replay(from: 0))
+        #expect(stream.tokenUsage == originalTotals)
         let deltaEvent = events.first { event in
             if case .delta("first") = event.kind { return true }
             return false
@@ -93,9 +96,11 @@ struct AgentStreamReplayTests {
             return
         }
         #expect(content == "done1")
-        if let usage {
-            #expect(totalUsage == usage)
-        }
+        #expect(totalUsage.input == (usage == nil ? 0 : 10))
+        #expect(totalUsage.output == (usage == nil ? 0 : 5))
+        #expect(totalUsage.coverage == (usage == nil ? .unavailable : .complete))
+        #expect(totalUsage.cacheReadCoverage == .unavailable)
+        #expect(stream.tokenUsage == totalUsage)
         let iterations = events.filter {
             if case .iterationCompleted = $0.kind { true } else { false }
         }

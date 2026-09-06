@@ -37,7 +37,7 @@ struct ContextCompactionContinuityTests {
             .tool(id: "call_1", name: "noop", content: "result"),
         ]
 
-        let (compacted, _) = try await compactor.summarize(messages)
+        let compacted = try await compactor.summarize(messages)
         let assistants = compacted.compactMap { message -> AssistantMessage? in
             guard case let .assistant(assistant) = message else { return nil }
             return assistant
@@ -87,7 +87,7 @@ struct ContextCompactionContinuityTests {
             .tool(id: "call_1", name: "noop", content: "result"),
         ]
 
-        let (compacted, _) = try await compactor.summarize(messages)
+        let compacted = try await compactor.summarize(messages)
         let assistants = compacted.compactMap { message -> AssistantMessage? in
             guard case let .assistant(assistant) = message else { return nil }
             return assistant

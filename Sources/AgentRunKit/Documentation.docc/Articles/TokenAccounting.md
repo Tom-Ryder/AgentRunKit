@@ -40,6 +40,27 @@ Interpreting `cacheRead / input` as a token share requires compatible measuremen
 
 The aggregate represents recorded responses. It does not estimate failed HTTP attempts, failed or cancelled streams, hidden provider work, or monetary cost. Child-agent consumption is separate from its parent's budget. These totals are useful for reported usage and budgeting, but they are not a billing ledger.
 
+## Runtime Accounting
+
+``AgentResult/totalTokenUsage``, the `tokenUsage` payload of ``StreamEvent/Kind/finished(tokenUsage:content:reason:history:)``, and ``AgentCheckpoint/tokenUsage`` carry ``TokenUsageTotals``. ``AgentStream/tokenUsage`` is optional until a finish event or checkpoint preload supplies totals. ``Agent`` and streaming ``Chat`` populate these values automatically.
+
+A blocking response contributes once when it returns. A streamed response contributes once after the stream drains and passes validation. A finished delta followed by a stream error, cancellation, or invalid completion contributes no returned response. A summarization response contributes as soon as it returns, even when its content is rejected and compaction falls back. Local pruning, truncation, and failed requests that return no response contribute nothing.
+
+Completed Agent iterations still carry optional single-response ``TokenUsage``. Their sample array cannot reconstruct aggregate totals: summary responses are included in totals but have no iteration sample. Missing samples remain `nil`, including on Foundation Models. Resume restores aggregate values and coverage directly; replaying saved or buffered events does not record responses again. Nested child events do not change parent totals.
+
+Use coverage when presenting a total:
+
+```swift
+switch result.totalTokenUsage.coverage {
+case .complete:
+    print("\(result.totalTokenUsage.total) tokens")
+case .partial:
+    print("\(result.totalTokenUsage.total) reported tokens (partial)")
+case .unavailable:
+    print("Usage unavailable")
+}
+```
+
 ## Persistence
 
 The numeric keys `input`, `output`, `reasoning`, `cacheRead`, and `cacheWrite` remain at the top level. An `accounting` object preserves whether the aggregate is empty or observed and records coverage for observed totals. Unavailable cache values are omitted:

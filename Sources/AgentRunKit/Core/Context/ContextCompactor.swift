@@ -41,7 +41,7 @@ struct ContextCompactor {
     mutating func compactOrTruncateIfNeeded(
         _ messages: inout [ChatMessage],
         lastTotalTokens: Int?,
-        totalUsage: inout TokenUsage,
+        totalUsage: inout TokenUsageTotals,
         summaryGenerator: SummaryGenerator? = nil
     ) async throws -> Outcome {
         guard let totalTokens = lastTotalTokens,
@@ -65,11 +65,9 @@ struct ContextCompactor {
 
         do {
             let response = try await summaryResponse(pruning.messages, summaryGenerator: summaryGenerator)
+            totalUsage.record(response.tokenUsage)
             let summary = try Self.validatedSummary(from: response)
-            let compacted = compactedMessages(from: pruning.messages, summary: summary)
-            let compactionUsage = response.tokenUsage ?? TokenUsage()
-            messages = compacted
-            totalUsage += compactionUsage
+            messages = compactedMessages(from: pruning.messages, summary: summary)
             consecutiveSummarizationFailures = 0
             return .compacted
         } catch is CancellationError {
@@ -83,7 +81,7 @@ struct ContextCompactor {
     @discardableResult
     mutating func reactiveCompact(
         _ messages: inout [ChatMessage],
-        totalUsage: inout TokenUsage,
+        totalUsage: inout TokenUsageTotals,
         summaryGenerator: SummaryGenerator? = nil
     ) async throws -> Outcome {
         var didRewriteHistory = truncateIfNeeded(&messages)
@@ -106,11 +104,9 @@ struct ContextCompactor {
 
         do {
             let response = try await summaryResponse(messages, summaryGenerator: summaryGenerator)
+            totalUsage.record(response.tokenUsage)
             let summary = try Self.validatedSummary(from: response)
-            let compacted = compactedMessages(from: messages, summary: summary)
-            let compactionUsage = response.tokenUsage ?? TokenUsage()
-            messages = compacted
-            totalUsage += compactionUsage
+            messages = compactedMessages(from: messages, summary: summary)
             consecutiveSummarizationFailures = 0
             return .compacted
         } catch is CancellationError {
@@ -184,10 +180,9 @@ struct ContextCompactor {
         )
     }
 
-    func summarize(_ messages: [ChatMessage]) async throws -> (messages: [ChatMessage], usage: TokenUsage) {
+    func summarize(_ messages: [ChatMessage]) async throws -> [ChatMessage] {
         let response = try await summaryResponse(messages, summaryGenerator: nil)
-        let compacted = try compactedMessages(from: messages, summary: Self.validatedSummary(from: response))
-        return (compacted, response.tokenUsage ?? TokenUsage())
+        return try compactedMessages(from: messages, summary: Self.validatedSummary(from: response))
     }
 
     func compactedMessages(from messages: [ChatMessage], summary: String) -> [ChatMessage] {

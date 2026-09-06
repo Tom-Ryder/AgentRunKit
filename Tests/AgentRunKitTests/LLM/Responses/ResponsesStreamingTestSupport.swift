@@ -41,7 +41,7 @@ func streamedAssistantMessage(
         eventFactory: StreamEventFactory(sessionID: nil, runID: nil, origin: .live)
     )
     let (_, continuation) = AsyncThrowingStream<StreamEvent, Error>.makeStream()
-    var totalUsage = TokenUsage()
+    var totalUsage = TokenUsageTotals()
     var emittedOutput = false
 
     let iteration = try await processor.process(

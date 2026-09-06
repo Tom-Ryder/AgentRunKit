@@ -34,7 +34,7 @@ struct ContextCompactionReasoningReplayTests {
             .tool(id: recentCall.id, name: recentCall.name, content: #"{"weather":"sun"}"#),
         ]
 
-        let (compacted, _) = try await compactor.summarize(messages)
+        let compacted = try await compactor.summarize(messages)
 
         #expect(hasCompactionBridge(compacted))
         #expect(!compacted.contains { message in

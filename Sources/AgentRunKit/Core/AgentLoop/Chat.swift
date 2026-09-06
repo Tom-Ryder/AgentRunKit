@@ -207,7 +207,7 @@ private extension Chat {
         continuation: AsyncThrowingStream<StreamEvent, Error>.Continuation
     ) async throws {
         var messages = initialMessages(systemPrompt: systemPrompt, history: history, userMessage: userMessage)
-        var totalUsage = TokenUsage()
+        var totalUsage = TokenUsageTotals()
         var sessionAllowlist: Set<String> = []
         let policy = StreamPolicy.chat
         let eventFactory = StreamEventFactory(sessionID: nil, runID: nil, origin: .live)
