@@ -150,12 +150,15 @@ For a complete walkthrough, see <doc:GettingStarted>.
 
 ### Messages
 
+- <doc:TokenAccounting>
 - ``ChatMessage``
 - ``AssistantMessage``
 - ``ContentPart``
 - ``ToolCall``
 - ``ToolCallKind``
 - ``TokenUsage``
+- ``TokenUsageTotals``
+- ``TokenUsageCoverage``
 - ``ReasoningContent``
 - ``ReasoningConfig``
 
