@@ -32,6 +32,8 @@ let agent = Agent(client: client, tools: tools, configuration: config)
 
 When token usage reaches 75% of the window, the agent compacts the conversation automatically.
 
+The proactive check runs before the next iteration and uses the previous response's ``TokenUsage/total``, including separately reported reasoning. For Anthropic, 100 uncached input tokens, 600 cache reads, 100 cache writes, and 50 inclusive output tokens produce a total of 850. With a 1,000-token window, a threshold of 0.85 triggers compaction on the next iteration; a threshold above 0.85 does not.
+
 ## Two-Phase Compaction Cascade
 
 Compaction runs as a two-phase cascade. The agent tries the cheapest strategy first and escalates only if needed.
@@ -93,7 +95,11 @@ Use ``ContextBudget/formatted(_:)`` to render a human-readable annotation, eithe
 | `enableVisibility` | false | Appends a token usage annotation to history after each turn |
 | `visibilityFormat` | `.standard` | Format for the visibility annotation |
 
-Budget features require the client to report `contextWindowSize`. Per-turn `tokenUsage` is consumed when the provider reports it; iterations that return nil usage (transient SSE chunk drops, proxies that omit the usage block) are skipped and the next iteration with reported usage resumes tracking.
+Budget features require the client to report `contextWindowSize`. ``ContextBudget`` uses inclusive input plus output, excluding separately identified reasoning. In the Anthropic example above, a reported thinking count of 20 splits the 50 output tokens into 30 output and 20 reasoning. The snapshot is therefore 830 of 1,000, crossing a soft threshold of 0.8. The cumulative `tokenBudget` ceiling still uses all 850 tokens: a cap of 849 stops a continuing run, while a successful completion from that iteration takes precedence over the cap.
+
+Cache-inclusive input can make advisories, ceilings, and compaction activate earlier than counts that omitted cached tokens. Compaction rewrites history and can change a reusable prompt prefix. Appending an advisory does not itself invalidate an earlier cache breakpoint; accurate measurement remains the input to each policy.
+
+Missing or numerically inconsistent usage leaves the last budget snapshot unchanged, and cumulative ceilings can undercount across those gaps. Blocking execution retains its last known compaction estimate; streaming stores the latest iteration's optional total, so a missing measurement skips the next proactive threshold check. The next reported measurement resumes tracking. The framework does not estimate missing tokens.
 
 ## Streaming Events
 

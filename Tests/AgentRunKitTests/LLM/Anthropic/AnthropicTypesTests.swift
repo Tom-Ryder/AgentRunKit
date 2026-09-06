@@ -630,7 +630,7 @@ struct AnthropicCacheUsageParsingTests {
         }
         """
         let msg = try makeClient().parseResponse(Data(json.utf8), provider: .anthropic)
-        #expect(msg.tokenUsage?.input == 2500)
+        #expect(msg.tokenUsage?.input == 4900)
         #expect(msg.tokenUsage?.output == 100)
         #expect(msg.tokenUsage?.cacheWrite == 2400)
         #expect(msg.tokenUsage?.cacheRead == 0)
@@ -651,6 +651,80 @@ struct AnthropicCacheUsageParsingTests {
         let msg = try makeClient().parseResponse(Data(json.utf8), provider: .anthropic)
         #expect(msg.tokenUsage?.cacheRead == nil)
         #expect(msg.tokenUsage?.cacheWrite == nil)
+    }
+
+    @Test(arguments: [
+        (#"{"input_tokens":100,"output_tokens":50,"cache_read_input_tokens":600,"#
+            + #""cache_creation_input_tokens":100,"output_tokens_details":{"thinking_tokens":20}}"#,
+            TokenUsage(input: 800, output: 30, reasoning: 20, cacheRead: 600, cacheWrite: 100)),
+        (#"{"input_tokens":100,"output_tokens":50,"cache_read_input_tokens":0,"#
+            + #""cache_creation_input_tokens":0,"output_tokens_details":{"thinking_tokens":0}}"#,
+            TokenUsage(input: 100, output: 50, cacheRead: 0, cacheWrite: 0)),
+        (#"{"input_tokens":100,"output_tokens":50,"cache_read_input_tokens":null,"#
+            + #""cache_creation_input_tokens":null,"output_tokens_details":null}"#,
+            TokenUsage(input: 100, output: 50))
+    ])
+    func cacheAndThinkingNormalizeOnce(usage: String, expected: TokenUsage) throws {
+        let message = try makeClient().parseResponse(usageResponse(usage), provider: .anthropic)
+        #expect(message.tokenUsage == expected)
+        #expect(message.content == "Answer")
+        let vertex = try VertexAnthropicClient(
+            projectID: "project", location: "location", model: "claude-sonnet-4-6", tokenProvider: { "test-token" }
+        )
+        #expect(try vertex.anthropic.parseResponse(usageResponse(usage), provider: .vertexAnthropic) == message)
+    }
+
+    @Test(arguments: [
+        nil,
+        "null",
+        #"{"input_tokens":9223372036854775807,"output_tokens":50,"cache_read_input_tokens":1}"#,
+        #"{"input_tokens":9223372036854775807,"output_tokens":50,"cache_creation_input_tokens":1}"#,
+        #"{"input_tokens":100,"output_tokens":50,"output_tokens_details":{"thinking_tokens":51}}"#
+    ] as [String?])
+    func unavailableUsagePreservesAssistant(usage: String?) throws {
+        let message = try makeClient().parseResponse(usageResponse(usage), provider: .anthropic)
+        #expect(message.tokenUsage == nil)
+        #expect(message.content == "Answer")
+        #expect(message.toolCalls == [ToolCall(id: "call_1", name: "lookup", arguments: #"{"value":1}"#)])
+        #expect(message.reasoning?.content == "Thinking")
+        #expect(message.reasoningDetails == [.object([
+            "type": .string("thinking"), "thinking": .string("Thinking"), "signature": .string("opaque==")
+        ])])
+        #expect(message.continuity?.substrate == .anthropicMessages)
+    }
+
+    @Test(arguments: [
+        (#"{"input_tokens":-1,"output_tokens":50}"#, "input_tokens"),
+        (#"{"input_tokens":100,"output_tokens":-1}"#, "output_tokens"),
+        (#"{"input_tokens":100,"output_tokens":50,"cache_read_input_tokens":-1}"#, "cache_read_input_tokens"),
+        (#"{"input_tokens":100,"output_tokens":50,"cache_creation_input_tokens":-1}"#,
+         "cache_creation_input_tokens"),
+        (#"{"input_tokens":100,"output_tokens":50,"output_tokens_details":{"thinking_tokens":-1}}"#,
+         "thinking_tokens"),
+        (#"{"input_tokens":true,"output_tokens":50}"#, "input_tokens"),
+        (#"{"input_tokens":100,"output_tokens":"50"}"#, "output_tokens"),
+        (#"{"input_tokens":9223372036854775808,"output_tokens":50}"#, "input_tokens"),
+        (#"{"input_tokens":100,"output_tokens":50,"cache_read_input_tokens":9223372036854775808}"#,
+         "cache_read_input_tokens"),
+        (#"{"output_tokens":50}"#, "input_tokens"),
+        (#"{"input_tokens":100}"#, "output_tokens"),
+        (#"{"input_tokens":100,"output_tokens":50,"output_tokens_details":{}}"#, "thinking_tokens")
+    ])
+    func malformedUsageThrowsTypedDecodingFailure(usage: String, key: String) throws {
+        do {
+            _ = try makeClient().parseResponse(usageResponse(usage), provider: .anthropic)
+            Issue.record("Expected malformed usage to fail")
+        } catch let AgentError.llmError(.decodingFailed(description)) {
+            #expect(description.contains("usage"))
+            #expect(description.contains(key))
+        }
+    }
+
+    private func usageResponse(_ usage: String?) -> Data {
+        let usageField = usage.map { #", "usage":\#($0)"# } ?? ""
+        return Data((#"{"content":[{"type":"text","text":"Answer"},"#
+                + #"{"type":"thinking","thinking":"Thinking","signature":"opaque=="},"#
+                + #"{"type":"tool_use","id":"call_1","name":"lookup","input":{"value":1}}]\#(usageField)}"#).utf8)
     }
 
     @Test

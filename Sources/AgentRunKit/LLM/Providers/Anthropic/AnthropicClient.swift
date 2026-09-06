@@ -428,12 +428,7 @@ extension AnthropicClient {
         }
 
         let projection = AnthropicTurnProjection(responseBlocks: response.content)
-        return try projection.project(usage: TokenUsage(
-            input: response.usage.inputTokens,
-            output: response.usage.outputTokens,
-            cacheRead: response.usage.cacheReadInputTokens,
-            cacheWrite: response.usage.cacheCreationInputTokens
-        ))
+        return try projection.project(usage: response.usage?.tokenUsage)
     }
 }
 

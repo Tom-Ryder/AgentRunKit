@@ -15,7 +15,10 @@ actor AnthropicStreamState {
     private var opaqueDeltas: [Int: [JSONValue]] = [:]
     private var hasOpaqueDeltaBlocks = false
     private(set) var toolCallCount: Int = 0
-    private(set) var inputUsage: AnthropicUsage?
+    private var inputTokens: Int?
+    private var cacheReadInputTokens: Int?
+    private var cacheCreationInputTokens: Int?
+    private var thinkingTokens: Int?
     private var outputTokens: Int?
     private(set) var isCompleted: Bool = false
     private var maxBlockIndex: Int = -1
@@ -25,19 +28,26 @@ actor AnthropicStreamState {
     }
 
     func setInputUsage(_ usage: AnthropicUsage) {
-        inputUsage = usage
+        inputTokens = usage.inputTokens
+        cacheReadInputTokens = usage.cacheReadInputTokens
+        cacheCreationInputTokens = usage.cacheCreationInputTokens
+        thinkingTokens = usage.outputTokensDetails?.thinkingTokens
     }
 
-    func setOutputTokens(_ tokens: Int) {
-        outputTokens = tokens
+    func applyUsageDelta(_ usage: AnthropicDeltaUsage) {
+        inputTokens = usage.inputTokens ?? inputTokens
+        cacheReadInputTokens = usage.cacheReadInputTokens ?? cacheReadInputTokens
+        cacheCreationInputTokens = usage.cacheCreationInputTokens ?? cacheCreationInputTokens
+        thinkingTokens = usage.outputTokensDetails?.thinkingTokens ?? thinkingTokens
+        outputTokens = usage.outputTokens
     }
 
-    func finalUsage() -> TokenUsage {
-        TokenUsage(
-            input: inputUsage?.inputTokens ?? 0,
-            output: outputTokens ?? 0,
-            cacheRead: inputUsage?.cacheReadInputTokens,
-            cacheWrite: inputUsage?.cacheCreationInputTokens
+    func finalUsage() -> TokenUsage? {
+        guard let inputTokens, let outputTokens else { return nil }
+        return AnthropicUsage.normalizedTokenUsage(
+            inputTokens: inputTokens, outputTokens: outputTokens,
+            cacheReadInputTokens: cacheReadInputTokens, cacheCreationInputTokens: cacheCreationInputTokens,
+            thinkingTokens: thinkingTokens
         )
     }
 

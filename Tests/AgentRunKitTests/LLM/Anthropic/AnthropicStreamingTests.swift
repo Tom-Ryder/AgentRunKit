@@ -70,7 +70,7 @@ struct AnthropicStreamingTests {
         let deltas = try await collectStreamDeltas(client: makeClient(), lines: lines)
 
         #expect(deltas.contains(.content("Hello")))
-        #expect(deltas.contains(.finished(usage: TokenUsage(input: 0, output: 0))))
+        #expect(deltas.contains(.finished(usage: nil)))
     }
 
     @Test
@@ -135,6 +135,7 @@ struct AnthropicStreamingTests {
     @Test
     func finishedDeltaFromMessageDelta() async throws {
         let lines = [
+            sseLine(#"{"type":"message_start","message":{"usage":{"input_tokens":10,"output_tokens":1}}}"#),
             sseLine(#"{"type":"content_block_start","index":0,"content_block":{"type":"text"}}"#),
             sseLine(#"{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Hi"}}"#),
             sseLine(#"{"type":"content_block_stop","index":0}"#),
@@ -146,7 +147,7 @@ struct AnthropicStreamingTests {
         let finished = deltas.filter { if case .finished = $0 { return true }; return false }
         #expect(finished.count == 1)
         if case let .finished(usage) = finished[0] {
-            #expect(usage?.input == 0)
+            #expect(usage?.input == 10)
             #expect(usage?.output == 42)
         } else {
             Issue.record("Expected .finished delta")
@@ -195,7 +196,7 @@ struct AnthropicStreamingTests {
         for try await delta in streamPair.stream {
             deltas.append(delta)
         }
-        #expect(!deltas.contains(.finished(usage: TokenUsage(input: 0, output: 42))))
+        #expect(!deltas.contains { if case .finished = $0 { true } else { false } })
     }
 
     @Test
@@ -523,7 +524,7 @@ struct AnthropicStreamingInputUsageTests {
         let finished = deltas.filter { if case .finished = $0 { return true }; return false }
         #expect(finished.count == 1)
         if case let .finished(usage) = finished[0] {
-            #expect(usage?.input == 100)
+            #expect(usage?.input == 3000)
             #expect(usage?.output == 42)
             #expect(usage?.cacheWrite == 2400)
             #expect(usage?.cacheRead == 500)
@@ -533,7 +534,7 @@ struct AnthropicStreamingInputUsageTests {
     }
 
     @Test
-    func streamingWithoutMessageStartFallsBackToZero() async throws {
+    func streamingWithoutInputMeasurementHasUnavailableUsage() async throws {
         let lines = [
             sseLine(#"{"type":"content_block_start","index":0,"content_block":{"type":"text"}}"#),
             sseLine(#"{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Hi"}}"#),
@@ -546,13 +547,132 @@ struct AnthropicStreamingInputUsageTests {
         let finished = deltas.filter { if case .finished = $0 { return true }; return false }
         #expect(finished.count == 1)
         if case let .finished(usage) = finished[0] {
-            #expect(usage?.input == 0)
-            #expect(usage?.output == 5)
-            #expect(usage?.cacheRead == nil)
-            #expect(usage?.cacheWrite == nil)
+            #expect(usage == nil)
         } else {
             Issue.record("Expected .finished delta")
         }
+    }
+
+    @Test(arguments: [
+        (#"{"output_tokens":50,"output_tokens_details":{"thinking_tokens":20}}"#,
+         TokenUsage(input: 800, output: 30, reasoning: 20, cacheRead: 600, cacheWrite: 100)),
+        (#"{"output_tokens":50}"#,
+         TokenUsage(input: 800, output: 50, cacheRead: 600, cacheWrite: 100)),
+        (#"{"output_tokens":50,"output_tokens_details":{"thinking_tokens":0}}"#,
+         TokenUsage(input: 800, output: 50, cacheRead: 600, cacheWrite: 100)),
+        (#"{"output_tokens":0,"input_tokens":0,"cache_read_input_tokens":0,"#
+            + #""cache_creation_input_tokens":0,"output_tokens_details":{"thinking_tokens":0}}"#,
+            TokenUsage(input: 0, output: 0, cacheRead: 0, cacheWrite: 0))
+    ])
+    func finalCumulativeUsageNormalizes(usage: String, expected: TokenUsage) async throws {
+        let deltas = try await usageStream(start: cachedStartUsage, updates: [usage])
+        #expect(deltas.last == .finished(usage: expected))
+    }
+
+    @Test
+    func laterCumulativeFieldsReplaceEarlierMeasurements() async throws {
+        let deltas = try await usageStream(start: cachedStartUsage, updates: [
+            #"{"input_tokens":120,"output_tokens":30,"cache_read_input_tokens":700,"#
+                + #""cache_creation_input_tokens":150,"output_tokens_details":{"thinking_tokens":10}}"#,
+            #"{"output_tokens":50,"output_tokens_details":{"thinking_tokens":20}}"#,
+            #"{"output_tokens":50,"input_tokens":null,"cache_read_input_tokens":null,"#
+                + #""cache_creation_input_tokens":null,"output_tokens_details":null}"#
+        ])
+        #expect(deltas.last == .finished(usage: TokenUsage(
+            input: 970, output: 30, reasoning: 20, cacheRead: 700, cacheWrite: 150
+        )))
+    }
+
+    @Test(arguments: [
+        (#"{"output_tokens":50}"#, TokenUsage(input: 100, output: 40, reasoning: 10)),
+        (#"{"output_tokens":50,"output_tokens_details":null}"#, TokenUsage(input: 100, output: 40, reasoning: 10)),
+        (#"{"output_tokens":50,"output_tokens_details":{"thinking_tokens":0}}"#, TokenUsage(input: 100, output: 50))
+    ])
+    func initialThinkingIsRetainedOrReplaced(usage: String, expected: TokenUsage) async throws {
+        let deltas = try await usageStream(
+            start: #"{"input_tokens":100,"output_tokens":20,"output_tokens_details":{"thinking_tokens":10}}"#,
+            updates: [usage]
+        )
+        #expect(deltas.last == .finished(usage: expected))
+    }
+
+    @Test
+    func malformedStartUsageThrowsTypedDecodingFailure() async throws {
+        do {
+            _ = try await usageStream(start: #"{"input_tokens":-1,"output_tokens":0}"#, updates: [])
+            Issue.record("Expected malformed usage to fail")
+        } catch let AgentError.llmError(.decodingFailed(description)) {
+            #expect(description.contains("input_tokens"))
+        }
+    }
+
+    @Test(arguments: [nil, "null"] as [String?])
+    func deltaCanSupplyMissingStartUsage(start: String?) async throws {
+        let deltas = try await usageStream(start: start, updates: [
+            #"{"input_tokens":100,"output_tokens":50,"cache_read_input_tokens":600,"#
+                + #""cache_creation_input_tokens":100,"output_tokens_details":{"thinking_tokens":20}}"#
+        ])
+        #expect(deltas.last == .finished(usage: TokenUsage(
+            input: 800, output: 30, reasoning: 20, cacheRead: 600, cacheWrite: 100
+        )))
+    }
+
+    @Test(arguments: [
+        [String](),
+        [#"{"output_tokens":50,"output_tokens_details":{"thinking_tokens":51}}"#],
+        [#"{"input_tokens":9223372036854775807,"output_tokens":50}"#]
+    ])
+    func unavailableUsagePreservesContentAndTools(updates: [String]) async throws {
+        let deltas = try await usageStream(start: cachedStartUsage, updates: updates)
+        #expect(deltas.last == .finished(usage: nil))
+        #expect(deltas.contains(.content("Answer")))
+        #expect(deltas.contains(.toolCallStart(index: 0, id: "call_1", name: "lookup", kind: .function)))
+        #expect(deltas.contains(.toolCallDelta(index: 0, arguments: "{}")))
+    }
+
+    @Test(arguments: [
+        (#"{"output_tokens":-1}"#, "output_tokens"),
+        (#"{"output_tokens":true}"#, "output_tokens"),
+        (#"{"output_tokens":9223372036854775808}"#, "output_tokens"),
+        (#"{}"#, "output_tokens"),
+        (#"{"output_tokens":null}"#, "output_tokens"),
+        (#"{"output_tokens":50,"input_tokens":-1}"#, "input_tokens"),
+        (#"{"output_tokens":50,"cache_read_input_tokens":-1}"#, "cache_read_input_tokens"),
+        (#"{"output_tokens":50,"cache_creation_input_tokens":-1}"#, "cache_creation_input_tokens"),
+        (#"{"output_tokens":50,"output_tokens_details":{"thinking_tokens":-1}}"#, "thinking_tokens"),
+        (#"{"output_tokens":50,"output_tokens_details":{}}"#, "thinking_tokens")
+    ])
+    func malformedDeltaUsageThrowsTypedDecodingFailure(usage: String, key: String) async throws {
+        do {
+            _ = try await usageStream(start: cachedStartUsage, updates: [usage])
+            Issue.record("Expected malformed usage to fail")
+        } catch let AgentError.llmError(.decodingFailed(description)) {
+            #expect(description.contains("usage"))
+            #expect(description.contains(key))
+        }
+    }
+
+    private var cachedStartUsage: String {
+        #"{"input_tokens":100,"output_tokens":7,"cache_read_input_tokens":600,"cache_creation_input_tokens":100}"#
+    }
+
+    private func usageStream(start: String?, updates: [String]) async throws -> [StreamDelta] {
+        let startFields = start.map { #""usage":\#($0)"# } ?? ""
+        let lines = [
+            #"{"type":"message_start","message":{\#(startFields)}}"#,
+            #"{"type":"content_block_start","index":0,"content_block":{"type":"text"}}"#,
+            #"{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Answer"}}"#,
+            #"{"type":"content_block_stop","index":0}"#,
+            #"{"type":"content_block_start","index":1,"content_block":{"type":"tool_use","#
+                + #""id":"call_1","name":"lookup","input":{}}}"#,
+            #"{"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{}"}}"#,
+            #"{"type":"content_block_stop","index":1}"#
+        ] + updates.map { #"{"type":"message_delta","usage":\#($0)}"# } + [
+            #"{"type":"message_delta"}"#,
+            #"{"type":"message_delta","usage":null}"#,
+            #"{"type":"message_stop"}"#
+        ]
+        return try await collectStreamDeltas(client: makeClient(), lines: lines.map(sseLine))
     }
 }
 

@@ -268,7 +268,9 @@ extension AnthropicClient {
         state: AnthropicStreamState
     ) async throws {
         let event = try decodeEvent(AnthropicMessageStartEvent.self, from: data)
-        await state.setInputUsage(event.message.usage)
+        if let usage = event.message.usage {
+            await state.setInputUsage(usage)
+        }
     }
 
     private func handleMessageDelta(
@@ -276,7 +278,9 @@ extension AnthropicClient {
         state: AnthropicStreamState
     ) async throws {
         let event = try decodeEvent(AnthropicMessageDeltaEvent.self, from: data)
-        await state.setOutputTokens(event.usage?.outputTokens ?? 0)
+        if let usage = event.usage {
+            await state.applyUsageDelta(usage)
+        }
     }
 
     private func handleError(data: Data, diagnostics: StreamFailureDiagnostics) throws {
@@ -420,11 +424,6 @@ private struct AnthropicDeltaContent: Decodable {
 private struct AnthropicBlockStopEvent: Decodable { let index: Int }
 private struct AnthropicMessageDeltaEvent: Decodable { let usage: AnthropicDeltaUsage? }
 
-private struct AnthropicDeltaUsage: Decodable {
-    let outputTokens: Int
-    enum CodingKeys: String, CodingKey { case outputTokens = "output_tokens" }
-}
-
 private struct AnthropicMessageStartEvent: Decodable { let message: AnthropicMessageStartMessage }
-private struct AnthropicMessageStartMessage: Decodable { let usage: AnthropicUsage }
+private struct AnthropicMessageStartMessage: Decodable { let usage: AnthropicUsage? }
 private struct AnthropicStreamErrorEvent: Decodable { let error: AnthropicErrorDetail }

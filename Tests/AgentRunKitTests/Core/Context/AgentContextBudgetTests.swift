@@ -103,6 +103,152 @@ private actor InvocationCounter {
     }
 }
 
+@Suite(.tags(.provider, .wireFormat))
+struct AnthropicContextBudgetTests {
+    @Test(arguments: AnthropicContextExecution.allCases)
+    func cacheInclusiveAdvisoryPreservesStateAcrossUsageGap(execution: AnthropicContextExecution) async throws {
+        let responses = try [
+            AnthropicContextReply.tool(id: "call_1").response(execution: execution, usage: anthropicCachedContextUsage),
+            AnthropicContextReply.tool(id: "call_2").response(execution: execution, usage: nil),
+            AnthropicContextReply.text("done").response(execution: execution, usage: nil)
+        ]
+        try await withAnthropicContextClient(responses: responses) { client, url in
+            let tool = try makeAnthropicContextTool()
+            let agent = Agent(client: client, tools: [tool], configuration: AgentConfiguration(
+                maxIterations: 3,
+                contextBudget: ContextBudgetConfig(
+                    softThreshold: 0.8, enableVisibility: true, visibilityFormat: .custom("{usage}/{window}")
+                )
+            ))
+            switch execution {
+            case .blocking:
+                let result = try await agent.run(userMessage: "Work", context: EmptyContext())
+                #expect(result.content == "done")
+                #expect(result.iterations == 3)
+                #expect(result.totalTokenUsage.total == 850)
+            case .streaming:
+                var events: [StreamEvent.Kind] = []
+                var usages: [TokenUsage?] = []
+                for try await event in agent.stream(userMessage: "Work", context: EmptyContext()) {
+                    events.append(event.kind)
+                    if case let .iterationCompleted(usage, _, _) = event.kind {
+                        usages.append(usage)
+                    }
+                }
+                let budgets = events.compactMap { event -> ContextBudget? in
+                    guard case let .budgetUpdated(budget) = event else { return nil }
+                    return budget
+                }
+                #expect(budgets == [ContextBudget(windowSize: 1000, currentUsage: 830, softThreshold: 0.8)])
+                #expect(events.count(where: { if case .budgetAdvisory = $0 { true } else { false } }) == 1)
+                #expect(usages == [TokenUsage(
+                    input: 800, output: 30, reasoning: 20, cacheRead: 600, cacheWrite: 100
+                ), nil, nil])
+                guard case let .finished(usage, content, reason, _) = events.last else {
+                    Issue.record("Expected finished event")
+                    return
+                }
+                #expect(usage.total == 850)
+                #expect(content == "done")
+                #expect(reason == .completed)
+            }
+            try assertAdvisoryRequests(HTTPTestURLProtocol.recordedBodyData(for: url))
+        }
+    }
+
+    @Test(arguments: AnthropicContextExecution.allCases)
+    func cumulativeCapIncludesCacheAndThinking(execution: AnthropicContextExecution) async throws {
+        let response = try AnthropicContextReply.tool(id: "call_1").response(
+            execution: execution, usage: anthropicCachedContextUsage
+        )
+        try await withAnthropicContextClient(responses: [response]) { client, url in
+            let tool = try makeAnthropicContextTool()
+            let agent = Agent(client: client, tools: [tool])
+            switch execution {
+            case .blocking:
+                let result = try await agent.run(userMessage: "Work", context: EmptyContext(), tokenBudget: 849)
+                #expect(result.finishReason == .tokenBudgetExceeded(budget: 849, used: 850))
+                #expect(result.totalTokenUsage.total == 850)
+                #expect(result.iterations == 1)
+                #expect(result.history.last == .tool(id: "call_1", name: "noop", content: "{}"))
+            case .streaming:
+                var events: [StreamEvent.Kind] = []
+                for try await event in agent.stream(userMessage: "Work", context: EmptyContext(), tokenBudget: 849) {
+                    events.append(event.kind)
+                }
+                guard case let .finished(usage, _, reason, history) = events.last else {
+                    Issue.record("Expected finished event")
+                    return
+                }
+                #expect(reason == .tokenBudgetExceeded(budget: 849, used: 850))
+                #expect(usage.total == 850)
+                #expect(history.last == .tool(id: "call_1", name: "noop", content: "{}"))
+            }
+            #expect(HTTPTestURLProtocol.recordedBodyData(for: url).count == 1)
+        }
+    }
+
+    @Test(arguments: AnthropicContextExecution.allCases)
+    func successfulCompletionTakesPrecedenceOverCumulativeCap(execution: AnthropicContextExecution) async throws {
+        let response = try AnthropicContextReply.finish.response(
+            execution: execution, usage: anthropicCachedContextUsage
+        )
+        try await withAnthropicContextClient(responses: [response]) { client, url in
+            let agent = Agent<EmptyContext>(client: client, tools: [])
+            switch execution {
+            case .blocking:
+                let result = try await agent.run(userMessage: "Work", context: EmptyContext(), tokenBudget: 849)
+                #expect(result.finishReason == .completed)
+                #expect(result.content == "done")
+                #expect(result.totalTokenUsage.total == 850)
+                #expect(result.iterations == 1)
+            case .streaming:
+                var events: [StreamEvent.Kind] = []
+                for try await event in agent.stream(userMessage: "Work", context: EmptyContext(), tokenBudget: 849) {
+                    events.append(event.kind)
+                }
+                guard case let .finished(usage, content, reason, _) = events.last else {
+                    Issue.record("Expected finished event")
+                    return
+                }
+                #expect(reason == .completed)
+                #expect(content == "done")
+                #expect(usage.total == 850)
+            }
+            #expect(HTTPTestURLProtocol.recordedBodyData(for: url).count == 1)
+        }
+    }
+
+    private func assertAdvisoryRequests(_ bodies: [Data]) throws {
+        try #require(bodies.count == 3)
+        let requests = try bodies.map { try JSONDecoder().decode([String: JSONValue].self, from: $0) }
+        #expect(requests[0]["messages"] == .array([.object(["role": .string("user"), "content": .string("Work")])]))
+        guard case let .array(second) = requests[1]["messages"],
+              case let .array(third) = requests[2]["messages"] else {
+            Issue.record("Expected captured Anthropic messages")
+            return
+        }
+        try #require(second.count == 4)
+        try #require(third.count == 6)
+        #expect(second[2] == .object([
+            "role": .string("user"), "content": .array([.object([
+                "type": .string("tool_result"), "tool_use_id": .string("call_1"),
+                "content": .string("{}\n\n830/1,000")
+            ])])
+        ]))
+        #expect(second[3] == .object([
+            "role": .string("user"),
+            "content": .string("[Context budget advisory: usage is at 83%. Provide your final answer.]")
+        ]))
+        #expect(Array(third.prefix(4)) == second)
+        #expect(third[5] == .object([
+            "role": .string("user"), "content": .array([.object([
+                "type": .string("tool_result"), "tool_use_id": .string("call_2"), "content": .string("{}")
+            ])])
+        ]))
+    }
+}
+
 // MARK: - Tool Definition Tests
 
 struct ContextBudgetToolDefinitionTests {

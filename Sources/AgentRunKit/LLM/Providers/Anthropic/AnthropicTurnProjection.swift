@@ -18,7 +18,7 @@ struct AnthropicTurnProjection {
         )
     }
 
-    func project(usage: TokenUsage) throws -> AssistantMessage {
+    func project(usage: TokenUsage?) throws -> AssistantMessage {
         var content = ""
         var toolCalls: [ToolCall] = []
         var reasoningText: String?

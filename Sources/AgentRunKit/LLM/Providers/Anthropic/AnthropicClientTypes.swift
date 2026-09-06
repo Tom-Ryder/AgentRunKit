@@ -240,7 +240,7 @@ extension AnthropicToolChoice: Encodable {
 
 struct AnthropicResponse: Decodable {
     let content: [AnthropicResponseBlock]
-    let usage: AnthropicUsage
+    let usage: AnthropicUsage?
 }
 
 enum AnthropicResponseBlock: Decodable {
@@ -283,20 +283,6 @@ enum AnthropicResponseBlock: Decodable {
             let input = try container.decode(JSONValue.self, forKey: .input)
             self = .toolUse(id: id, name: name, input: input)
         }
-    }
-}
-
-struct AnthropicUsage: Decodable {
-    let inputTokens: Int
-    let outputTokens: Int
-    let cacheCreationInputTokens: Int?
-    let cacheReadInputTokens: Int?
-
-    enum CodingKeys: String, CodingKey {
-        case inputTokens = "input_tokens"
-        case outputTokens = "output_tokens"
-        case cacheCreationInputTokens = "cache_creation_input_tokens"
-        case cacheReadInputTokens = "cache_read_input_tokens"
     }
 }
 
