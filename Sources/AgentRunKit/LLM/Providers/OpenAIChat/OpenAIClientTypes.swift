@@ -301,19 +301,61 @@ struct ResponseCustomToolCall: Decodable {
 }
 
 struct ResponseUsage: Decodable {
-    let promptTokens: Int
-    let completionTokens: Int
-    let completionTokensDetails: CompletionTokensDetails?
+    let tokenUsage: TokenUsage?
 
-    var tokenUsage: TokenUsage {
-        let reasoning = completionTokensDetails?.reasoningTokens ?? 0
-        let output = max(0, completionTokens - reasoning)
-        return TokenUsage(input: promptTokens, output: output, reasoning: reasoning)
+    private enum CodingKeys: String, CodingKey {
+        case promptTokens, completionTokens, promptTokensDetails, completionTokensDetails
+    }
+
+    init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let input = try container.decodeTokenCount(forKey: .promptTokens)
+        let output = try container.decodeTokenCount(forKey: .completionTokens)
+        let promptDetails = try container.decodeIfPresent(PromptTokensDetails.self, forKey: .promptTokensDetails)
+        let completionDetails = try container.decodeIfPresent(
+            CompletionTokensDetails.self, forKey: .completionTokensDetails
+        )
+        let reasoning = completionDetails?.reasoningTokens ?? 0
+        guard reasoning <= output,
+              promptDetails?.cachedTokens ?? 0 <= input,
+              promptDetails?.cacheWriteTokens ?? 0 <= input
+        else {
+            tokenUsage = nil
+            return
+        }
+        tokenUsage = TokenUsage(
+            input: input, output: output - reasoning, reasoning: reasoning,
+            cacheRead: promptDetails?.cachedTokens, cacheWrite: promptDetails?.cacheWriteTokens
+        )
+    }
+}
+
+private struct PromptTokensDetails: Decodable {
+    let cachedTokens: Int?
+    let cacheWriteTokens: Int?
+
+    private enum CodingKeys: String, CodingKey {
+        case cachedTokens, cacheWriteTokens
+    }
+
+    init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        cachedTokens = try container.decodeTokenCountIfPresent(forKey: .cachedTokens)
+        cacheWriteTokens = try container.decodeTokenCountIfPresent(forKey: .cacheWriteTokens)
     }
 }
 
 struct CompletionTokensDetails: Decodable {
     let reasoningTokens: Int?
+
+    private enum CodingKeys: String, CodingKey {
+        case reasoningTokens
+    }
+
+    init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        reasoningTokens = try container.decodeTokenCountIfPresent(forKey: .reasoningTokens)
+    }
 }
 
 struct OpenAIErrorResponse: Decodable {

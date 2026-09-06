@@ -38,6 +38,71 @@ struct TokenUsageTests {
         #expect(result.output == Int.max)
         #expect(result.reasoning == Int.max)
     }
+
+    @Test
+    func persistedUsagePreservesHistoricalCacheCounts() throws {
+        let data = Data(#"{"input":100,"output":50,"reasoning":0,"cacheRead":600,"cacheWrite":200}"#.utf8)
+        let usage = try JSONDecoder().decode(TokenUsage.self, from: data)
+        #expect(usage.input == 100)
+        #expect(usage.cacheRead == 600)
+        #expect(usage.cacheWrite == 200)
+        #expect(usage.total == 150)
+        let encoded = try JSONEncoder().encode(usage)
+        #expect(try JSONDecoder().decode(TokenUsage.self, from: encoded) == usage)
+    }
+
+    @Test(arguments: [
+        #"{"input":0,"output":0,"reasoning":0}"#,
+        #"{"input":0,"output":0,"reasoning":0,"cacheRead":null,"cacheWrite":null}"#
+    ])
+    func persistedUsageAllowsUnavailableCacheCounts(_ json: String) throws {
+        let usage = try JSONDecoder().decode(TokenUsage.self, from: Data(json.utf8))
+        #expect(usage == TokenUsage())
+    }
+
+    @Test(arguments: ["input", "output", "reasoning"])
+    func persistedUsageRequiresScalarCounts(_ key: String) throws {
+        var fields = ["input": 1, "output": 2, "reasoning": 3]
+        fields.removeValue(forKey: key)
+        let data = try JSONEncoder().encode(fields)
+        do {
+            _ = try JSONDecoder().decode(TokenUsage.self, from: data)
+            Issue.record("Expected missing token count to fail")
+        } catch let DecodingError.keyNotFound(missing, _) {
+            #expect(missing.stringValue == key)
+        }
+    }
+
+    @Test(arguments: ["input", "output", "reasoning", "cacheRead", "cacheWrite"], [
+        "-1", #""1""#, "true", "1.5", "9223372036854775808"
+    ])
+    func persistedUsageRejectsMalformedCounts(_ key: String, _ value: String) throws {
+        var fields = ["input": "1", "output": "2", "reasoning": "3"]
+        fields[key] = value
+        let usageJSON = fields.map { #""\#($0.key)":\#($0.value)"# }.joined(separator: ",")
+        let data = Data(#"{"content":"answer","toolCalls":[],"tokenUsage":{\#(usageJSON)}}"#.utf8)
+        do {
+            _ = try JSONDecoder().decode(AssistantMessage.self, from: data)
+            Issue.record("Expected malformed token count to fail")
+        } catch let DecodingError.dataCorrupted(context) {
+            #expect(context.codingPath.map(\.stringValue) == ["tokenUsage", key])
+        } catch let DecodingError.typeMismatch(_, context) {
+            #expect(context.codingPath.map(\.stringValue) == ["tokenUsage", key])
+        }
+    }
+
+    @Test(arguments: ["input", "output", "reasoning"])
+    func persistedUsageRejectsNullScalarCounts(_ key: String) throws {
+        var fields: [String: JSONValue] = ["input": .int(1), "output": .int(2), "reasoning": .int(3)]
+        fields[key] = .null
+        let data = try JSONEncoder().encode(fields)
+        do {
+            _ = try JSONDecoder().decode(TokenUsage.self, from: data)
+            Issue.record("Expected null token count to fail")
+        } catch let DecodingError.valueNotFound(_, context) {
+            #expect(context.codingPath.map(\.stringValue) == [key])
+        }
+    }
 }
 
 struct AssistantMessageTests {

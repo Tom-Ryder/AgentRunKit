@@ -303,15 +303,6 @@ extension ResponsesAPIClient {
             }
         }
 
-        let reasoningTokens = response.usage?.outputTokensDetails?.reasoningTokens ?? 0
-        let tokenUsage = response.usage.map { usage in
-            TokenUsage(
-                input: usage.inputTokens,
-                output: max(0, usage.outputTokens - reasoningTokens),
-                reasoning: reasoningTokens
-            )
-        }
-
         let replayState = ResponsesReplayState(response: response)
         let continuityReplayState = store
             ? replayState
@@ -319,7 +310,7 @@ extension ResponsesAPIClient {
         return ResponsesTurnProjection(
             content: content,
             toolCalls: toolCalls,
-            tokenUsage: tokenUsage,
+            tokenUsage: response.usage?.tokenUsage,
             reasoning: reasoningSummary.map { ReasoningContent(content: $0) },
             reasoningDetails: reasoningDetails.isEmpty ? nil : reasoningDetails,
             continuity: continuityReplayState.output.isEmpty ? nil : continuityReplayState.continuity

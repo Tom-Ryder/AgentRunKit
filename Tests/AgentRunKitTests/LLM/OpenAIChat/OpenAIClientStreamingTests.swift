@@ -459,3 +459,81 @@ struct OpenAIClientStreamingCompletionTests {
         #expect(diagnostics.finishSignalSeen)
     }
 }
+
+extension OpenAIClientStreamingCompletionTests {
+    @Test(arguments: [
+        (#"{"cached_tokens":80,"cache_write_tokens":70}"#,
+         TokenUsage(input: 100, output: 30, reasoning: 20, cacheRead: 80, cacheWrite: 70)),
+        (#"{"cached_tokens":0,"cache_write_tokens":0}"#,
+         TokenUsage(input: 100, output: 30, reasoning: 20, cacheRead: 0, cacheWrite: 0)),
+        (#"{"cached_tokens":80}"#, TokenUsage(input: 100, output: 30, reasoning: 20, cacheRead: 80)),
+        (#"{"cache_write_tokens":70}"#, TokenUsage(input: 100, output: 30, reasoning: 20, cacheWrite: 70)),
+        (#"{"cached_tokens":null,"cache_write_tokens":null}"#, TokenUsage(input: 100, output: 30, reasoning: 20)),
+        ("{}", TokenUsage(input: 100, output: 30, reasoning: 20)),
+        ("null", TokenUsage(input: 100, output: 30, reasoning: 20))
+    ])
+    func streamedCacheDetailsPreserveReportedDimensions(details: String, expected: TokenUsage) async throws {
+        let usage = #"{"prompt_tokens":100,"completion_tokens":50,"prompt_tokens_details":\#(details),"#
+            + #""completion_tokens_details":{"reasoning_tokens":20}}"#
+        let result = try await collectStream(
+            host: "chat-cache-\(UUID().uuidString)",
+            body: sseChunk(#"{"choices":[{"delta":{"content":"Answer"},"finish_reason":"stop"}]}"#)
+                + sseChunk(#"{"choices":[],"usage":\#(usage)}"#)
+                + "data: [DONE]\n\n"
+        )
+
+        #expect(result.error == nil)
+        #expect(result.deltas == [
+            .content("Answer"),
+            .finished(usage: expected),
+            .streamClosed(terminalMarkerSeen: true)
+        ])
+    }
+
+    @Test(arguments: [
+        #"{"prompt_tokens":100,"completion_tokens":50,"completion_tokens_details":{"reasoning_tokens":51}}"#,
+        #"{"prompt_tokens":100,"completion_tokens":50,"prompt_tokens_details":{"cached_tokens":101}}"#,
+        #"{"prompt_tokens":100,"completion_tokens":50,"prompt_tokens_details":{"cache_write_tokens":101}}"#
+    ])
+    func unnormalizableSnapshotClearsEarlierUsage(usage: String) async throws {
+        let result = try await collectStream(
+            host: "chat-invalid-measurement-\(UUID().uuidString)",
+            body: sseChunk(#"{"usage":{"prompt_tokens":10,"completion_tokens":5}}"#)
+                + sseChunk(#"{"choices":[{"delta":{"content":"Answer"},"finish_reason":"stop"}],"usage":\#(usage)}"#)
+                + "data: [DONE]\n\n"
+        )
+
+        #expect(result.error == nil)
+        #expect(result.deltas == [
+            .content("Answer"), .finished(usage: nil), .streamClosed(terminalMarkerSeen: true)
+        ])
+    }
+
+    @Test(arguments: [
+        (#"{}"#, TokenUsage(input: 10, output: 5)),
+        (#"{"usage":null}"#, TokenUsage(input: 10, output: 5)),
+        (#"{"usage":{"prompt_tokens":0,"completion_tokens":0}}"#, TokenUsage()),
+        (#"{"usage":{"prompt_tokens":100,"completion_tokens":50,"completion_tokens_details":{"reasoning_tokens":0}}}"#,
+         TokenUsage(input: 100, output: 50)),
+        (#"{"usage":{"prompt_tokens":100,"completion_tokens":50,"completion_tokens_details":null}}"#,
+         TokenUsage(input: 100, output: 50)),
+        (#"{"usage":{"prompt_tokens":100,"completion_tokens":50,"completion_tokens_details":{}}}"#,
+         TokenUsage(input: 100, output: 50)),
+        (#"{"usage":{"prompt_tokens":100,"completion_tokens":50,"#
+            + #""completion_tokens_details":{"reasoning_tokens":null}}}"#,
+            TokenUsage(input: 100, output: 50))
+    ])
+    func latestReportedUsageSnapshotWins(chunk: String, expected: TokenUsage) async throws {
+        let result = try await collectStream(
+            host: "chat-retained-measurement-\(UUID().uuidString)",
+            body: sseChunk(#"{"usage":{"prompt_tokens":10,"completion_tokens":5}}"#)
+                + sseChunk(chunk)
+                + sseChunk(#"{"choices":[{"delta":{},"finish_reason":"stop"}]}"#)
+        )
+
+        #expect(result.error == nil)
+        #expect(result.deltas == [
+            .finished(usage: expected), .streamClosed(terminalMarkerSeen: false)
+        ])
+    }
+}

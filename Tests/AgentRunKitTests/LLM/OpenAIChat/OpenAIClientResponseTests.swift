@@ -117,7 +117,7 @@ struct OpenAIClientResponseTests {
     }
 
     @Test
-    func responseWithoutUsageDefaultsToZero() throws {
+    func responseWithoutUsageIsUnavailable() throws {
         let json = """
         {
             "choices": [{
@@ -831,5 +831,88 @@ struct StreamingAudioChunkTests {
         let deltas = try client.extractDeltas(from: chunk)
 
         #expect(deltas == [.audioStarted(id: "audio_123", expiresAt: 1_729_234_747)])
+    }
+}
+
+extension OpenAIClientResponseTests {
+    @Test(arguments: [
+        (#"{"cached_tokens":80,"cache_write_tokens":70}"#,
+         TokenUsage(input: 100, output: 30, reasoning: 20, cacheRead: 80, cacheWrite: 70)),
+        (#"{"cached_tokens":0,"cache_write_tokens":0}"#,
+         TokenUsage(input: 100, output: 30, reasoning: 20, cacheRead: 0, cacheWrite: 0)),
+        (#"{"cached_tokens":80}"#, TokenUsage(input: 100, output: 30, reasoning: 20, cacheRead: 80)),
+        (#"{"cache_write_tokens":70}"#, TokenUsage(input: 100, output: 30, reasoning: 20, cacheWrite: 70)),
+        (#"{"cached_tokens":null,"cache_write_tokens":null}"#, TokenUsage(input: 100, output: 30, reasoning: 20)),
+        ("{}", TokenUsage(input: 100, output: 30, reasoning: 20)),
+        ("null", TokenUsage(input: 100, output: 30, reasoning: 20))
+    ])
+    func cacheDetailsPreserveReportedDimensions(details: String, expected: TokenUsage) throws {
+        let json = #"{"choices":[{"message":{"role":"assistant","content":"Answer"}}],"usage":{"#
+            + #""prompt_tokens":100,"completion_tokens":50,"prompt_tokens_details":\#(details),"#
+            + #""completion_tokens_details":{"reasoning_tokens":20}}}"#
+        let client = OpenAIClient(apiKey: "test", baseURL: OpenAIClient.openRouterBaseURL)
+        let message = try client.parseResponse(Data(json.utf8))
+
+        #expect(message.content == "Answer")
+        #expect(message.tokenUsage == expected)
+        #expect(message.tokenUsage?.total == 150)
+    }
+
+    @Test(arguments: [
+        nil, "null",
+        #"{"prompt_tokens":100,"completion_tokens":50,"completion_tokens_details":{"reasoning_tokens":51}}"#,
+        #"{"prompt_tokens":100,"completion_tokens":50,"prompt_tokens_details":{"cached_tokens":101}}"#,
+        #"{"prompt_tokens":100,"completion_tokens":50,"prompt_tokens_details":{"cache_write_tokens":101}}"#
+    ] as [String?])
+    func unavailableUsagePreservesAssistantFields(usage: String?) throws {
+        let usageField = usage.map { #", "usage":\#($0)"# } ?? ""
+        let json = #"{"choices":[{"message":{"role":"assistant","content":"Checking","#
+            + #""tool_calls":[{"id":"call_1","function":{"name":"lookup","arguments":"{}"}}],"#
+            + #""reasoning_details":[{"type":"reasoning.encrypted","encrypted":"opaque=="}]}}]\#(usageField)}"#
+        let client = OpenAIClient(apiKey: "test", baseURL: OpenAIClient.openRouterBaseURL)
+        let message = try client.parseResponse(Data(json.utf8))
+
+        #expect(message.content == "Checking")
+        #expect(message.toolCalls == [ToolCall(id: "call_1", name: "lookup", arguments: "{}")])
+        #expect(message.reasoningDetails == [.object([
+            "type": .string("reasoning.encrypted"), "encrypted": .string("opaque==")
+        ])])
+        #expect(message.tokenUsage == nil)
+    }
+
+    @Test(arguments: [
+        (#"{"completion_tokens":5}"#, "promptTokens"),
+        (#"{"prompt_tokens":10}"#, "completionTokens"),
+        (#"{"prompt_tokens":-1,"completion_tokens":5}"#, "promptTokens"),
+        (#"{"prompt_tokens":10,"completion_tokens":-1}"#, "completionTokens"),
+        (#"{"prompt_tokens":10,"completion_tokens":null}"#, "completionTokens"),
+        (#"{"prompt_tokens":10,"completion_tokens":9223372036854775808}"#, "completionTokens"),
+        (#"{"prompt_tokens":10,"completion_tokens":1.5}"#, "completionTokens"),
+        (#"{"prompt_tokens":10,"completion_tokens":5,"completion_tokens_details":{"reasoning_tokens":-1}}"#,
+         "reasoningTokens"),
+        (#"{"prompt_tokens":10,"completion_tokens":5,"prompt_tokens_details":{"cached_tokens":-1}}"#,
+         "cachedTokens"),
+        (#"{"prompt_tokens":10,"completion_tokens":5,"prompt_tokens_details":{"cache_write_tokens":"2"}}"#,
+         "cacheWriteTokens"),
+        (#"{"prompt_tokens":10,"completion_tokens":5,"prompt_tokens_details":{"cache_write_tokens":-1}}"#,
+         "cacheWriteTokens"),
+        (#"{"prompt_tokens":10,"completion_tokens":5,"prompt_tokens_details":false}"#, "promptTokensDetails")
+    ])
+    func malformedUsageThrowsThroughBothDecoders(usage: String, key: String) throws {
+        let client = OpenAIClient(apiKey: "test", baseURL: OpenAIClient.openRouterBaseURL)
+        let response = #"{"choices":[{"message":{"role":"assistant","content":"Answer"}}],"usage":\#(usage)}"#
+        let chunk = #"{"choices":[{"delta":{"content":"Answer"},"finish_reason":"stop"}],"usage":\#(usage)}"#
+        for decode in [
+            { _ = try client.parseResponse(Data(response.utf8)) },
+            { _ = try client.parseStreamingChunk(Data(chunk.utf8)) }
+        ] {
+            do {
+                try decode()
+                Issue.record("Expected malformed usage to fail")
+            } catch let AgentError.llmError(.decodingFailed(description)) {
+                #expect(description.contains("usage"))
+                #expect(description.contains(key))
+            }
+        }
     }
 }

@@ -323,8 +323,6 @@ extension OpenAIClient {
             ToolCall(id: call.id, name: call.name, arguments: call.arguments, kind: call.kind)
         }
 
-        let tokenUsage = response.usage.map(\.tokenUsage)
-
         let reasoning = (choice.message.reasoning ?? choice.message.reasoningContent)
             .flatMap { $0.isEmpty ? nil : ReasoningContent(content: $0) }
 
@@ -333,7 +331,7 @@ extension OpenAIClient {
         return AssistantMessage(
             content: choice.message.content ?? "",
             toolCalls: toolCalls,
-            tokenUsage: tokenUsage,
+            tokenUsage: response.usage?.tokenUsage,
             reasoning: reasoning,
             reasoningDetails: reasoningDetails
         )

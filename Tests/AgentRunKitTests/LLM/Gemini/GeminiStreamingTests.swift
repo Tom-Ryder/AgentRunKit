@@ -423,3 +423,52 @@ struct GeminiStreamingTests {
 }
 
 // swiftlint:enable line_length
+
+extension GeminiStreamingTests {
+    @Test(arguments: [
+        (nil, nil), ("null", nil), ("{}", TokenUsage(cacheRead: 0)),
+        (#"{"promptTokenCount":null,"candidatesTokenCount":null,"thoughtsTokenCount":null,"#
+            + #""cachedContentTokenCount":null}"#, TokenUsage(cacheRead: 0)),
+        (#"{"promptTokenCount":1124,"totalTokenCount":1171,"thoughtsTokenCount":47}"#,
+         TokenUsage(input: 1124, reasoning: 47, cacheRead: 0)),
+        (#"{"promptTokenCount":100,"candidatesTokenCount":20,"cachedContentTokenCount":0}"#,
+         TokenUsage(input: 100, output: 20, cacheRead: 0)),
+        (#"{"promptTokenCount":100,"candidatesTokenCount":20,"cachedContentTokenCount":null}"#,
+         TokenUsage(input: 100, output: 20, cacheRead: 0)),
+        (#"{"promptTokenCount":100,"candidatesTokenCount":20,"cachedContentTokenCount":80}"#,
+         TokenUsage(input: 100, output: 20, cacheRead: 80)),
+        (#"{"promptTokenCount":100,"cachedContentTokenCount":101}"#, nil)
+    ] as [(String?, TokenUsage?)])
+    func terminalMetadataResolvesScalarsWithoutAccumulatingEarlierCounts(
+        metadata: String?, expected: TokenUsage?
+    ) async throws {
+        let metadataField = metadata.map { #", "usageMetadata":\#($0)"# } ?? ""
+        let terminal = #"data: {"candidates":[{"content":{"parts":[{"text":"Answer"},"#
+            + #"{"functionCall":{"id":"call_1","name":"lookup","args":{}}}]},"#
+            + #""finishReason":"STOP"}]\#(metadataField)}"#
+        let deltas = try await collectDeltas(from: [
+            #"data: {"usageMetadata":{"promptTokenCount":500,"cachedContentTokenCount":400}}"#,
+            #"data: {"candidates":[{"content":{"parts":[]}}],"usageMetadata":{"promptTokenCount":600}}"#,
+            terminal
+        ])
+        #expect(deltas == [
+            .content("Answer"), .toolCallStart(index: 0, id: "call_1", name: "lookup", kind: .function),
+            .toolCallDelta(index: 0, arguments: "{}"), .finished(usage: expected)
+        ])
+    }
+
+    @Test(arguments: ["promptTokenCount", "candidatesTokenCount", "thoughtsTokenCount", "cachedContentTokenCount"], [
+        "-1", #""1""#, "true", "1.5", "9223372036854775808"
+    ])
+    func malformedStreamedUsageMetadataThrows(key: String, value: String) async throws {
+        let line = #"data: {"candidates":[{"content":{"parts":[{"text":"Answer"}]},"finishReason":"STOP"}],"#
+            + #""usageMetadata":{"\#(key)":\#(value)}}"#
+        do {
+            _ = try await collectDeltas(from: [line])
+            Issue.record("Expected malformed usage metadata to fail")
+        } catch let AgentError.llmError(.decodingFailed(description)) {
+            #expect(description.contains("usageMetadata"))
+            #expect(description.contains(key))
+        }
+    }
+}

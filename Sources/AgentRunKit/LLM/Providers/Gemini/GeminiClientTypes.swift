@@ -233,18 +233,23 @@ struct GeminiCandidate: Decodable {
 }
 
 struct GeminiUsageMetadata: Decodable {
-    let promptTokenCount: Int?
-    let candidatesTokenCount: Int?
-    let thoughtsTokenCount: Int?
-    let cachedContentTokenCount: Int?
+    let tokenUsage: TokenUsage?
 
-    var tokenUsage: TokenUsage {
-        TokenUsage(
-            input: promptTokenCount ?? 0,
-            output: candidatesTokenCount ?? 0,
-            reasoning: thoughtsTokenCount ?? 0,
-            cacheRead: cachedContentTokenCount
-        )
+    private enum CodingKeys: String, CodingKey {
+        case promptTokenCount, candidatesTokenCount, thoughtsTokenCount, cachedContentTokenCount
+    }
+
+    init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let input = try container.decodeTokenCountIfPresent(forKey: .promptTokenCount) ?? 0
+        let output = try container.decodeTokenCountIfPresent(forKey: .candidatesTokenCount) ?? 0
+        let reasoning = try container.decodeTokenCountIfPresent(forKey: .thoughtsTokenCount) ?? 0
+        let cacheRead = try container.decodeTokenCountIfPresent(forKey: .cachedContentTokenCount) ?? 0
+        guard cacheRead <= input else {
+            tokenUsage = nil
+            return
+        }
+        tokenUsage = TokenUsage(input: input, output: output, reasoning: reasoning, cacheRead: cacheRead)
     }
 }
 

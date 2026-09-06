@@ -20,16 +20,18 @@ Any type conforming to ``LLMClient`` works with ``Agent``, ``Chat``, and ``SubAg
 
 ## Provider Feature Matrix
 
-| Provider | Auth | Structured Output | Reasoning | Multimodal | Prompt Caching | Transcription |
+| Provider | Auth | Structured Output | Reasoning | Multimodal | Prompt Cache Controls | Transcription |
 |---|---|---|---|---|---|---|
-| ``OpenAIClient`` | Bearer token (optional) | Yes | Yes (GPT-5/o-series) | Images (URL, base64) | No | Yes |
-| ``AnthropicClient`` | x-api-key (required) | Yes (`output_config.format`) | Yes (adaptive + manual) | Images, PDF (base64) | Yes | No |
-| ``GeminiClient`` | URL query param (required) | Yes | Yes (budget or level) | Images, audio, video, PDF (`inlineData`) | No | No |
-| ``VertexAnthropicClient`` | OAuth closure (required) | Yes (`output_config.format`) | Yes (adaptive + manual) | Images, PDF (base64) | Yes | No |
-| ``VertexGoogleClient`` | OAuth closure (required) | Yes | Yes | Images, audio, video, PDF (`inlineData`) | No | No |
-| ``ResponsesAPIClient`` | Bearer token (optional) | Yes | Yes | Images (URL, base64) | No | No |
-| `FoundationModelsClient` | None | Schema-driven tools | Apple-managed | Text | No | No |
-| `MLXClient` | None | Model/template dependent | Model/template dependent | Text | No | No |
+| ``OpenAIClient`` | Bearer token (optional) | Yes | Yes (GPT-5/o-series) | Images (URL, base64) | Provider-managed | Yes |
+| ``AnthropicClient`` | x-api-key (required) | Yes (`output_config.format`) | Yes (adaptive + manual) | Images, PDF (base64) | Cache breakpoints | No |
+| ``GeminiClient`` | URL query param (required) | Yes | Yes (budget or level) | Images, audio, video, PDF (`inlineData`) | `cachedContent` via `extraFields` | No |
+| ``VertexAnthropicClient`` | OAuth closure (required) | Yes (`output_config.format`) | Yes (adaptive + manual) | Images, PDF (base64) | Cache breakpoints | No |
+| ``VertexGoogleClient`` | OAuth closure (required) | Yes | Yes | Images, audio, video, PDF (`inlineData`) | `cachedContent` via `extraFields` | No |
+| ``ResponsesAPIClient`` | Bearer token (optional) | Yes | Yes | Images (URL, base64) | Provider-managed | No |
+| `FoundationModelsClient` | None | Schema-driven tools | Apple-managed | Text | None exposed | No |
+| `MLXClient` | None | Model/template dependent | Model/template dependent | Text | None exposed | No |
+
+Cache controls describe request configuration. An endpoint can reuse a prefix and report cached tokens without a framework cache option. Cache reuse depends on the provider, model, and routing; returned token measurements describe the response the endpoint reported.
 
 Tool-calling capabilities vary by provider and profile. AgentRunKit resolves them per provider at request-build time and throws when the requested wire surface is unsupported instead of silently dropping fields.
 
@@ -273,7 +275,7 @@ This guarantee concerns HTTP request serialization, not universal JSON canonical
 ``RequestContext`` carries per-request metadata through the ``LLMClient`` call.
 
 - `extraFields`: a `[String: JSONValue]` dictionary merged into the request body as top-level keys. Use this for provider-specific parameters not modeled in the client.
-- `onResponse`: a callback receiving the raw `HTTPURLResponse`, useful for reading rate-limit headers or cache status.
+- `onResponse`: a callback receiving the raw `HTTPURLResponse`, useful for reading HTTP metadata such as rate-limit headers.
 - `openAIChat`: typed OpenAI Chat request options such as custom tools, richer `tool_choice`, and `parallel_tool_calls`.
 - `anthropic`: typed Anthropic request options such as ``AnthropicToolChoice``.
 - `gemini`: typed Gemini request options such as ``GeminiFunctionCallingMode`` and `allowedFunctionNames`.
@@ -288,6 +290,23 @@ let ctx = RequestContext(
 )
 try await agent.run(userMessage: "Hello", context: EmptyContext(), requestContext: ctx)
 ```
+
+## Token Measurements
+
+Token counts arrive in ``AssistantMessage/tokenUsage`` and ``StreamDelta/finished(usage:)``. The `onResponse` callback exposes HTTP metadata; it does not decode response-body usage.
+
+Chat Completions and Responses normalize inclusive input, output, reasoning, and optional cache breakdowns at their wire boundary:
+
+| Client | Inclusive input | Inclusive output | Reasoning breakdown | Cache breakdown |
+|---|---|---|---|---|
+| ``OpenAIClient`` | `prompt_tokens` | `completion_tokens` | `completion_tokens_details.reasoning_tokens` | `prompt_tokens_details.cached_tokens` and optional `cache_write_tokens` |
+| ``ResponsesAPIClient`` | `input_tokens` | `output_tokens` | `output_tokens_details.reasoning_tokens` | `input_tokens_details.cached_tokens` and optional `cache_write_tokens` |
+
+Separately reported reasoning is subtracted from inclusive output and stored in ``TokenUsage/reasoning``. Without that breakdown, output remains undifferentiated and reasoning is zero. Cache reads and writes are portions of input, so they are not added again to ``TokenUsage/total``. An absent/null cache field remains nil; an explicit zero remains zero.
+
+Gemini and Vertex Google share the `usageMetadata` mapping for their `generateContent` endpoints. `promptTokenCount` already includes cached input, while `candidatesTokenCount` and `thoughtsTokenCount` are separate counts. Within a present metadata object, omitted/null prompt, candidate, thought, and `cachedContentTokenCount` counters all default to zero under the protocol's scalar-presence rules. An empty object therefore represents measured zeros, including `cacheRead: 0`; `cacheWrite` remains unavailable. The adapter does not derive counts from `totalTokenCount` or carry earlier stream metadata into the terminal snapshot. A wholly absent/null metadata object yields nil usage.
+
+For Chat, Responses, and Gemini, malformed token fields throw ``TransportError/decodingFailed(description:)`` through ``AgentError/llmError(_:)``. Wrong types, negative counts, out-of-range integers, and missing required fields are malformed. Structurally valid counts whose relationships cannot normalize, such as reasoning exceeding inclusive output or a cache component exceeding inclusive input, yield nil usage while preserving otherwise valid content, tool calls, and continuity. Responses still advances a valid continuation cursor in that case. Chat streaming retains the latest reported snapshot: an unusable report clears earlier usage, while a missing/null usage block leaves the prior snapshot intact.
 
 ## ReasoningConfig
 

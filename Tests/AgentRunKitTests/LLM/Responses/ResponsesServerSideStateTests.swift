@@ -383,21 +383,21 @@ struct ResponsesServerSideStateTests {
         #expect(await client.lastMessageCount == 0)
     }
 
-    @Test
-    func malformedGenerateResponseDoesNotAdvanceDeltaCursor() async throws {
-        let baseURL = try #require(URL(string: "https://responses-malformed-generate.test/v1"))
+    @Test(arguments: [
+        #""usage":{"input_tokens":10,"output_tokens":5}"#,
+        #""output":[],"usage":{"input_tokens":10,"output_tokens":-1}"#,
+        #""output":[],"usage":{"input_tokens":10,"output_tokens":9223372036854775808}"#,
+        #""output":[],"usage":{"input_tokens":10,"output_tokens":5,"input_tokens_details":{"cached_tokens":"2"}}"#
+    ])
+    func malformedGenerateResponseDoesNotAdvanceDeltaCursor(fields: String) async throws {
+        let baseURL = try #require(URL(string: "https://responses-malformed-\(UUID().uuidString).test/v1"))
         let requestURL = baseURL.appendingPathComponent("responses")
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [HTTPTestURLProtocol.self]
         let session = URLSession(configuration: configuration)
+        defer { session.invalidateAndCancel() }
 
-        let malformedResponseJSON = """
-        {
-            "id": "resp_bad",
-            "status": "completed",
-            "usage": {"input_tokens": 10, "output_tokens": 5}
-        }
-        """
+        let malformedResponseJSON = #"{"id":"resp_bad","status":"completed",\#(fields)}"#
 
         HTTPTestURLProtocol.register(url: requestURL) { _ in
             let response = try #require(HTTPURLResponse(
@@ -440,6 +440,7 @@ struct ResponsesServerSideStateTests {
         #expect(requestBody["previous_response_id"] as? String == "resp_prev")
         #expect(await client.lastResponseId == "resp_prev")
         #expect(await client.lastMessageCount == priorInput.count + 1)
+        #expect(await client.lastPrefixSignature == client.prefixSignature(priorInput + [.assistant(priorResponse)]))
     }
 }
 
@@ -495,6 +496,105 @@ struct ResponsesStreamingCursorTests {
         #expect(requestBody["previous_response_id"] == nil)
         #expect(await client.lastResponseId == "resp_002")
         #expect(await client.lastMessageCount == 2)
+    }
+}
+
+extension ResponsesStreamingCursorTests {
+    @Test(arguments: [
+        (#"{"cached_tokens":80,"cache_write_tokens":70}"#,
+         TokenUsage(input: 100, output: 30, reasoning: 20, cacheRead: 80, cacheWrite: 70)),
+        (#"{"cached_tokens":101}"#, nil),
+        (#"{"cache_write_tokens":101}"#, nil)
+    ] as [(String, TokenUsage?)])
+    func normalizedUsagePreservesCursorAcrossBlockingAndStreaming(details: String, expected: TokenUsage?) async throws {
+        let baseURL = try #require(URL(string: "https://responses-usage-\(UUID().uuidString).test/v1"))
+        let requestURL = baseURL.appendingPathComponent("responses")
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [HTTPTestURLProtocol.self]
+        let session = URLSession(configuration: configuration)
+        defer { session.invalidateAndCancel() }
+        func responseJSON(_ id: String) -> String {
+            #"{"id":"\#(id)","status":"completed","output":[{"type":"reasoning","id":"reasoning_1","#
+                + #""encrypted_content":"opaque==","summary":[{"type":"summary_text","text":"Thinking"}]},"#
+                + #"{"type":"message","content":[{"type":"output_text","text":"Answer"}]}],"usage":{"#
+                + #""input_tokens":100,"output_tokens":50,"input_tokens_details":\#(details),"#
+                + #""output_tokens_details":{"reasoning_tokens":20}}}"#
+        }
+        let sse = "data: {\"type\":\"response.output_text.delta\",\"delta\":\"Ans\"}\n\n"
+            + "data: {\"type\":\"response.completed\",\"response\":\(responseJSON("resp_second"))}\n\n"
+        let sequence = HTTPTestResponseSequence(responses: [
+            HTTPTestResponse(body: Data(responseJSON("resp_first").utf8)),
+            HTTPTestResponse(body: Data(sse.utf8), headers: ["Content-Type": "text/event-stream"]),
+            HTTPTestResponse(body: Data(responseJSON("resp_third").utf8))
+        ])
+        HTTPTestURLProtocol.register(url: requestURL) { _ in try sequence.nextResponse(url: requestURL) }
+        defer { HTTPTestURLProtocol.unregister(url: requestURL) }
+        let client = ResponsesAPIClient(
+            baseURL: baseURL, session: session, retryPolicy: .none, store: true
+        )
+        let chat = Chat<EmptyContext>(client: client)
+        let first = try await chat.send("Hello")
+        #expect(first.response.tokenUsage == expected)
+        #expect(await client.lastPrefixSignature == client.prefixSignature(first.history))
+        var histories: [[ChatMessage]] = []
+        for try await event in chat.stream("Again", history: first.history, context: EmptyContext()) {
+            if case let .finished(_, _, _, history) = event.kind { histories.append(history) }
+        }
+        try #require(histories.count == 1)
+        let history = try #require(histories.first)
+        guard case let .assistant(assistant) = history.last else {
+            Issue.record("Expected reconstructed assistant history")
+            return
+        }
+        #expect(assistant.content == "Answer")
+        #expect(assistant.reasoning?.content == "Thinking")
+        #expect(assistant.reasoningDetails == first.response.reasoningDetails)
+        #expect(assistant.tokenUsage == expected)
+        #expect(await client.lastResponseId == "resp_second")
+        #expect(await client.lastMessageCount == history.count)
+        #expect(await client.lastPrefixSignature == client.prefixSignature(history))
+        _ = try await chat.send("Final", history: history)
+        let bodies = try HTTPTestURLProtocol.recordedBodies(for: requestURL)
+        try #require(bodies.count == 3)
+        #expect(bodies[0]["previous_response_id"] == nil)
+        #expect(bodies[1]["previous_response_id"] as? String == "resp_first")
+        #expect(bodies[2]["previous_response_id"] as? String == "resp_second")
+        let input = try #require(bodies[2]["input"] as? [[String: Any]])
+        #expect(input.count == 1)
+        #expect(input.first?["content"] as? String == "Final")
+    }
+
+    @Test
+    func malformedStreamedUsageCannotAdvanceCursor() async throws {
+        let baseURL = try #require(URL(string: "https://responses-malformed-stream-usage.test/v1"))
+        let requestURL = baseURL.appendingPathComponent("responses")
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [HTTPTestURLProtocol.self]
+        let session = URLSession(configuration: configuration)
+        defer { session.invalidateAndCancel() }
+        let body = #"data: {"type":"response.completed","response":{"id":"resp_bad","output":[],"#
+            + #""usage":{"input_tokens":10,"output_tokens":5,"input_tokens_details":{"cache_write_tokens":-1}}}}"#
+            + "\n\n"
+        let sequence = HTTPTestResponseSequence(responses: [
+            HTTPTestResponse(body: Data(body.utf8), headers: ["Content-Type": "text/event-stream"])
+        ])
+        HTTPTestURLProtocol.register(url: requestURL) { _ in try sequence.nextResponse(url: requestURL) }
+        defer { HTTPTestURLProtocol.unregister(url: requestURL) }
+        let client = ResponsesAPIClient(baseURL: baseURL, session: session, retryPolicy: .none, store: true)
+        let prior: [ChatMessage] = [.user("Hello"), .assistant(AssistantMessage(content: "Answer"))]
+        await client.setCursorState(responseId: "resp_prev", messages: prior)
+        let result = await collectStreamResult(client.stream(
+            messages: prior + [.user("Again")], tools: [], requestContext: nil
+        ))
+        guard case .llmError(.decodingFailed) = result.error as? AgentError else {
+            Issue.record("Expected malformed usage decoding failure")
+            return
+        }
+        #expect(result.deltas.isEmpty)
+        #expect(await client.lastResponseId == "resp_prev")
+        #expect(await client.lastMessageCount == prior.count)
+        #expect(await client.lastPrefixSignature == client.prefixSignature(prior))
+        #expect(HTTPTestURLProtocol.recordedBodyData(for: requestURL).count == 1)
     }
 }
 

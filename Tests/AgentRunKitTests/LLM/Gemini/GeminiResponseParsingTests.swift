@@ -194,7 +194,7 @@ struct GeminiResponseParsingTests {
         }
         """
         let msg = try makeClient().parseResponse(Data(json.utf8), provider: .gemini)
-        #expect(msg.tokenUsage == TokenUsage(input: 200, output: 100))
+        #expect(msg.tokenUsage == TokenUsage(input: 200, output: 100, cacheRead: 0))
     }
 
     @Test
@@ -454,6 +454,52 @@ struct GeminiFunctionCallReasoningDetailsTests {
             #expect(dict["thought_signature"] == .string("sig_fc"))
         } else {
             Issue.record("Expected function-call reasoning detail")
+        }
+    }
+}
+
+extension GeminiResponseParsingTests {
+    @Test(arguments: [
+        (nil, nil), ("null", nil), ("{}", TokenUsage(cacheRead: 0)),
+        (#"{"promptTokenCount":null,"candidatesTokenCount":null,"thoughtsTokenCount":null,"#
+            + #""cachedContentTokenCount":null}"#, TokenUsage(cacheRead: 0)),
+        (#"{"promptTokenCount":1124,"totalTokenCount":1171,"thoughtsTokenCount":47}"#,
+         TokenUsage(input: 1124, reasoning: 47, cacheRead: 0)),
+        (#"{"promptTokenCount":100,"candidatesTokenCount":20,"cachedContentTokenCount":0}"#,
+         TokenUsage(input: 100, output: 20, cacheRead: 0)),
+        (#"{"promptTokenCount":100,"candidatesTokenCount":20,"cachedContentTokenCount":null}"#,
+         TokenUsage(input: 100, output: 20, cacheRead: 0)),
+        (#"{"promptTokenCount":100,"candidatesTokenCount":20,"cachedContentTokenCount":80}"#,
+         TokenUsage(input: 100, output: 20, cacheRead: 80)),
+        (#"{"promptTokenCount":100,"cachedContentTokenCount":101}"#, nil)
+    ] as [(String?, TokenUsage?)])
+    func metadataPresenceAndScalarDefaults(metadata: String?, expected: TokenUsage?) throws {
+        let metadataField = metadata.map { #", "usageMetadata":\#($0)"# } ?? ""
+        let json = #"{"candidates":[{"content":{"role":"model","parts":[{"text":"Checking"},"#
+            + #"{"functionCall":{"id":"call_1","name":"lookup","args":{}},"thoughtSignature":"opaque=="}]},"#
+            + #""finishReason":"STOP"}]\#(metadataField)}"#
+        let message = try makeClient().parseResponse(Data(json.utf8), provider: .gemini)
+        #expect(message.content == "Checking")
+        #expect(message.toolCalls == [ToolCall(id: "call_1", name: "lookup", arguments: "{}")])
+        #expect(message.reasoningDetails == [.object([
+            "type": .string("gemini.function_call"), "tool_call_id": .string("call_1"),
+            "thought_signature": .string("opaque==")
+        ])])
+        #expect(message.tokenUsage == expected)
+    }
+
+    @Test(arguments: ["promptTokenCount", "candidatesTokenCount", "thoughtsTokenCount", "cachedContentTokenCount"], [
+        "-1", #""1""#, "true", "1.5", "9223372036854775808"
+    ])
+    func malformedUsageMetadataThrows(key: String, value: String) throws {
+        let json = #"{"candidates":[{"content":{"parts":[{"text":"Answer"}]},"finishReason":"STOP"}],"#
+            + #""usageMetadata":{"\#(key)":\#(value)}}"#
+        do {
+            _ = try makeClient().parseResponse(Data(json.utf8), provider: .gemini)
+            Issue.record("Expected malformed usage metadata to fail")
+        } catch let AgentError.llmError(.decodingFailed(description)) {
+            #expect(description.contains("usageMetadata"))
+            #expect(description.contains(key))
         }
     }
 }

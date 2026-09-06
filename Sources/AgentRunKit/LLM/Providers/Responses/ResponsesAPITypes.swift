@@ -294,22 +294,64 @@ enum ResponsesReplayItem: Equatable {
 }
 
 struct ResponsesUsage: Decodable {
-    let inputTokens: Int
-    let outputTokens: Int
-    let outputTokensDetails: ResponsesOutputTokensDetails?
+    let tokenUsage: TokenUsage?
 
-    enum CodingKeys: String, CodingKey {
+    private enum CodingKeys: String, CodingKey {
         case inputTokens = "input_tokens"
         case outputTokens = "output_tokens"
+        case inputTokensDetails = "input_tokens_details"
         case outputTokensDetails = "output_tokens_details"
+    }
+
+    init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let input = try container.decodeTokenCount(forKey: .inputTokens)
+        let output = try container.decodeTokenCount(forKey: .outputTokens)
+        let inputDetails = try container.decodeIfPresent(ResponsesInputTokensDetails.self, forKey: .inputTokensDetails)
+        let outputDetails = try container.decodeIfPresent(
+            ResponsesOutputTokensDetails.self, forKey: .outputTokensDetails
+        )
+        let reasoning = outputDetails?.reasoningTokens ?? 0
+        guard reasoning <= output,
+              inputDetails?.cachedTokens ?? 0 <= input,
+              inputDetails?.cacheWriteTokens ?? 0 <= input
+        else {
+            tokenUsage = nil
+            return
+        }
+        tokenUsage = TokenUsage(
+            input: input, output: output - reasoning, reasoning: reasoning,
+            cacheRead: inputDetails?.cachedTokens, cacheWrite: inputDetails?.cacheWriteTokens
+        )
     }
 }
 
-struct ResponsesOutputTokensDetails: Decodable {
+private struct ResponsesInputTokensDetails: Decodable {
+    let cachedTokens: Int?
+    let cacheWriteTokens: Int?
+
+    private enum CodingKeys: String, CodingKey {
+        case cachedTokens = "cached_tokens"
+        case cacheWriteTokens = "cache_write_tokens"
+    }
+
+    init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        cachedTokens = try container.decodeTokenCountIfPresent(forKey: .cachedTokens)
+        cacheWriteTokens = try container.decodeTokenCountIfPresent(forKey: .cacheWriteTokens)
+    }
+}
+
+private struct ResponsesOutputTokensDetails: Decodable {
     let reasoningTokens: Int?
 
-    enum CodingKeys: String, CodingKey {
+    private enum CodingKeys: String, CodingKey {
         case reasoningTokens = "reasoning_tokens"
+    }
+
+    init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        reasoningTokens = try container.decodeTokenCountIfPresent(forKey: .reasoningTokens)
     }
 }
 

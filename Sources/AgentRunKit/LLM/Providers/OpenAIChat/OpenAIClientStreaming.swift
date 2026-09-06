@@ -227,7 +227,7 @@ actor OpenAIChatStreamState {
     private var usage: TokenUsage?
     private var reasoningDetails = ReasoningDetailAccumulator()
 
-    func recordUsage(_ usage: TokenUsage) {
+    func recordUsage(_ usage: TokenUsage?) {
         self.usage = usage
     }
 
