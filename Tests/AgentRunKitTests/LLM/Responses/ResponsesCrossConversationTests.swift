@@ -145,17 +145,17 @@ struct ResponsesCrossConversationTests {
         let baseURL = try #require(URL(string: "https://responses-cross-conv.test/v1"))
         let requestURL = baseURL.appendingPathComponent("responses")
         let configuration = URLSessionConfiguration.ephemeral
-        configuration.protocolClasses = [ResponsesTestURLProtocol.self]
+        configuration.protocolClasses = [HTTPTestURLProtocol.self]
         let session = URLSession(configuration: configuration)
 
-        let responseSequence = ResponsesTestResponseSequence(
+        let responseSequence = HTTPTestResponseSequence(
             payloads: [crossConvPayload(id: "resp_A", text: "Hi A"), crossConvPayload(id: "resp_B", text: "Hi B")]
         )
 
-        ResponsesTestURLProtocol.register(url: requestURL) { _ in
+        HTTPTestURLProtocol.register(url: requestURL) { _ in
             try responseSequence.nextResponse(url: requestURL)
         }
-        defer { ResponsesTestURLProtocol.unregister(url: requestURL) }
+        defer { HTTPTestURLProtocol.unregister(url: requestURL) }
 
         let client = ResponsesAPIClient(
             apiKey: "test-key",
@@ -182,7 +182,7 @@ struct ResponsesCrossConversationTests {
         )
         #expect(responseB.content == "Hi B")
 
-        let bodies = try ResponsesTestURLProtocol.recordedBodies(for: requestURL)
+        let bodies = try HTTPTestURLProtocol.recordedBodies(for: requestURL)
         #expect(bodies.count == 2)
         #expect(bodies[0]["previous_response_id"] == nil)
         #expect(bodies[1]["previous_response_id"] == nil)
@@ -194,18 +194,18 @@ struct ResponsesCrossConversationTests {
         let baseURL = try #require(URL(string: "https://responses-stream-cross-conv.test/v1"))
         let requestURL = baseURL.appendingPathComponent("responses")
         let configuration = URLSessionConfiguration.ephemeral
-        configuration.protocolClasses = [ResponsesTestURLProtocol.self]
+        configuration.protocolClasses = [HTTPTestURLProtocol.self]
         let session = URLSession(configuration: configuration)
 
-        let responseSequence = ResponsesTestResponseSequence(responses: [
+        let responseSequence = HTTPTestResponseSequence(responses: [
             crossConvSSEResponse(id: "resp_A", text: "Hi A"),
             crossConvSSEResponse(id: "resp_B", text: "Hi B"),
         ])
 
-        ResponsesTestURLProtocol.register(url: requestURL) { _ in
+        HTTPTestURLProtocol.register(url: requestURL) { _ in
             try responseSequence.nextResponse(url: requestURL)
         }
-        defer { ResponsesTestURLProtocol.unregister(url: requestURL) }
+        defer { HTTPTestURLProtocol.unregister(url: requestURL) }
 
         let client = ResponsesAPIClient(
             apiKey: "test-key",
@@ -232,7 +232,7 @@ struct ResponsesCrossConversationTests {
         )
         for try await _ in streamB {}
 
-        let bodies = try ResponsesTestURLProtocol.recordedBodies(for: requestURL)
+        let bodies = try HTTPTestURLProtocol.recordedBodies(for: requestURL)
         #expect(bodies.count == 2)
         #expect(bodies[0]["previous_response_id"] == nil)
         #expect(bodies[1]["previous_response_id"] == nil)
@@ -284,14 +284,14 @@ private func crossConvPayload(id: String, text: String) -> Data {
     """.utf8)
 }
 
-private func crossConvSSEResponse(id: String, text: String) -> ResponsesTestHTTPResponse {
+private func crossConvSSEResponse(id: String, text: String) -> HTTPTestResponse {
     let json = """
     {"type":"response.completed","response":{"id":"\(id)","status":"completed",\
     "output":[{"type":"message","content":[{"type":"output_text","text":"\(text)"}]}],\
     "usage":{"input_tokens":10,"output_tokens":5}}}
     """
     let sse = "data: \(json)\n\n"
-    return ResponsesTestHTTPResponse(
+    return HTTPTestResponse(
         body: Data(sse.utf8),
         headers: ["Content-Type": "text/event-stream"]
     )

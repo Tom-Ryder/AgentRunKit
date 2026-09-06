@@ -97,7 +97,7 @@ struct ResponsesServerSideStateTests {
         let baseURL = try #require(URL(string: "https://responses-truncation-reset.test/v1"))
         let requestURL = baseURL.appendingPathComponent("responses")
         let configuration = URLSessionConfiguration.ephemeral
-        configuration.protocolClasses = [ResponsesTestURLProtocol.self]
+        configuration.protocolClasses = [HTTPTestURLProtocol.self]
         let session = URLSession(configuration: configuration)
 
         let responseJSON = """
@@ -112,7 +112,7 @@ struct ResponsesServerSideStateTests {
         }
         """
 
-        ResponsesTestURLProtocol.register(url: requestURL) { _ in
+        HTTPTestURLProtocol.register(url: requestURL) { _ in
             let response = try #require(HTTPURLResponse(
                 url: requestURL,
                 statusCode: 200,
@@ -121,7 +121,7 @@ struct ResponsesServerSideStateTests {
             ))
             return (response, Data(responseJSON.utf8))
         }
-        defer { ResponsesTestURLProtocol.unregister(url: requestURL) }
+        defer { HTTPTestURLProtocol.unregister(url: requestURL) }
 
         let client = ResponsesAPIClient(
             apiKey: "test-key",
@@ -143,7 +143,7 @@ struct ResponsesServerSideStateTests {
         )
 
         #expect(response.content == "Hello again")
-        let requestBody = try ResponsesTestURLProtocol.recordedBody(for: requestURL)
+        let requestBody = try HTTPTestURLProtocol.recordedBody(for: requestURL)
         #expect(requestBody["previous_response_id"] == nil)
         #expect(await client.lastResponseId == "resp_002")
         #expect(await client.lastMessageCount == 2)
@@ -187,7 +187,7 @@ struct ResponsesServerSideStateTests {
         let baseURL = try #require(URL(string: "https://responses-force-full-success.test/v1"))
         let requestURL = baseURL.appendingPathComponent("responses")
         let configuration = URLSessionConfiguration.ephemeral
-        configuration.protocolClasses = [ResponsesTestURLProtocol.self]
+        configuration.protocolClasses = [HTTPTestURLProtocol.self]
         let session = URLSession(configuration: configuration)
 
         let responseJSON = """
@@ -202,7 +202,7 @@ struct ResponsesServerSideStateTests {
         }
         """
 
-        ResponsesTestURLProtocol.register(url: requestURL) { _ in
+        HTTPTestURLProtocol.register(url: requestURL) { _ in
             let response = try #require(HTTPURLResponse(
                 url: requestURL,
                 statusCode: 200,
@@ -211,7 +211,7 @@ struct ResponsesServerSideStateTests {
             ))
             return (response, Data(responseJSON.utf8))
         }
-        defer { ResponsesTestURLProtocol.unregister(url: requestURL) }
+        defer { HTTPTestURLProtocol.unregister(url: requestURL) }
 
         let client = ResponsesAPIClient(
             apiKey: "test-key",
@@ -240,7 +240,7 @@ struct ResponsesServerSideStateTests {
         )
 
         #expect(response.content == "Hello again")
-        let requestBody = try ResponsesTestURLProtocol.recordedBody(for: requestURL)
+        let requestBody = try HTTPTestURLProtocol.recordedBody(for: requestURL)
         #expect(requestBody["previous_response_id"] == nil)
         #expect(requestBody["instructions"] as? String == "Be helpful")
         #expect(await client.lastResponseId == "resp_002")
@@ -327,11 +327,11 @@ struct ResponsesServerSideStateTests {
         let baseURL = try #require(URL(string: "https://responses-force-full-failure.test/v1"))
         let requestURL = baseURL.appendingPathComponent("responses")
         let configuration = URLSessionConfiguration.ephemeral
-        configuration.protocolClasses = [ResponsesTestURLProtocol.self]
+        configuration.protocolClasses = [HTTPTestURLProtocol.self]
         let session = URLSession(configuration: configuration)
         let failureBody = #"{"error":{"message":"upstream unavailable"}}"#
 
-        ResponsesTestURLProtocol.register(url: requestURL) { _ in
+        HTTPTestURLProtocol.register(url: requestURL) { _ in
             let response = try #require(HTTPURLResponse(
                 url: requestURL,
                 statusCode: 500,
@@ -340,7 +340,7 @@ struct ResponsesServerSideStateTests {
             ))
             return (response, Data(failureBody.utf8))
         }
-        defer { ResponsesTestURLProtocol.unregister(url: requestURL) }
+        defer { HTTPTestURLProtocol.unregister(url: requestURL) }
 
         let client = ResponsesAPIClient(
             apiKey: "test-key",
@@ -376,7 +376,7 @@ struct ResponsesServerSideStateTests {
 
         let nextRequest = try await client.buildRequest(messages: messages, tools: [])
         let json = try encodeRequest(nextRequest)
-        let failedRequest = try ResponsesTestURLProtocol.recordedBody(for: requestURL)
+        let failedRequest = try HTTPTestURLProtocol.recordedBody(for: requestURL)
         #expect(failedRequest["previous_response_id"] == nil)
         #expect(json["previous_response_id"] == nil)
         #expect(await client.lastResponseId == nil)
@@ -388,7 +388,7 @@ struct ResponsesServerSideStateTests {
         let baseURL = try #require(URL(string: "https://responses-malformed-generate.test/v1"))
         let requestURL = baseURL.appendingPathComponent("responses")
         let configuration = URLSessionConfiguration.ephemeral
-        configuration.protocolClasses = [ResponsesTestURLProtocol.self]
+        configuration.protocolClasses = [HTTPTestURLProtocol.self]
         let session = URLSession(configuration: configuration)
 
         let malformedResponseJSON = """
@@ -399,7 +399,7 @@ struct ResponsesServerSideStateTests {
         }
         """
 
-        ResponsesTestURLProtocol.register(url: requestURL) { _ in
+        HTTPTestURLProtocol.register(url: requestURL) { _ in
             let response = try #require(HTTPURLResponse(
                 url: requestURL,
                 statusCode: 200,
@@ -408,7 +408,7 @@ struct ResponsesServerSideStateTests {
             ))
             return (response, Data(malformedResponseJSON.utf8))
         }
-        defer { ResponsesTestURLProtocol.unregister(url: requestURL) }
+        defer { HTTPTestURLProtocol.unregister(url: requestURL) }
 
         let client = ResponsesAPIClient(
             apiKey: "test-key",
@@ -436,7 +436,7 @@ struct ResponsesServerSideStateTests {
             )
         }
 
-        let requestBody = try ResponsesTestURLProtocol.recordedBody(for: requestURL)
+        let requestBody = try HTTPTestURLProtocol.recordedBody(for: requestURL)
         #expect(requestBody["previous_response_id"] as? String == "resp_prev")
         #expect(await client.lastResponseId == "resp_prev")
         #expect(await client.lastMessageCount == priorInput.count + 1)
@@ -449,7 +449,7 @@ struct ResponsesStreamingCursorTests {
         let baseURL = try #require(URL(string: "https://responses-stream-force.test/v1"))
         let requestURL = baseURL.appendingPathComponent("responses")
         let configuration = URLSessionConfiguration.ephemeral
-        configuration.protocolClasses = [ResponsesTestURLProtocol.self]
+        configuration.protocolClasses = [HTTPTestURLProtocol.self]
         let session = URLSession(configuration: configuration)
 
         let completedJSON = """
@@ -459,7 +459,7 @@ struct ResponsesStreamingCursorTests {
         """
         let sseBody = "data: \(completedJSON)\n\n"
 
-        ResponsesTestURLProtocol.register(url: requestURL) { _ in
+        HTTPTestURLProtocol.register(url: requestURL) { _ in
             let response = try #require(HTTPURLResponse(
                 url: requestURL,
                 statusCode: 200,
@@ -468,7 +468,7 @@ struct ResponsesStreamingCursorTests {
             ))
             return (response, Data(sseBody.utf8))
         }
-        defer { ResponsesTestURLProtocol.unregister(url: requestURL) }
+        defer { HTTPTestURLProtocol.unregister(url: requestURL) }
 
         let client = ResponsesAPIClient(
             apiKey: "test-key",
@@ -491,7 +491,7 @@ struct ResponsesStreamingCursorTests {
         )
         for try await _ in stream {}
 
-        let requestBody = try ResponsesTestURLProtocol.recordedBody(for: requestURL)
+        let requestBody = try HTTPTestURLProtocol.recordedBody(for: requestURL)
         #expect(requestBody["previous_response_id"] == nil)
         #expect(await client.lastResponseId == "resp_002")
         #expect(await client.lastMessageCount == 2)
@@ -504,14 +504,14 @@ struct ResponsesAgentRunRecoveryTests {
         let baseURL = try #require(URL(string: "https://responses-agent.test/v1"))
         let requestURL = baseURL.appendingPathComponent("responses")
         let configuration = URLSessionConfiguration.ephemeral
-        configuration.protocolClasses = [ResponsesTestURLProtocol.self]
+        configuration.protocolClasses = [HTTPTestURLProtocol.self]
         let session = URLSession(configuration: configuration)
-        let responseSequence = ResponsesTestResponseSequence(payloads: makeAgentRunRecoveryPayloads())
+        let responseSequence = HTTPTestResponseSequence(payloads: makeAgentRunRecoveryPayloads())
 
-        ResponsesTestURLProtocol.register(url: requestURL) { _ in
+        HTTPTestURLProtocol.register(url: requestURL) { _ in
             try responseSequence.nextResponse(url: requestURL)
         }
-        defer { ResponsesTestURLProtocol.unregister(url: requestURL) }
+        defer { HTTPTestURLProtocol.unregister(url: requestURL) }
 
         let client = ResponsesAPIClient(
             apiKey: "test-key",
@@ -538,7 +538,7 @@ struct ResponsesAgentRunRecoveryTests {
         #expect(try requireContent(result) == "done")
         #expect(result.iterations == 3)
 
-        let bodies = try ResponsesTestURLProtocol.recordedBodies(for: requestURL)
+        let bodies = try HTTPTestURLProtocol.recordedBodies(for: requestURL)
         #expect(bodies.count == 4)
         #expect(bodies[0]["previous_response_id"] == nil)
         #expect(bodies[1]["previous_response_id"] as? String == "resp_turn1")
@@ -553,14 +553,14 @@ struct ResponsesAgentRunRecoveryTests {
         let baseURL = try #require(URL(string: "https://responses-prune-summary.test/v1"))
         let requestURL = baseURL.appendingPathComponent("responses")
         let configuration = URLSessionConfiguration.ephemeral
-        configuration.protocolClasses = [ResponsesTestURLProtocol.self]
+        configuration.protocolClasses = [HTTPTestURLProtocol.self]
         let session = URLSession(configuration: configuration)
-        let responseSequence = ResponsesTestResponseSequence(payloads: makePruneRewriteSummaryPayloads())
+        let responseSequence = HTTPTestResponseSequence(payloads: makePruneRewriteSummaryPayloads())
 
-        ResponsesTestURLProtocol.register(url: requestURL) { _ in
+        HTTPTestURLProtocol.register(url: requestURL) { _ in
             try responseSequence.nextResponse(url: requestURL)
         }
-        defer { ResponsesTestURLProtocol.unregister(url: requestURL) }
+        defer { HTTPTestURLProtocol.unregister(url: requestURL) }
 
         let client = ResponsesAPIClient(
             apiKey: "test-key",
@@ -591,7 +591,7 @@ struct ResponsesAgentRunRecoveryTests {
         #expect(try requireContent(result) == "done")
         #expect(result.iterations == 3)
 
-        let bodies = try ResponsesTestURLProtocol.recordedBodies(for: requestURL)
+        let bodies = try HTTPTestURLProtocol.recordedBodies(for: requestURL)
         #expect(bodies.count == 4)
         #expect(bodies[0]["previous_response_id"] == nil)
         #expect(bodies[1]["previous_response_id"] as? String == "resp_turn1")
@@ -606,14 +606,14 @@ struct ResponsesAgentRunRecoveryTests {
         let baseURL = try #require(URL(string: "https://responses-prompt-too-long.test/v1"))
         let requestURL = baseURL.appendingPathComponent("responses")
         let configuration = URLSessionConfiguration.ephemeral
-        configuration.protocolClasses = [ResponsesTestURLProtocol.self]
+        configuration.protocolClasses = [HTTPTestURLProtocol.self]
         let session = URLSession(configuration: configuration)
-        let responseSequence = ResponsesTestResponseSequence(responses: makePromptTooLongRecoveryResponses())
+        let responseSequence = HTTPTestResponseSequence(responses: makePromptTooLongRecoveryResponses())
 
-        ResponsesTestURLProtocol.register(url: requestURL) { _ in
+        HTTPTestURLProtocol.register(url: requestURL) { _ in
             try responseSequence.nextResponse(url: requestURL)
         }
-        defer { ResponsesTestURLProtocol.unregister(url: requestURL) }
+        defer { HTTPTestURLProtocol.unregister(url: requestURL) }
 
         let client = ResponsesAPIClient(
             apiKey: "test-key",
@@ -640,7 +640,7 @@ struct ResponsesAgentRunRecoveryTests {
         #expect(try requireContent(result) == "done")
         #expect(result.iterations == 3)
 
-        let bodies = try ResponsesTestURLProtocol.recordedBodies(for: requestURL)
+        let bodies = try HTTPTestURLProtocol.recordedBodies(for: requestURL)
         #expect(bodies.count == 4)
         #expect(bodies[0]["previous_response_id"] == nil)
         #expect(bodies[1]["previous_response_id"] as? String == "resp_turn1")
@@ -821,9 +821,9 @@ private func makePruneRewriteSummaryPayloads() -> [Data] {
     ].map { Data($0.utf8) }
 }
 
-private func makePromptTooLongRecoveryResponses() -> [ResponsesTestHTTPResponse] {
+private func makePromptTooLongRecoveryResponses() -> [HTTPTestResponse] {
     [
-        ResponsesTestHTTPResponse(body: Data(#"""
+        HTTPTestResponse(body: Data(#"""
         {
             "id": "resp_turn1",
             "status": "completed",
@@ -833,7 +833,7 @@ private func makePromptTooLongRecoveryResponses() -> [ResponsesTestHTTPResponse]
             "usage": {"input_tokens": 100, "output_tokens": 10}
         }
         """#.utf8)),
-        ResponsesTestHTTPResponse(body: Data(#"""
+        HTTPTestResponse(body: Data(#"""
         {
             "id": "resp_turn2",
             "status": "completed",
@@ -846,7 +846,7 @@ private func makePromptTooLongRecoveryResponses() -> [ResponsesTestHTTPResponse]
             "usage": {"input_tokens": 80, "output_tokens": 10}
         }
         """#.utf8)),
-        ResponsesTestHTTPResponse(statusCode: 400, body: Data(#"""
+        HTTPTestResponse(statusCode: 400, body: Data(#"""
         {
             "error": {
                 "message": "This model's maximum context length is 8 tokens.",
@@ -854,7 +854,7 @@ private func makePromptTooLongRecoveryResponses() -> [ResponsesTestHTTPResponse]
             }
         }
         """#.utf8)),
-        ResponsesTestHTTPResponse(body: Data(#"""
+        HTTPTestResponse(body: Data(#"""
         {
             "id": "resp_turn3",
             "status": "completed",
