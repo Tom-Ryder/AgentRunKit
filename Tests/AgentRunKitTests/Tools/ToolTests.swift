@@ -35,6 +35,41 @@ struct ToolTests {
         #expect(output.result == 10)
     }
 
+    @Test(arguments: [["zeta", "alpha"], ["alpha", "zeta"]])
+    func nestedOutputUsesDeterministicObjectOrder(keys: [String]) async throws {
+        let values: [String: JSONValue] = [
+            "zeta": .array([
+                .object(["zeta": .bool(true), "alpha": .string("雪\n\"quoted\"")]),
+                .object(["zeta": .bool(false), "alpha": .string("first")])
+            ]),
+            "alpha": .string(#"{ "z": 1, "a": 2 }"#)
+        ]
+        let output = try JSONValue.object(Dictionary(uniqueKeysWithValues: keys.map { key in
+            try (key, #require(values[key]))
+        }))
+        let tool = try Tool<TestParams, JSONValue, EmptyContext>(
+            name: "nested", description: "Returns nested JSON", executor: { _, _ in output }
+        )
+
+        let result = try await tool.execute(arguments: Data(#"{"value":1}"#.utf8), context: EmptyContext())
+
+        let expected = #"{"alpha":"{ \"z\": 1, \"a\": 2 }","zeta":[{"alpha":"雪\n\"quoted\"","zeta":true},"#
+            + #"{"alpha":"first","zeta":false}]}"#
+        #expect(result.content == expected)
+        #expect(!result.isError)
+    }
+
+    @Test
+    func stringOutputPreservesJSONLookingText() async throws {
+        let tool = try Tool<TestParams, String, EmptyContext>(
+            name: "text", description: "Returns text", executor: { _, _ in #"{ "zeta": 1, "alpha": 2 }"# }
+        )
+
+        let result = try await tool.execute(arguments: Data(#"{"value":1}"#.utf8), context: EmptyContext())
+
+        #expect(result.content == #""{ \"zeta\": 1, \"alpha\": 2 }""#)
+    }
+
     @Test
     func executeWithInvalidArguments() async throws {
         let tool = try Tool<TestParams, TestOutput, EmptyContext>(

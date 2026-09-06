@@ -95,6 +95,7 @@ struct JSONSchemaWalkerTests {
         )
         let json1 = try await generatedToolArgumentsJSON(schema: schema1)
         let json2 = try await generatedToolArgumentsJSON(schema: schema2)
+        #expect(json1 == #"{"a":"test_0","b":1}"#)
         #expect(json1 == json2)
     }
 
@@ -127,22 +128,20 @@ struct JSONSchemaWalkerTests {
 
     @Test
     func nestedObjectsRecurseCorrectly() async throws {
-        let inner = JSONSchema.object(properties: ["id": .integer()], required: ["id"])
         let schema = JSONSchema.object(
-            properties: ["items": .array(items: inner)],
-            required: ["items"]
+            properties: [
+                "zeta": .array(items: .object(
+                    properties: ["zeta": .boolean(), "alpha": .string(enumValues: ["雪"])],
+                    required: ["zeta", "alpha"]
+                )),
+                "alpha": .string(enumValues: [#"{ "z": 1, "a": 2 }"#])
+            ],
+            required: ["zeta", "alpha"]
         )
-        let value = try await generatedToolArgumentsValue(schema: schema)
-        guard case let .object(outer) = value,
-              case let .array(array) = outer["items"],
-              let first = array.first,
-              case let .object(innerObject) = first,
-              case let .int(id) = innerObject["id"]
-        else {
-            Issue.record("Expected nested structure")
-            return
-        }
-        #expect(id == 0)
+
+        let json = try await generatedToolArgumentsJSON(schema: schema, seed: 3)
+
+        #expect(json == #"{"alpha":"{ \"z\": 1, \"a\": 2 }","zeta":[{"alpha":"雪","zeta":false}]}"#)
     }
 
     @Test
@@ -361,6 +360,7 @@ struct TestLLMClientTests {
         let decoded = try JSONDecoder().decode(FinishArguments.self, from: finishCall.argumentsData)
         #expect(decoded.content == "Custom finish")
         #expect(decoded.reason == nil)
+        #expect(finishCall.arguments == #"{"content":"Custom finish"}"#)
     }
 
     @Test

@@ -355,6 +355,22 @@ struct GeminiResponseParsingTests {
         }
     }
 
+    @Test(arguments: [
+        #"{"zeta":[{"zeta":true,"alpha":"雪"},{"zeta":false,"alpha":"first"}],"alpha":"{ \"z\": 1, \"a\": 2 }"}"#,
+        #"{"alpha":"{ \"z\": 1, \"a\": 2 }","zeta":[{"alpha":"雪","zeta":true},{"alpha":"first","zeta":false}]}"#
+    ])
+    func objectArgumentsUseDeterministicOrder(inputJSON: String) throws {
+        let json = #"{"candidates":[{"content":{"role":"model","parts":[{"functionCall":{"#
+            + #""id":"call_order","name":"inspect","args":\#(inputJSON)}}]},"finishReason":"STOP"}]}"#
+
+        let message = try makeClient().parseResponse(Data(json.utf8), provider: .gemini)
+        let call = try #require(message.toolCalls.first)
+        let expected = #"{"alpha":"{ \"z\": 1, \"a\": 2 }","zeta":[{"alpha":"雪","zeta":true},"#
+            + #"{"alpha":"first","zeta":false}]}"#
+
+        #expect(call.arguments == expected)
+    }
+
     @Test
     func toolCallArgumentsRoundTripAsJSONObject() throws {
         let json = """

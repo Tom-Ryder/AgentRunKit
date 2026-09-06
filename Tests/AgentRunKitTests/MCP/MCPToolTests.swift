@@ -253,15 +253,30 @@ struct MCPToolTests {
         #expect(toolResult.content == "line 1\nline 2")
     }
 
+    @Test(arguments: [
+        #"{"zeta":[{"zeta":true,"alpha":"雪"},{"zeta":false,"alpha":"first"}],"alpha":"{ \"z\": 1, \"a\": 2 }"}"#,
+        #"{"alpha":"{ \"z\": 1, \"a\": 2 }","zeta":[{"alpha":"雪","zeta":true},{"alpha":"first","zeta":false}]}"#
+    ])
+    func decodedStructuredContentUsesDeterministicObjectOrder(structuredJSON: String) throws {
+        let wire = #"{"content":[{"type":"text","text":"ignored"}],"isError":true,"#
+            + #""structuredContent":\#(structuredJSON)}"#
+        let result = try JSONDecoder().decode(MCPCallResult.self, from: Data(wire.utf8))
+        let expected = #"{"alpha":"{ \"z\": 1, \"a\": 2 }","zeta":[{"alpha":"雪","zeta":true},"#
+            + #"{"alpha":"first","zeta":false}]}"#
+
+        #expect(result.structuredContent == Data(expected.utf8))
+        #expect(result.toToolResult() == ToolResult(content: expected, isError: true))
+    }
+
     @Test
     func structuredContentPrecedence() {
-        let structured = Data(#"{"key":"value"}"#.utf8)
+        let structured = Data(#"{ "zeta": 1, "alpha": 2 }"#.utf8)
         let result = MCPCallResult(
             content: [.text("ignored")],
             structuredContent: structured
         )
         let toolResult = result.toToolResult()
-        #expect(toolResult.content == #"{"key":"value"}"#)
+        #expect(toolResult.content == #"{ "zeta": 1, "alpha": 2 }"#)
     }
 
     @Test

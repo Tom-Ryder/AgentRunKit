@@ -90,7 +90,7 @@ public struct MCPCallResult: Sendable, Equatable, Decodable {
         isError = try container.decodeIfPresent(Bool.self, forKey: .isError) ?? false
 
         if let structured = try container.decodeIfPresent(JSONValue.self, forKey: .structuredContent) {
-            structuredContent = try JSONEncoder().encode(structured)
+            structuredContent = try encodeDeterministicJSON(structured)
         } else {
             structuredContent = nil
         }

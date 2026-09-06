@@ -63,7 +63,7 @@ public struct Tool<P: Codable & SchemaProviding & Sendable, O: Codable & Sendabl
         }
         let outputData: Data
         do {
-            outputData = try JSONEncoder().encode(output)
+            outputData = try encodeDeterministicJSON(output)
         } catch {
             throw AgentError.toolEncodingFailed(tool: name, message: String(describing: error))
         }

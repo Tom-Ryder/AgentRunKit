@@ -240,7 +240,7 @@ extension GeminiClient {
         guard let args else { return "{}" }
         let encoded: Data
         do {
-            encoded = try JSONEncoder().encode(args)
+            encoded = try encodeDeterministicJSON(args)
         } catch {
             throw AgentError.llmError(.encodingFailed(error))
         }

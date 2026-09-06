@@ -19,6 +19,9 @@ struct PromptCachingContractTests {
     private let quotedArgumentsJSON = #""{ \"zeta\": [{\"zeta\":true,\"alpha\":\"last\"},"#
         + #"{\"zeta\":false,\"alpha\":\"first\"}], \"alpha\":\"{ \\\"z\\\": 1, \\\"a\\\": 2 }\" }""#
 
+    private let quotedToolOutputJSON = #""{\"alpha\":\"{ \\\"z\\\": 1, \\\"a\\\": 2 }\",\"zeta\":["#
+        + #"{\"alpha\":\"last\",\"zeta\":true},{\"alpha\":\"first\",\"zeta\":false}]}""#
+
     @Test(arguments: API.allCases, Execution.allCases)
     func schemaBytesSurviveToolTurns(api: API, execution: Execution) async throws {
         let baseURL = try #require(URL(string: "https://prompt-cache-\(UUID().uuidString).test/v1"))
@@ -135,6 +138,13 @@ private extension PromptCachingContractTests {
         }
         let argumentsFragment = #""arguments":\#(quotedArgumentsJSON)"#
         _ = try #require(bodies[1].range(of: Data(argumentsFragment.utf8)))
+        let resultFragment = switch api {
+        case .chat:
+            #"{"content":\#(quotedToolOutputJSON),"name":"inspect","role":"tool","tool_call_id":"call_inspect"}"#
+        case .responses:
+            #"{"call_id":"call_inspect","output":\#(quotedToolOutputJSON),"type":"function_call_output"}"#
+        }
+        _ = try #require(bodies[1].range(of: Data(resultFragment.utf8)))
 
         let first = try JSONDecoder().decode([String: JSONValue].self, from: bodies[0])
         let second = try JSONDecoder().decode([String: JSONValue].self, from: bodies[1])

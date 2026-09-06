@@ -41,7 +41,7 @@ struct AnthropicTurnProjection {
                 guard case let .string(id) = dict["id"],
                       case let .string(name) = dict["name"],
                       let input = dict["input"] else { continue }
-                let encoded = try JSONEncoder().encode(input)
+                let encoded = try encodeDeterministicJSON(input)
                 guard let arguments = String(data: encoded, encoding: .utf8) else {
                     preconditionFailure("JSONEncoder produced invalid UTF-8")
                 }

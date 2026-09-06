@@ -266,11 +266,9 @@ private func safeModulo(_ value: Int, _ divisor: Int) -> Int {
 }
 
 private func encodeJSON(_ value: some Encodable) -> String {
-    let encoder = JSONEncoder()
-    encoder.outputFormatting = .sortedKeys
     let data: Data
     do {
-        data = try encoder.encode(value)
+        data = try encodeDeterministicJSON(value)
     } catch {
         preconditionFailure("JSON encoding failed: \(error)")
     }

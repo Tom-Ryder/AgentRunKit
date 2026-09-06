@@ -109,9 +109,9 @@ struct AnthropicStreamingTests {
         let toolStart = #"{"type":"content_block_start","index":0,"content_block":"#
             + #"{"type":"tool_use","id":"toolu_01","name":"search"}}"#
         let argDelta1 = #"{"type":"content_block_delta","index":0,"delta":"#
-            + #"{"type":"input_json_delta","partial_json":"{\"q\":"}}"#
+            + #"{"type":"input_json_delta","partial_json":"{ \"zeta\":true, \"alpha\":"}}"#
         let argDelta2 = #"{"type":"content_block_delta","index":0,"delta":"#
-            + #"{"type":"input_json_delta","partial_json":"\"test\"}"}}"#
+            + #"{"type":"input_json_delta","partial_json":"\"雪\" }"}}"#
         let lines = [
             sseLine(toolStart),
             sseLine(argDelta1),
@@ -128,8 +128,8 @@ struct AnthropicStreamingTests {
 
         let argDeltas = deltas.filter { if case .toolCallDelta = $0 { return true }; return false }
         #expect(argDeltas.count == 2)
-        #expect(argDeltas[0] == .toolCallDelta(index: 0, arguments: #"{"q":"#))
-        #expect(argDeltas[1] == .toolCallDelta(index: 0, arguments: #""test"}"#))
+        #expect(argDeltas[0] == .toolCallDelta(index: 0, arguments: #"{ "zeta":true, "alpha":"#))
+        #expect(argDeltas[1] == .toolCallDelta(index: 0, arguments: #""雪" }"#))
     }
 
     @Test

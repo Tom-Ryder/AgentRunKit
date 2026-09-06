@@ -45,7 +45,7 @@ public struct MLXClient: LLMClient, ToolCallSurfacingClient, Sendable {
             case let .chunk(text):
                 content += text
             case let .toolCall(call):
-                toolCalls.append(MLXMessageMapper.mapToolCall(call, index: toolCallIndex))
+                try toolCalls.append(MLXMessageMapper.mapToolCall(call, index: toolCallIndex))
                 toolCallIndex += 1
             case let .info(info):
                 tokenUsage = TokenUsage(
@@ -84,7 +84,7 @@ public struct MLXClient: LLMClient, ToolCallSurfacingClient, Sendable {
                             if !reasoning.isEmpty { continuation.yield(.reasoning(reasoning)) }
                             if !content.isEmpty { continuation.yield(.content(content)) }
                         case let .toolCall(call):
-                            let mapped = MLXMessageMapper.mapToolCall(call, index: toolCallIndex)
+                            let mapped = try MLXMessageMapper.mapToolCall(call, index: toolCallIndex)
                             continuation.yield(.toolCallStart(
                                 index: toolCallIndex, id: mapped.id, name: mapped.name, kind: .function
                             ))

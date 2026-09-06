@@ -7,12 +7,12 @@ enum MLXMessageMapper {
         messages.map(mapMessage)
     }
 
-    static func mapToolCall(_ call: MLXLMCommon.ToolCall, index: Int) -> AgentRunKit.ToolCall {
+    static func mapToolCall(_ call: MLXLMCommon.ToolCall, index: Int) throws -> AgentRunKit.ToolCall {
         let encoded: Data
         do {
-            encoded = try JSONEncoder().encode(call.function.arguments)
+            encoded = try encodeDeterministicJSON(call.function.arguments)
         } catch {
-            preconditionFailure("Failed to encode tool call arguments: \(error)")
+            throw AgentError.llmError(.encodingFailed(error))
         }
         guard let arguments = String(data: encoded, encoding: .utf8) else {
             preconditionFailure("JSONEncoder produced invalid UTF-8")

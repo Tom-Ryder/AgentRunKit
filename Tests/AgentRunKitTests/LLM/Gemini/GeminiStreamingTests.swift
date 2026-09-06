@@ -152,6 +152,29 @@ struct GeminiStreamingTests {
     }
 
     @Test
+    func streamedObjectArgumentsUseDeterministicOrder() async throws {
+        let payload = #"data: {"candidates":[{"content":{"role":"model","parts":[{"functionCall":{"#
+            + #""id":"call_order","name":"inspect","args":{"zeta":[{"zeta":true,"alpha":"雪"},"#
+            + #"{"zeta":false,"alpha":"first"}],"alpha":"{ \"z\": 1, \"a\": 2 }"}},"#
+            + #""thoughtSignature":"{ \"zeta\": 1, \"alpha\": 2 }"}]},"finishReason":"STOP"}]}"#
+
+        let deltas = try await collectDeltas(from: [payload])
+        let expected = #"{"alpha":"{ \"z\": 1, \"a\": 2 }","zeta":[{"alpha":"雪","zeta":true},"#
+            + #"{"alpha":"first","zeta":false}]}"#
+
+        #expect(deltas == [
+            .reasoningDetails([.object([
+                "type": .string("gemini.function_call"),
+                "tool_call_id": .string("call_order"),
+                "thought_signature": .string(#"{ "zeta": 1, "alpha": 2 }"#)
+            ])]),
+            .toolCallStart(index: 0, id: "call_order", name: "inspect", kind: .function),
+            .toolCallDelta(index: 0, arguments: expected),
+            .finished(usage: nil)
+        ])
+    }
+
+    @Test
     func functionCallStreamingEmitsThoughtSignatureDetail() async throws {
         let lines = [
             "data: {\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[{\"functionCall\":{\"id\":\"call_01\",\"name\":\"get_weather\",\"args\":{\"city\":\"NYC\"}},\"thoughtSignature\":\"sig_fc\"}]},\"finishReason\":\"STOP\"}],\"usageMetadata\":{\"promptTokenCount\":20,\"candidatesTokenCount\":15}}",

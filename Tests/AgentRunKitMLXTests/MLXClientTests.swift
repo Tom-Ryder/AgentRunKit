@@ -244,7 +244,7 @@ import Tokenizers
         let mlxCall = MLXLMCommon.ToolCall(
             function: .init(name: "get_weather", arguments: ["city": "London" as any Sendable])
         )
-        let mapped = MLXMessageMapper.mapToolCall(mlxCall, index: 0)
+        let mapped = try MLXMessageMapper.mapToolCall(mlxCall, index: 0)
         #expect(mapped.id == "mlx_call_0")
         #expect(mapped.name == "get_weather")
         let parsed = try JSONDecoder().decode(
@@ -253,21 +253,50 @@ import Tokenizers
         #expect(parsed["city"] == "London")
     }
 
-    @Test func emptyArguments() {
+    @Test func objectArgumentsUseDeterministicOrder() throws {
+        let json = #"{"function":{"name":"inspect","arguments":{"zeta":[{"zeta":true,"alpha":"雪"},"#
+            + #"{"zeta":false,"alpha":"first"}],"alpha":"{ \"z\": 1, \"a\": 2 }"}}}"#
+        let call = try JSONDecoder().decode(MLXLMCommon.ToolCall.self, from: Data(json.utf8))
+
+        let mapped = try MLXMessageMapper.mapToolCall(call, index: 0)
+        let expected = #"{"alpha":"{ \"z\": 1, \"a\": 2 }","zeta":[{"alpha":"雪","zeta":true},"#
+            + #"{"alpha":"first","zeta":false}]}"#
+
+        #expect(mapped.arguments == expected)
+    }
+
+    @Test(arguments: [Double.infinity, -Double.infinity, Double.nan])
+    func nonfiniteArgumentsThrowEncodingFailure(value: Double) throws {
+        let call = MLXLMCommon.ToolCall(
+            function: .init(name: "measure", arguments: ["value": value])
+        )
+
+        do {
+            _ = try MLXMessageMapper.mapToolCall(call, index: 0)
+            Issue.record("Expected an encoding failure")
+        } catch let error as AgentError {
+            guard case .llmError(.encodingFailed) = error else {
+                Issue.record("Expected encodingFailed, got \(error)")
+                return
+            }
+        }
+    }
+
+    @Test func emptyArguments() throws {
         let mlxCall = MLXLMCommon.ToolCall(
             function: .init(name: "noop", arguments: [:])
         )
-        let mapped = MLXMessageMapper.mapToolCall(mlxCall, index: 0)
+        let mapped = try MLXMessageMapper.mapToolCall(mlxCall, index: 0)
         #expect(mapped.arguments == "{}")
     }
 
-    @Test func sequentialIDs() {
+    @Test func sequentialIDs() throws {
         let call = MLXLMCommon.ToolCall(
             function: .init(name: "test", arguments: [:])
         )
-        let first = MLXMessageMapper.mapToolCall(call, index: 0)
-        let second = MLXMessageMapper.mapToolCall(call, index: 1)
-        let third = MLXMessageMapper.mapToolCall(call, index: 2)
+        let first = try MLXMessageMapper.mapToolCall(call, index: 0)
+        let second = try MLXMessageMapper.mapToolCall(call, index: 1)
+        let third = try MLXMessageMapper.mapToolCall(call, index: 2)
         #expect(first.id == "mlx_call_0")
         #expect(second.id == "mlx_call_1")
         #expect(third.id == "mlx_call_2")
