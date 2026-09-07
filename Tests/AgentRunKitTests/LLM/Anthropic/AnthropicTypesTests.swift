@@ -736,6 +736,29 @@ struct AnthropicCacheUsageParsingTests {
         }
     }
 
+    @Test
+    func malformedThinkingCountPreservesNestedDecodingPath() throws {
+        let usage = #"{"input_tokens":100,"output_tokens":50,"output_tokens_details":{"thinking_tokens":-1}}"#
+        do {
+            _ = try JSONDecoder().decode(AnthropicResponse.self, from: usageResponse(usage))
+            Issue.record("Expected a malformed thinking count to fail")
+        } catch let DecodingError.dataCorrupted(context) {
+            #expect(context.codingPath.map(\.stringValue) == ["usage", "output_tokens_details", "thinking_tokens"])
+        }
+    }
+
+    @Test
+    func missingThinkingCountPreservesParentPathAndMissingKey() throws {
+        let usage = #"{"input_tokens":100,"output_tokens":50,"output_tokens_details":{}}"#
+        do {
+            _ = try JSONDecoder().decode(AnthropicResponse.self, from: usageResponse(usage))
+            Issue.record("Expected a missing thinking count to fail")
+        } catch let DecodingError.keyNotFound(key, context) {
+            #expect(context.codingPath.map(\.stringValue) == ["usage", "output_tokens_details"])
+            #expect(key.stringValue == "thinking_tokens")
+        }
+    }
+
     private func usageResponse(_ usage: String?) -> Data {
         let usageField = usage.map { #", "usage":\#($0)"# } ?? ""
         return Data((#"{"content":[{"type":"text","text":"Answer"},"#

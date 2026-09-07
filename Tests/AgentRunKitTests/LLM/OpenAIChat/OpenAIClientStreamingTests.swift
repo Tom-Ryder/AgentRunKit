@@ -467,7 +467,7 @@ struct OpenAIClientStreamingCompletionTests {
 }
 
 struct OpenAIChatStreamingUsageTests {
-    @Test(arguments: openAIChatCacheUsageCases)
+    @Test(arguments: openAICompatibleCacheUsageCases)
     func streamedCacheDetailsPreserveReportedDimensions(details: String, expected: TokenUsage) async throws {
         let usage = #"{"prompt_tokens":100,"completion_tokens":50,"prompt_tokens_details":\#(details),"#
             + #""completion_tokens_details":{"reasoning_tokens":20}}"#

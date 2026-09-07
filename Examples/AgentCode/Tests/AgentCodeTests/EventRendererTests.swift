@@ -10,6 +10,12 @@ private let finishedUsageCases: [(responses: [TokenUsage?], expected: String)] =
     ([nil, nil], "completed · usage unavailable")
 ]
 
+private let finishedReasonCases: [(reason: FinishReason?, expected: String)] = [
+    (nil, "completed · 125 tokens"),
+    (.maxIterationsReached(limit: 3), "maxIterationsReached(limit: 3) · 125 tokens"),
+    (.tokenBudgetExceeded(budget: 100, used: 125), "tokenBudgetExceeded(budget: 100, used: 125) · 125 tokens")
+]
+
 @MainActor
 struct EventRendererTests {
     @Test(arguments: finishedUsageCases)
@@ -20,5 +26,13 @@ struct EventRendererTests {
         }
 
         #expect(EventRenderer.finishedSummary(usage: totals, reason: .completed) == expected)
+    }
+
+    @Test(arguments: finishedReasonCases)
+    func finishedSummaryPreservesTerminationReason(reason: FinishReason?, expected: String) {
+        var totals = TokenUsageTotals()
+        totals.record(TokenUsage(input: 100, output: 20, reasoning: 5))
+
+        #expect(EventRenderer.finishedSummary(usage: totals, reason: reason) == expected)
     }
 }

@@ -2,19 +2,35 @@
 import Foundation
 import Testing
 
-private let openAIChatMalformedUsageCases: [(usage: String, pathDepth: Int)] = [
-    (#"{"completion_tokens":5}"#, 1),
-    (#"{"prompt_tokens":10}"#, 1),
-    (#"{"prompt_tokens":-1,"completion_tokens":5}"#, 2),
-    (#"{"prompt_tokens":10,"completion_tokens":-1}"#, 2),
-    (#"{"prompt_tokens":10,"completion_tokens":null}"#, 2),
-    (#"{"prompt_tokens":10,"completion_tokens":9223372036854775808}"#, 2),
-    (#"{"prompt_tokens":10,"completion_tokens":1.5}"#, 2),
-    (#"{"prompt_tokens":10,"completion_tokens":5,"completion_tokens_details":{"reasoning_tokens":-1}}"#, 3),
-    (#"{"prompt_tokens":10,"completion_tokens":5,"prompt_tokens_details":{"cached_tokens":-1}}"#, 3),
-    (#"{"prompt_tokens":10,"completion_tokens":5,"prompt_tokens_details":{"cache_write_tokens":"2"}}"#, 3),
-    (#"{"prompt_tokens":10,"completion_tokens":5,"prompt_tokens_details":{"cache_write_tokens":-1}}"#, 3),
-    (#"{"prompt_tokens":10,"completion_tokens":5,"prompt_tokens_details":false}"#, 2)
+private struct MalformedUsageCase {
+    let usage: String
+    let path: [String]
+    let missingKey: String?
+}
+
+private let openAIChatMalformedUsageCases: [MalformedUsageCase] = [
+    .init(usage: #"{"completion_tokens":5}"#, path: ["usage"], missingKey: "promptTokens"),
+    .init(usage: #"{"prompt_tokens":10}"#, path: ["usage"], missingKey: "completionTokens"),
+    .init(usage: #"{"prompt_tokens":-1,"completion_tokens":5}"#,
+          path: ["usage", "promptTokens"], missingKey: nil),
+    .init(usage: #"{"prompt_tokens":10,"completion_tokens":-1}"#,
+          path: ["usage", "completionTokens"], missingKey: nil),
+    .init(usage: #"{"prompt_tokens":10,"completion_tokens":null}"#,
+          path: ["usage", "completionTokens"], missingKey: nil),
+    .init(usage: #"{"prompt_tokens":10,"completion_tokens":9223372036854775808}"#,
+          path: ["usage", "completionTokens"], missingKey: nil),
+    .init(usage: #"{"prompt_tokens":10,"completion_tokens":1.5}"#,
+          path: ["usage", "completionTokens"], missingKey: nil),
+    .init(usage: #"{"prompt_tokens":10,"completion_tokens":5,"completion_tokens_details":{"reasoning_tokens":-1}}"#,
+          path: ["usage", "completionTokensDetails", "reasoningTokens"], missingKey: nil),
+    .init(usage: #"{"prompt_tokens":10,"completion_tokens":5,"prompt_tokens_details":{"cached_tokens":-1}}"#,
+          path: ["usage", "promptTokensDetails", "cachedTokens"], missingKey: nil),
+    .init(usage: #"{"prompt_tokens":10,"completion_tokens":5,"prompt_tokens_details":{"cache_write_tokens":"2"}}"#,
+          path: ["usage", "promptTokensDetails", "cacheWriteTokens"], missingKey: nil),
+    .init(usage: #"{"prompt_tokens":10,"completion_tokens":5,"prompt_tokens_details":{"cache_write_tokens":-1}}"#,
+          path: ["usage", "promptTokensDetails", "cacheWriteTokens"], missingKey: nil),
+    .init(usage: #"{"prompt_tokens":10,"completion_tokens":5,"prompt_tokens_details":false}"#,
+          path: ["usage", "promptTokensDetails"], missingKey: nil)
 ]
 
 struct OpenAIClientResponseTests {
@@ -852,7 +868,7 @@ struct StreamingAudioChunkTests {
 private struct OpenAIChatUsageParsingTests {
     enum DecoderMode: CaseIterable { case response, streamingChunk }
 
-    @Test(arguments: openAIChatCacheUsageCases)
+    @Test(arguments: openAICompatibleCacheUsageCases)
     func cacheDetailsPreserveReportedDimensions(details: String, expected: TokenUsage) throws {
         let json = #"{"choices":[{"message":{"role":"assistant","content":"Answer"}}],"usage":{"#
             + #""prompt_tokens":100,"completion_tokens":50,"prompt_tokens_details":\#(details),"#
@@ -888,9 +904,7 @@ private struct OpenAIChatUsageParsingTests {
     }
 
     @Test(arguments: openAIChatMalformedUsageCases, DecoderMode.allCases)
-    func malformedUsageThrowsThroughBothDecoders(
-        usageCase: (usage: String, pathDepth: Int), mode: DecoderMode
-    ) throws {
+    func malformedUsageThrowsThroughBothDecoders(usageCase: MalformedUsageCase, mode: DecoderMode) throws {
         let client = OpenAIClient(apiKey: "test", baseURL: OpenAIClient.openRouterBaseURL)
         do {
             switch mode {
@@ -905,13 +919,19 @@ private struct OpenAIChatUsageParsingTests {
             }
             Issue.record("Expected malformed usage to fail")
         } catch let AgentError.llmError(.decodingFailed(description)) {
-            #expect(description.contains("usage"))
+            for component in usageCase.path {
+                #expect(description.contains(component))
+            }
+            if let missingKey = usageCase.missingKey {
+                #expect(description.contains(missingKey))
+            }
         }
     }
 
     @Test(arguments: openAIChatMalformedUsageCases)
-    func malformedUsagePreservesNestedDecodingPath(usage: String, pathDepth: Int) throws {
-        let response = #"{"choices":[{"message":{"role":"assistant","content":"Answer"}}],"usage":\#(usage)}"#
+    func malformedUsagePreservesNestedDecodingPath(usageCase: MalformedUsageCase) throws {
+        let response = #"{"choices":[{"message":{"role":"assistant","content":"Answer"}}],"#
+            + #""usage":\#(usageCase.usage)}"#
         let decoder = JSONDecoder()
         decoder.keyDecodingStrategy = .convertFromSnakeCase
         do {
@@ -920,15 +940,17 @@ private struct OpenAIChatUsageParsingTests {
         } catch let error as DecodingError {
             let context: DecodingError.Context
             switch error {
-            case let .dataCorrupted(value), let .keyNotFound(_, value),
-                 let .typeMismatch(_, value), let .valueNotFound(_, value):
+            case let .keyNotFound(key, value):
                 context = value
+                #expect(key.stringValue == usageCase.missingKey)
+            case let .dataCorrupted(value), let .typeMismatch(_, value), let .valueNotFound(_, value):
+                context = value
+                #expect(usageCase.missingKey == nil)
             @unknown default:
                 Issue.record("Unexpected decoding error: \(error)")
                 return
             }
-            #expect(context.codingPath.first?.stringValue == "usage")
-            #expect(context.codingPath.count == pathDepth)
+            #expect(context.codingPath.map(\.stringValue) == usageCase.path)
         }
     }
 }

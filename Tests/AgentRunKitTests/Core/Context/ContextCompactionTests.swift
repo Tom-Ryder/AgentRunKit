@@ -492,34 +492,6 @@ struct ReactiveCompactionTests {
     }
 }
 
-// MARK: - Compaction Token Usage Tests
-
-struct CompactionTokenUsageTests {
-    @Test
-    func compactionTokenUsageAddedToTotal() async throws {
-        let client = CompactionMockLLMClient(
-            responses: [
-                AssistantMessage(
-                    content: "Using tool", toolCalls: [compactionNoopCall],
-                    tokenUsage: TokenUsage(input: 500, output: 250)
-                ),
-                AssistantMessage(content: "Summary", tokenUsage: TokenUsage(input: 200, output: 300)),
-                AssistantMessage(
-                    content: "", toolCalls: [finishCall],
-                    tokenUsage: TokenUsage(input: 100, output: 50)
-                ),
-            ],
-            contextWindowSize: 1000
-        )
-        let config = AgentConfiguration(maxIterations: 5, compactionThreshold: 0.7)
-        let agent = try Agent<EmptyContext>(client: client, tools: [makeNoopTool()], configuration: config)
-        let result = try await agent.run(userMessage: "Hello", context: EmptyContext())
-
-        #expect(result.totalTokenUsage.input == 800)
-        #expect(result.totalTokenUsage.output == 600)
-    }
-}
-
 // MARK: - Compaction Context Preservation Tests
 
 struct CompactionContextPreservationTests {

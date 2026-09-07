@@ -878,7 +878,7 @@ struct ResponsesStreamingFailureSafetyTests {
 }
 
 struct ResponsesStreamingUsageTests {
-    @Test(arguments: responsesCacheUsageCases)
+    @Test(arguments: openAICompatibleCacheUsageCases)
     func streamedUsageSeparatesReasoningAndCacheDetails(details: String, expected: TokenUsage) async throws {
         let completed = #"{"type":"response.completed","response":{"id":"resp_cache","output":[],"usage":{"#
             + #""input_tokens":100,"output_tokens":50,"input_tokens_details":\#(details),"#

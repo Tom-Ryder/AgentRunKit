@@ -492,4 +492,15 @@ struct GeminiUsageResponseTests {
             #expect(description.contains(key))
         }
     }
+
+    @Test
+    func malformedToolUseCountPreservesNestedDecodingPath() throws {
+        let json = #"{"candidates":[],"usageMetadata":{"toolUsePromptTokenCount":-1}}"#
+        do {
+            _ = try JSONDecoder().decode(GeminiResponse.self, from: Data(json.utf8))
+            Issue.record("Expected a malformed tool-use count to fail")
+        } catch let DecodingError.dataCorrupted(context) {
+            #expect(context.codingPath.map(\.stringValue) == ["usageMetadata", "toolUsePromptTokenCount"])
+        }
+    }
 }

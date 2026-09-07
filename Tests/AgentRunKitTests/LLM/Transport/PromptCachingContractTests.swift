@@ -150,8 +150,8 @@ private extension PromptCachingContractTests {
                 + #""output_tokens_details":{"reasoning_tokens":5}\#(details)}"#
         case .gemini:
             let cache = scenario == .absentCache ? "" : #","cachedContentTokenCount":\#(read)"#
-            return #","usageMetadata":{"promptTokenCount":100,"candidatesTokenCount":15,"#
-                + #""thoughtsTokenCount":5\#(cache)}"#
+            return #","usageMetadata":{"promptTokenCount":100,"toolUsePromptTokenCount":\#(turn == 0 ? 25 : 40),"#
+                + #""candidatesTokenCount":15,"thoughtsTokenCount":5\#(cache)}"#
         }
     }
 
@@ -206,27 +206,34 @@ private extension PromptCachingContractTests {
 
 private extension PromptCachingContractTests {
     func expectedUsages(api: API, scenario: UsageScenario) -> [TokenUsage?] {
-        switch scenario {
+        let firstInput = api == .gemini ? 125 : 100
+        let secondInput = api == .gemini ? 140 : 100
+        return switch scenario {
         case .positive:
             [
-                TokenUsage(input: 100, output: 15, reasoning: 5, cacheRead: 80, cacheWrite: api == .gemini ? nil : 10),
-                TokenUsage(input: 100, output: 15, reasoning: 5, cacheRead: 60, cacheWrite: api == .gemini ? nil : 0)
+                TokenUsage(input: firstInput, output: 15, reasoning: 5,
+                           cacheRead: 80, cacheWrite: api == .gemini ? nil : 10),
+                TokenUsage(input: secondInput, output: 15, reasoning: 5,
+                           cacheRead: 60, cacheWrite: api == .gemini ? nil : 0)
             ]
         case .zero:
             [
-                TokenUsage(input: 100, output: 15, reasoning: 5, cacheRead: 0, cacheWrite: api == .gemini ? nil : 0),
-                TokenUsage(input: 100, output: 15, reasoning: 5, cacheRead: 0, cacheWrite: api == .gemini ? nil : 0)
+                TokenUsage(input: firstInput, output: 15, reasoning: 5,
+                           cacheRead: 0, cacheWrite: api == .gemini ? nil : 0),
+                TokenUsage(input: secondInput, output: 15, reasoning: 5,
+                           cacheRead: 0, cacheWrite: api == .gemini ? nil : 0)
             ]
         case .absentCache:
             [
-                TokenUsage(input: 100, output: 15, reasoning: 5, cacheRead: api == .gemini ? 0 : nil),
-                TokenUsage(input: 100, output: 15, reasoning: 5, cacheRead: api == .gemini ? 0 : nil)
+                TokenUsage(input: firstInput, output: 15, reasoning: 5, cacheRead: api == .gemini ? 0 : nil),
+                TokenUsage(input: secondInput, output: 15, reasoning: 5, cacheRead: api == .gemini ? 0 : nil)
             ]
         case .absentUsage:
             [nil, nil]
         case .inconsistentUsage:
             [
-                TokenUsage(input: 100, output: 15, reasoning: 5, cacheRead: 80, cacheWrite: api == .gemini ? nil : 10),
+                TokenUsage(input: firstInput, output: 15, reasoning: 5,
+                           cacheRead: 80, cacheWrite: api == .gemini ? nil : 10),
                 nil
             ]
         }
@@ -235,10 +242,10 @@ private extension PromptCachingContractTests {
     func assertTotals(_ totals: TokenUsageTotals, api: API, scenario: UsageScenario) {
         switch scenario {
         case .positive, .zero, .absentCache:
-            #expect(totals.input == 200)
+            #expect(totals.input == (api == .gemini ? 265 : 200))
             #expect(totals.output == 30)
             #expect(totals.reasoning == 10)
-            #expect(totals.total == 240)
+            #expect(totals.total == (api == .gemini ? 305 : 240))
             #expect(totals.coverage == .complete)
         case .absentUsage:
             #expect(totals.input == 0)
@@ -247,10 +254,10 @@ private extension PromptCachingContractTests {
             #expect(totals.total == 0)
             #expect(totals.coverage == .unavailable)
         case .inconsistentUsage:
-            #expect(totals.input == 100)
+            #expect(totals.input == (api == .gemini ? 125 : 100))
             #expect(totals.output == 15)
             #expect(totals.reasoning == 5)
-            #expect(totals.total == 120)
+            #expect(totals.total == (api == .gemini ? 145 : 120))
             #expect(totals.coverage == .partial)
         }
         switch scenario {
@@ -281,21 +288,27 @@ private extension PromptCachingContractTests {
 
     func assertReturnedHistory(_ history: [ChatMessage], firstUsage: TokenUsage?, api: API) throws {
         try history.validateForAgentHistory()
-        try #require(history.count >= 4)
-        #expect(history[0] == .system("Keep this prefix."))
-        #expect(history[1] == .user("Inspect the entries."))
-        guard case let .assistant(assistant) = history[2],
-              case let .tool(id, name, content) = history[3] else {
-            Issue.record("Expected the executed tool call and result in returned history")
-            return
-        }
-        #expect(assistant.tokenUsage == firstUsage)
-        #expect(assistant.toolCalls == [ToolCall(
-            id: "call_inspect", name: "inspect", arguments: api == .gemini ? toolOutputJSON : authoredArguments
-        )])
-        #expect(id == "call_inspect")
-        #expect(name == "inspect")
-        #expect(content == toolOutputJSON)
+        let continuity: AssistantContinuity? = api == .responses ? AssistantContinuity(
+            substrate: .responses,
+            payload: .object(["output": .array([.object([
+                "type": .string("function_call"), "id": .string("item_inspect"),
+                "call_id": .string("call_inspect"), "name": .string("inspect"),
+                "arguments": .string(authoredArguments)
+            ])])])
+        ) : nil
+        #expect(history == [
+            .system("Keep this prefix."),
+            .user("Inspect the entries."),
+            .assistant(AssistantMessage(
+                content: "",
+                toolCalls: [ToolCall(
+                    id: "call_inspect", name: "inspect", arguments: api == .gemini ? toolOutputJSON : authoredArguments
+                )],
+                tokenUsage: firstUsage,
+                continuity: continuity
+            )),
+            .tool(id: "call_inspect", name: "inspect", content: toolOutputJSON)
+        ])
     }
 
     func assertCapturedRequests(_ bodies: [Data], api: API) throws {

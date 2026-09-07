@@ -914,7 +914,7 @@ struct ResponsesExtraFieldsTests {
 }
 
 struct ResponsesUsageTests {
-    @Test(arguments: responsesCacheUsageCases)
+    @Test(arguments: openAICompatibleCacheUsageCases)
     func usageMappingSeparatesReasoningAndCacheDetails(details: String, expected: TokenUsage) async throws {
         let json = #"{"id":"resp_004","status":"completed","output":[],"usage":{"#
             + #""input_tokens":100,"output_tokens":50,"input_tokens_details":\#(details),"#
@@ -937,6 +937,22 @@ struct ResponsesUsageTests {
         } catch let AgentError.llmError(.decodingFailed(description)) {
             #expect(description.contains("usage"))
             #expect(description.contains(key))
+        }
+    }
+
+    @Test(arguments: [
+        (#""input_tokens_details":{"cache_write_tokens":-1}"#,
+         ["usage", "input_tokens_details", "cache_write_tokens"]),
+        (#""output_tokens_details":{"reasoning_tokens":-1}"#,
+         ["usage", "output_tokens_details", "reasoning_tokens"])
+    ])
+    func malformedBreakdownPreservesNestedDecodingPath(details: String, path: [String]) throws {
+        let response = #"{"id":"resp_bad","output":[],"usage":{"input_tokens":100,"output_tokens":50,\#(details)}}"#
+        do {
+            _ = try JSONDecoder().decode(ResponsesAPIResponse.self, from: Data(response.utf8))
+            Issue.record("Expected a malformed usage breakdown to fail")
+        } catch let DecodingError.dataCorrupted(context) {
+            #expect(context.codingPath.map(\.stringValue) == path)
         }
     }
 }
