@@ -56,18 +56,11 @@ Pass multiple ``MCPServerConfiguration`` values to a single session. All servers
 
 ## Tool Result Content
 
-``MCPCallResult/content`` preserves the decoded ``MCPContent`` blocks returned by a server. A `resource_link` block carries its URI and required name. A `resource` block embeds a body whose optional MIME type and ``MCPResourceContent`` remain available to the caller: `.text(String)` preserves text, and `.blob(Data)` preserves the decoded binary bytes.
+``MCPCallResult/content`` preserves the decoded ``MCPContent`` blocks returned by a server. ``MCPContent/resourceLink(uri:name:)`` carries a URI and a required name. ``MCPContent/embeddedResource(uri:mimeType:content:)`` carries a URI, an optional MIME type, and ``MCPResourceContent``: `.text(String)` preserves text, and `.blob(Data)` preserves decoded binary bytes.
 
 The protocol permits a resource to satisfy both text and blob schemas. Decoding prefers a valid text string, including an empty string; otherwise it accepts a valid blob representation. Fields belonging only to the other representation do not invalidate the selected one. Missing both representations, malformed required fields, and invalid base64 in the selected blob representation fail decoding.
 
 ``MCPCallResult/toToolResult()`` provides the text projection used by ``MCPTool``. Structured content takes precedence when available. Otherwise, text blocks and embedded text are joined with the other content, resource links render as `[name](uri)`, and binary resources render as `[Embedded resource]`. The original binary data remains in the call result. Links are not fetched as part of a tool call.
-
-Resource construction and pattern matching require two source migrations:
-
-| Previous API | Current API |
-|---|---|
-| `.resourceLink(uri:name:)` with an optional name | Supply the required `String` name. |
-| `.embeddedResource(uri:mimeType:text:)` with optional text | Use `.embeddedResource(uri:mimeType:content:)` with `.text(text)` or `.blob(data)`. |
 
 ## Checkpoint Binding Validation
 
@@ -100,32 +93,6 @@ When a checkpointed run includes MCP tool calls, the agent loop records each par
 5. **shutdown**: client closes the transport and terminates the server process
 
 ``MCPSession`` handles steps 1 through 3 automatically before entering the `withTools` closure, and step 5 when the closure exits.
-
-## Custom Transports
-
-The built-in ``StdioMCPTransport`` communicates over stdin/stdout (macOS only). To use a different transport (WebSocket, HTTP, etc.), conform to ``MCPTransport``:
-
-```swift
-public protocol MCPTransport: Sendable {
-    func connect() async throws
-    func disconnect() async
-    func send(_ data: Data) async throws
-    func messages() -> AsyncThrowingStream<Data, Error>
-}
-```
-
-Pass a custom transport to ``MCPClient`` directly:
-
-```swift
-let client = MCPClient(
-    serverName: "remote",
-    transport: MyWebSocketTransport(url: endpoint),
-    initializationTimeout: .seconds(15),
-    toolCallTimeout: .seconds(60)
-)
-```
-
-For session-based usage with custom transports, use the internal initializer that accepts a transport factory.
 
 ## See Also
 

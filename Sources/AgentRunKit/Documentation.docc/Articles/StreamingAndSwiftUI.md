@@ -149,7 +149,7 @@ let restored = try StreamEventJSONCodec.decode(data)
 
 This canonical codec uses the framework's fixed JSON settings for event transcripts. Plain `Codable` conformance remains available for ordinary Swift use, but transcript persistence should go through ``StreamEventJSONCodec``.
 
-Finished events persist aggregate coverage; legacy totals decode with conservative partial coverage. Iteration events omit `usage` when it is unavailable; absent or null usage decodes as `nil`. Older iteration archives without `history` still decode with an empty history, while present null or malformed history remains a decoding error.
+Finished events encode token totals and coverage as described in <doc:TokenAccounting>. Iteration events omit `usage` when it is unavailable; absent or null usage decodes as `nil`. If `history` is absent, it decodes as an empty array; present null or malformed history throws a decoding error.
 
 ## AgentStream for SwiftUI
 
@@ -191,8 +191,6 @@ Finished events persist aggregate coverage; legacy totals decode with conservati
 ### Root State and Nested Agents
 
 Aggregate state describes the parent run only. `tokenUsage`, `finishReason`, `terminalContent`, `history`, the `content` fallback, `iterationUsages`, `iterationsReplayed`, and `contextBudget` are written by root `.finished`, `.iterationCompleted`, and `.budgetUpdated` events; the same events nested inside ``StreamEvent/Kind/subAgentEvent(toolCallId:toolName:event:)`` never touch them. Nested events remain fully observable — they still arrive on the stream, and `toolCalls` still flattens nested tool activity — but a sub-agent finishing is not the parent finishing.
-
-Before 5.5, a parent stream that emitted no content deltas displayed the last child's finish content; from 5.5 it displays the parent's own.
 
 ### Late-Binding Replay
 

@@ -134,7 +134,7 @@ let together   = OpenAIClient.together(apiKey: "sk-together-...", model: "zai-or
 let groq       = OpenAIClient.proxy(baseURL: OpenAIClient.groqBaseURL)
 ```
 
-The designated initializer `OpenAIClient(...)` still accepts `profile:` directly and defaults to `.compatible`. Static base-URL constants remain available for proxy targets:
+The designated initializer `OpenAIClient(...)` accepts `profile:` directly and defaults to `.compatible`. Static base-URL constants are available for proxy targets:
 
 | Constant | URL |
 |---|---|

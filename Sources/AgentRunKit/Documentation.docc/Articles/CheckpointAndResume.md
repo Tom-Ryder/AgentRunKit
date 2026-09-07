@@ -68,7 +68,7 @@ for try await event in stream {
 let savedIDs = try await checkpointer.list(session: session)
 ```
 
-Omitting `checkpointer:` writes no checkpoint. Omitting `sessionID:` still writes them, under a session ID minted for that run, which the emitted events carry on ``StreamEvent/sessionID``. Both parameters default to `nil`, so existing call sites are unaffected.
+Omitting `checkpointer:` writes no checkpoint. Without `sessionID:`, the run mints a session ID and includes it on each event as ``StreamEvent/sessionID``.
 
 ## Resuming a Run
 
@@ -107,7 +107,7 @@ See <doc:MCPIntegration> for how MCP tools are discovered.
 
 ## Terminal Checkpoints
 
-An agent built with a `completionTool:` (see <doc:AgentAndChat#Custom-Completion-Tools>) writes one final checkpoint when that tool succeeds. It carries an ``AgentTerminalOutcome`` holding the exact result and the name of the tool that produced it, and it is saved before the top-level `.finished` event is emitted. Every other terminal path — the built-in `finish` tool, content-only completion, max iterations, token budget exhaustion — keeps its existing cadence and writes no outcome, and so does a failed or exclusivity-violating completion attempt, which saves an ordinary snapshot and lets the run continue.
+An agent built with a `completionTool:` (see <doc:AgentAndChat#Custom-Completion-Tools>) writes one final checkpoint when that tool succeeds. It carries an ``AgentTerminalOutcome`` holding the exact result and the name of the tool that produced it, and it is saved before the top-level `.finished` event is emitted. Every other terminal path — the built-in `finish` tool, content-only completion, max iterations, token budget exhaustion — writes no outcome, and so does a failed or exclusivity-violating completion attempt, which saves an ordinary snapshot and lets the run continue.
 
 Resuming a terminal checkpoint replays the committed result instead of continuing the run. ``Agent/resume(from:checkpointer:context:tokenBudget:requestContext:approvalHandler:)`` validates the saved message structure, checks outcome identity, then emits the saved iteration event followed by `.finished` with the stored content and ``FinishReason/completed``, and closes. The iteration event carries the saved history and optional usage even when the original run reported no measurement. It makes no LLM request, executes no tool, requires no approval handler and no live MCP bindings, applies no budget or iteration preflight, and writes no new checkpoint.
 
@@ -124,12 +124,6 @@ do {
 ```
 
 Because tool execution and checkpoint storage are separate awaited operations, a save failure after a successful completion propagates as an error and suppresses `.finished`; it cannot undo whatever the tool already did. Completion tools with external side effects must be idempotent or transactional in their own domain.
-
-### Reading Older Checkpoints
-
-Older aggregate values without accounting metadata preserve their numbers with partial overall coverage. Present cache subtotals remain partial; missing cache counters remain unavailable. New checkpoints persist this provenance explicitly. Resume restores it directly, and later responses cannot upgrade legacy uncertainty to complete coverage. Saved iteration numbers, histories, and optional iteration usage do not establish aggregate completeness. See <doc:TokenAccounting>.
-
-Checkpoints written before terminal outcomes existed decode normally and are treated as ordinary continuation snapshots. The compatibility runs one way only: an older binary decoding a newer terminal checkpoint ignores the outcome key and resumes the run live, re-executing a completion that already committed. Do not roll a deployment back onto checkpoints a newer runtime wrote.
 
 ## AgentStream Resume
 

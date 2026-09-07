@@ -21,7 +21,7 @@ These totals report 100 input tokens, 20 output tokens, and partial overall cove
 | Coverage | Meaning |
 |---|---|
 | `complete` | Every recorded response supplied the measurement. |
-| `partial` | Measurements have gaps, or a legacy archive cannot establish completeness. |
+| `partial` | Measurements have gaps, or their completeness is unknown. |
 | `unavailable` | No measurement is represented for this dimension. |
 
 Empty totals have complete coverage and five exact zero counts because no responses have been recorded. Recording `nil` changes that state to unavailable usage with zero reported scalar counts and `nil` cache counts. Recording a measured zero instead preserves its availability. Those states remain distinct after encoding and decoding.
@@ -50,7 +50,7 @@ A blocking response contributes once when it returns. A streamed response contri
 
 For custom ``LLMClient`` implementations, each ``StreamDelta/finished(usage:)`` replaces the previous usage snapshot for that response. If a stream sends multiple finished deltas, the last value wins, including `nil`; those snapshots are not added together. This response-level rule is separate from provider wire updates, which each adapter normalizes before emitting deltas.
 
-Completed Agent iterations still carry optional single-response ``TokenUsage``. Their sample array cannot reconstruct aggregate totals: summary responses are included in totals but have no iteration sample. Missing samples remain `nil`, including on Foundation Models. Resume restores aggregate values and coverage directly; replaying saved or buffered events does not record responses again. Nested child events do not change parent totals.
+Completed Agent iterations carry optional single-response ``TokenUsage``. Their sample array cannot reconstruct aggregate totals: summary responses are included in totals but have no iteration sample. Missing samples remain `nil`, including on Foundation Models. Resume restores aggregate values and coverage directly; replaying saved or buffered events does not record responses again. Nested child events do not change parent totals.
 
 Use coverage when presenting a total:
 
@@ -67,7 +67,7 @@ case .unavailable:
 
 ## Persistence
 
-The numeric keys `input`, `output`, `reasoning`, `cacheRead`, and `cacheWrite` remain at the top level. An `accounting` object preserves whether the aggregate is empty or observed and records coverage for observed totals. Unavailable cache values are omitted:
+The aggregate encodes `input`, `output`, `reasoning`, `cacheRead`, and `cacheWrite` as top-level keys. An `accounting` object preserves whether the aggregate is empty or observed and records coverage for observed totals. Unavailable cache values are omitted:
 
 ```json
 {
@@ -84,9 +84,9 @@ The numeric keys `input`, `output`, `reasoning`, `cacheRead`, and `cacheWrite` r
 }
 ```
 
-An older aggregate without `accounting` remains readable. Its original numbers are preserved with partial overall coverage, partial coverage for each present cache count, and unavailable coverage for absent cache counts. Even all-zero legacy totals are observed rather than assumed empty. Later recording and persistence retain that uncertainty. Historical values are not reinterpreted using current provider semantics.
+When decoding an aggregate without `accounting`, counts retain their encoded values with partial overall coverage. Present cache counts have partial coverage; absent cache counts are unavailable. This applies even when every count is zero.
 
-A present but malformed `accounting` object fails decoding, as do negative counts and contradictions between values and coverage. Only an absent `accounting` key selects legacy decoding.
+Decoding rejects malformed `accounting` metadata, negative counts, and contradictions between counts and coverage.
 
 ## See Also
 
