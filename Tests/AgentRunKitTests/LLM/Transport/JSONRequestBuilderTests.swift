@@ -111,7 +111,7 @@ struct JSONRequestBuilderTests {
     }
 
     @Test
-    func concurrentBuildsKeepTheirOwnBodies() async throws {
+    func concurrentBuildsEncodeExpectedBodies() async throws {
         let url = try #require(URL(string: "https://json-request.test/concurrent"))
         try await withThrowingTaskGroup(of: Void.self) { group in
             for value in 0 ..< 8 {

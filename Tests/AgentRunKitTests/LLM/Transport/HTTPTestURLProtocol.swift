@@ -13,14 +13,6 @@ func decodeHTTPTestJSONObject(from data: Data) throws -> [String: Any] {
     return object
 }
 
-private extension NSLock {
-    func withLock<T>(_ body: () throws -> T) rethrows -> T {
-        lock()
-        defer { unlock() }
-        return try body()
-    }
-}
-
 /// @unchecked Sendable justification: URL loading callbacks cross concurrency domains and
 /// NSLock guards all shared mutable state in this test helper.
 final class HTTPTestURLProtocolState: @unchecked Sendable {
@@ -73,6 +65,18 @@ final class HTTPTestURLProtocolState: @unchecked Sendable {
 final class HTTPTestURLProtocol: URLProtocol, @unchecked Sendable {
     private static let state = HTTPTestURLProtocolState()
 
+    static func configuration() -> URLSessionConfiguration {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [HTTPTestURLProtocol.self]
+        return configuration
+    }
+
+    static func register(url: URL, response: HTTPTestResponse) {
+        register(url: url) { _ in
+            try (response.makeURLResponse(for: url), response.body)
+        }
+    }
+
     static func register(
         url: URL,
         handler: @escaping @Sendable (URLRequest) throws -> (HTTPURLResponse, Data)
@@ -114,15 +118,13 @@ final class HTTPTestURLProtocol: URLProtocol, @unchecked Sendable {
             client?.urlProtocol(self, didFailWithError: URLError(.badURL))
             return
         }
-        let request = request
-
         guard let handler = Self.state.handler(for: url) else {
             client?.urlProtocol(self, didFailWithError: URLError(.unsupportedURL))
             return
         }
 
         do {
-            if let body = Self.requestBody(from: request) {
+            if let body = try Self.requestBody(from: request) {
                 Self.state.recordBody(body, for: url)
             }
             let (response, data) = try handler(request)
@@ -136,7 +138,7 @@ final class HTTPTestURLProtocol: URLProtocol, @unchecked Sendable {
 
     override func stopLoading() {}
 
-    private static func requestBody(from request: URLRequest) -> Data? {
+    private static func requestBody(from request: URLRequest) throws -> Data? {
         if let body = request.httpBody {
             return body
         }
@@ -154,10 +156,19 @@ final class HTTPTestURLProtocol: URLProtocol, @unchecked Sendable {
 
         while stream.hasBytesAvailable {
             let bytesRead = stream.read(buffer, maxLength: bufferSize)
-            if bytesRead <= 0 {
+            guard bytesRead >= 0 else {
+                throw stream.streamError ?? URLError(.cannotDecodeRawData)
+            }
+            if bytesRead == 0 {
                 break
             }
             data.append(buffer, count: bytesRead)
+        }
+        if let error = stream.streamError {
+            throw error
+        }
+        guard stream.streamStatus != .error else {
+            throw URLError(.cannotDecodeRawData)
         }
 
         return data.isEmpty ? nil : data
@@ -177,6 +188,15 @@ struct HTTPTestResponse {
         self.statusCode = statusCode
         self.body = body
         self.headers = headers
+    }
+
+    func makeURLResponse(for url: URL) throws -> HTTPURLResponse {
+        guard let response = HTTPURLResponse(
+            url: url, statusCode: statusCode, httpVersion: nil, headerFields: headers
+        ) else {
+            throw URLError(.badServerResponse)
+        }
+        return response
     }
 }
 
@@ -202,15 +222,7 @@ final class HTTPTestResponseSequence: @unchecked Sendable {
             }
             let queuedResponse = responses[index]
             index += 1
-            guard let response = HTTPURLResponse(
-                url: url,
-                statusCode: queuedResponse.statusCode,
-                httpVersion: nil,
-                headerFields: queuedResponse.headers
-            ) else {
-                throw URLError(.badServerResponse)
-            }
-            return (response, queuedResponse.body)
+            return try (queuedResponse.makeURLResponse(for: url), queuedResponse.body)
         }
     }
 }

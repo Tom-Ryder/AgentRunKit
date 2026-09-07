@@ -101,7 +101,7 @@ struct GeminiStreamingTests {
 
     @Test
     func publicStreamEndingBeforeFinishReasonThrowsStreamStalled() async throws {
-        let session = URLSession(configuration: StreamingTestURLProtocol.configuration())
+        let session = URLSession(configuration: HTTPTestURLProtocol.configuration())
         defer { session.invalidateAndCancel() }
         let client = GeminiClient(
             apiKey: "test-key",
@@ -112,8 +112,10 @@ struct GeminiStreamingTests {
         let urlRequest = try client.buildURLRequest(request, stream: true)
         let requestURL = try #require(urlRequest.url)
         let body = "data: {\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[{\"text\":\"partial\"}]}}]}\n\n"
-        StreamingTestURLProtocol.register(url: requestURL, body: Data(body.utf8))
-        defer { StreamingTestURLProtocol.unregister(url: requestURL) }
+        HTTPTestURLProtocol.register(url: requestURL, response: HTTPTestResponse(
+            body: Data(body.utf8), headers: ["Content-Type": "text/event-stream"]
+        ))
+        defer { HTTPTestURLProtocol.unregister(url: requestURL) }
 
         let result = await collectStreamResult(client.stream(messages: [.user("Hi")], tools: [], requestContext: nil))
 

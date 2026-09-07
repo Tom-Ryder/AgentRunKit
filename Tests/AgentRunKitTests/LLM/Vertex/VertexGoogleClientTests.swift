@@ -126,7 +126,7 @@ struct VertexGoogleURLTests {
 struct VertexGoogleStreamingCompletionTests {
     @Test
     func publicStreamEndingBeforeFinishReasonThrowsStreamStalled() async throws {
-        let session = URLSession(configuration: StreamingTestURLProtocol.configuration())
+        let session = URLSession(configuration: HTTPTestURLProtocol.configuration())
         defer { session.invalidateAndCancel() }
         let client = VertexGoogleClient(
             projectID: "test-project",
@@ -139,8 +139,10 @@ struct VertexGoogleStreamingCompletionTests {
         let urlRequest = try client.buildVertexURLRequest(request, stream: true, token: "test-token-123")
         let requestURL = try #require(urlRequest.url)
         let body = "data: {\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[{\"text\":\"partial\"}]}}]}\n\n"
-        StreamingTestURLProtocol.register(url: requestURL, body: Data(body.utf8))
-        defer { StreamingTestURLProtocol.unregister(url: requestURL) }
+        HTTPTestURLProtocol.register(url: requestURL, response: HTTPTestResponse(
+            body: Data(body.utf8), headers: ["Content-Type": "text/event-stream"]
+        ))
+        defer { HTTPTestURLProtocol.unregister(url: requestURL) }
 
         let result = await collectStreamResult(client.stream(messages: [.user("Hi")], tools: [], requestContext: nil))
 

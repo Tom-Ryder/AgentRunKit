@@ -253,16 +253,36 @@ import Tokenizers
         #expect(parsed["city"] == "London")
     }
 
-    @Test func objectArgumentsUseDeterministicOrder() throws {
-        let json = #"{"function":{"name":"inspect","arguments":{"zeta":[{"zeta":true,"alpha":"雪"},"#
-            + #"{"zeta":false,"alpha":"first"}],"alpha":"{ \"z\": 1, \"a\": 2 }"}}}"#
+    @Test(arguments: [
+        #"{"zeta":[{"zeta":true,"alpha":"雪"},{"zeta":false,"alpha":"first"}],"#
+            + #""foxtrot":4,"echo":3,"delta":2,"charlie":1,"bravo":0,"alpha":"{ \"z\": 1, \"a\": 2 }"}"#,
+        #"{"charlie":1,"alpha":"{ \"z\": 1, \"a\": 2 }","foxtrot":4,"#
+            + #""zeta":[{"alpha":"雪","zeta":true},{"alpha":"first","zeta":false}],"bravo":0,"echo":3,"delta":2}"#
+    ])
+    func objectArgumentsUseDeterministicOrder(argumentsJSON: String) throws {
+        let json = #"{"function":{"name":"inspect","arguments":\#(argumentsJSON)}}"#
         let call = try JSONDecoder().decode(MLXLMCommon.ToolCall.self, from: Data(json.utf8))
 
         let mapped = try MLXMessageMapper.mapToolCall(call, index: 0)
-        let expected = #"{"alpha":"{ \"z\": 1, \"a\": 2 }","zeta":[{"alpha":"雪","zeta":true},"#
+        let expected = #"{"alpha":"{ \"z\": 1, \"a\": 2 }","bravo":0,"charlie":1,"delta":2,"echo":3,"foxtrot":4,"#
+            + #""zeta":[{"alpha":"雪","zeta":true},"#
             + #"{"alpha":"first","zeta":false}]}"#
 
         #expect(mapped.arguments == expected)
+    }
+
+    @Test(arguments: [
+        (#"[{"zeta":2,"alpha":"second"},{"zeta":1,"alpha":"first"}]"#,
+         #"[{"alpha":"second","zeta":2},{"alpha":"first","zeta":1}]"#),
+        (#"[{"zeta":1,"alpha":"first"},{"zeta":2,"alpha":"second"}]"#,
+         #"[{"alpha":"first","zeta":1},{"alpha":"second","zeta":2}]"#)
+    ])
+    func objectArgumentArraysKeepTheirSuppliedOrder(inputJSON: String, expectedJSON: String) throws {
+        let json = #"{"function":{"name":"inspect","arguments":{"items":\#(inputJSON)}}}"#
+        let call = try JSONDecoder().decode(MLXLMCommon.ToolCall.self, from: Data(json.utf8))
+        let mapped = try MLXMessageMapper.mapToolCall(call, index: 0)
+
+        #expect(mapped.arguments == #"{"items":\#(expectedJSON)}"#)
     }
 
     @Test(arguments: [Double.infinity, -Double.infinity, Double.nan])

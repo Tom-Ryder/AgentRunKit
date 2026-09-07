@@ -36,7 +36,7 @@ struct OpenAIChatStreamingReasoningTests {
 
     @Test
     func streamingReasoningDetailDeltasDecodedFromBytes() async throws {
-        let session = URLSession(configuration: StreamingTestURLProtocol.configuration())
+        let session = URLSession(configuration: HTTPTestURLProtocol.configuration())
         defer { session.invalidateAndCancel() }
         let client = try makeClient(
             baseURL: #require(URL(string: "https://openrouter-reasoning-deltas.test/v1")),
@@ -44,8 +44,10 @@ struct OpenAIChatStreamingReasoningTests {
         )
         let request = try client.buildRequest(messages: [.user("Hi")], tools: [], stream: true)
         let requestURL = try #require(client.buildURLRequest(request).url)
-        StreamingTestURLProtocol.register(url: requestURL, body: reasoningDetailsStreamBody())
-        defer { StreamingTestURLProtocol.unregister(url: requestURL) }
+        HTTPTestURLProtocol.register(url: requestURL, response: HTTPTestResponse(
+            body: reasoningDetailsStreamBody(), headers: ["Content-Type": "text/event-stream"]
+        ))
+        defer { HTTPTestURLProtocol.unregister(url: requestURL) }
 
         let (deltas, error) = await collectStreamResult(
             client.stream(messages: [.user("Hi")], tools: [], requestContext: nil)
@@ -68,7 +70,7 @@ struct OpenAIChatStreamingReasoningTests {
 
     @Test
     func streamingReasoningDetailsConsolidateIntoSingleBlock() async throws {
-        let session = URLSession(configuration: StreamingTestURLProtocol.configuration())
+        let session = URLSession(configuration: HTTPTestURLProtocol.configuration())
         defer { session.invalidateAndCancel() }
         let client = try makeClient(
             baseURL: #require(URL(string: "https://openrouter-reasoning-merge.test/v1")),
@@ -76,8 +78,10 @@ struct OpenAIChatStreamingReasoningTests {
         )
         let request = try client.buildRequest(messages: [.user("Hi")], tools: [], stream: true)
         let requestURL = try #require(client.buildURLRequest(request).url)
-        StreamingTestURLProtocol.register(url: requestURL, body: reasoningDetailsStreamBody())
-        defer { StreamingTestURLProtocol.unregister(url: requestURL) }
+        HTTPTestURLProtocol.register(url: requestURL, response: HTTPTestResponse(
+            body: reasoningDetailsStreamBody(), headers: ["Content-Type": "text/event-stream"]
+        ))
+        defer { HTTPTestURLProtocol.unregister(url: requestURL) }
 
         let processor = StreamProcessor(
             client: client,
@@ -113,7 +117,7 @@ struct OpenAIClientStreamingCompletionTests {
         body: String,
         profile: OpenAIChatProfile = .compatible
     ) async throws -> (deltas: [StreamDelta], error: (any Error)?) {
-        let session = URLSession(configuration: StreamingTestURLProtocol.configuration())
+        let session = URLSession(configuration: HTTPTestURLProtocol.configuration())
         defer { session.invalidateAndCancel() }
         let client = try OpenAIClient(
             apiKey: "test-key",
@@ -125,8 +129,10 @@ struct OpenAIClientStreamingCompletionTests {
         let request = try client.buildRequest(messages: [.user("Hi")], tools: [], stream: true)
         let urlRequest = try client.buildURLRequest(request)
         let requestURL = try #require(urlRequest.url)
-        StreamingTestURLProtocol.register(url: requestURL, body: Data(body.utf8))
-        defer { StreamingTestURLProtocol.unregister(url: requestURL) }
+        HTTPTestURLProtocol.register(url: requestURL, response: HTTPTestResponse(
+            body: Data(body.utf8), headers: ["Content-Type": "text/event-stream"]
+        ))
+        defer { HTTPTestURLProtocol.unregister(url: requestURL) }
         return await collectStreamResult(client.stream(messages: [.user("Hi")], tools: [], requestContext: nil))
     }
 

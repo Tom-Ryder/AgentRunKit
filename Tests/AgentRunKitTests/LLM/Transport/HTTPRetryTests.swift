@@ -159,14 +159,6 @@ struct HandleErrorStatusTests {
     }
 }
 
-private extension NSLock {
-    func withLock<T>(_ body: () throws -> T) rethrows -> T {
-        lock()
-        defer { unlock() }
-        return try body()
-    }
-}
-
 /// @unchecked Sendable justification: URLProtocol callbacks cross concurrency domains and
 /// NSLock guards the shared route used by this test transport.
 private final class FailingErrorBodyURLProtocolState: @unchecked Sendable {

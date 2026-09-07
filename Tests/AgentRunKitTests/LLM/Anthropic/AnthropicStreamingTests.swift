@@ -201,7 +201,7 @@ struct AnthropicStreamingTests {
 
     @Test
     func publicStreamEndingBeforeMessageStopThrowsStreamStalled() async throws {
-        let session = URLSession(configuration: StreamingTestURLProtocol.configuration())
+        let session = URLSession(configuration: HTTPTestURLProtocol.configuration())
         defer { session.invalidateAndCancel() }
         let client = try AnthropicClient(
             apiKey: "test-key",
@@ -218,8 +218,10 @@ struct AnthropicStreamingTests {
             sseLine(#"{"type":"content_block_stop","index":0}"#),
             sseLine(#"{"type":"message_delta","usage":{"output_tokens":42}}"#),
         ].joined(separator: "\n\n").appending("\n\n")
-        StreamingTestURLProtocol.register(url: requestURL, body: Data(body.utf8))
-        defer { StreamingTestURLProtocol.unregister(url: requestURL) }
+        HTTPTestURLProtocol.register(url: requestURL, response: HTTPTestResponse(
+            body: Data(body.utf8), headers: ["Content-Type": "text/event-stream"]
+        ))
+        defer { HTTPTestURLProtocol.unregister(url: requestURL) }
 
         let result = await collectStreamResult(client.stream(messages: [.user("Hi")], tools: [], requestContext: nil))
 

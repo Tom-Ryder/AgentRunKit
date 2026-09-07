@@ -250,6 +250,22 @@ struct AnthropicResponseParsingTests {
         #expect(call.arguments == expected)
     }
 
+    @Test(arguments: [
+        (#"[{"zeta":true,"alpha":"雪"},{"zeta":false,"alpha":"first"}]"#,
+         #"[{"alpha":"雪","zeta":true},{"alpha":"first","zeta":false}]"#),
+        (#"[{"zeta":false,"alpha":"first"},{"zeta":true,"alpha":"雪"}]"#,
+         #"[{"alpha":"first","zeta":false},{"alpha":"雪","zeta":true}]"#)
+    ])
+    func objectArgumentArraysKeepTheirSuppliedOrder(inputJSON: String, expectedJSON: String) throws {
+        let json = #"{"id":"msg_array","type":"message","role":"assistant","content":["#
+            + #"{"type":"tool_use","id":"toolu_array","name":"inspect","input":{"items":\#(inputJSON)}}],"#
+            + #""stop_reason":"tool_use","usage":{"input_tokens":40,"output_tokens":20}}"#
+        let message = try makeClient().parseResponse(Data(json.utf8), provider: .anthropic)
+        let call = try #require(message.toolCalls.first)
+
+        #expect(call.arguments == #"{"items":\#(expectedJSON)}"#)
+    }
+
     @Test
     func toolCallArgumentsRoundTripAsJSONObject() throws {
         let json = """

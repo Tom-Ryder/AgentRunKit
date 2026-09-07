@@ -2,14 +2,6 @@ import AgentRunKit
 import Foundation
 import Testing
 
-private extension NSLock {
-    func withLock<T>(_ body: () throws -> T) rethrows -> T {
-        lock()
-        defer { unlock() }
-        return try body()
-    }
-}
-
 private enum ScriptedResponse {
     case http(statusCode: Int, headers: [String: String], body: Data)
     case networkError(URLError)
