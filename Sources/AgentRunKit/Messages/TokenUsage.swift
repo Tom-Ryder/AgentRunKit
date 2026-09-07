@@ -78,8 +78,26 @@ extension KeyedDecodingContainer {
     }
 
     func decodeTokenCountIfPresent(forKey key: Key) throws -> Int? {
-        guard contains(key), try !decodeNil(forKey: key) else { return nil }
-        return try decodeTokenCount(forKey: key)
+        let count: Int?
+        do {
+            count = try decodeIfPresent(Int.self, forKey: key)
+        } catch let error as DecodingError {
+            throw error
+        } catch {
+            throw DecodingError.dataCorrupted(DecodingError.Context(
+                codingPath: codingPath + [key],
+                debugDescription: "\(key.stringValue) must be a representable integer",
+                underlyingError: error
+            ))
+        }
+        guard let count else { return nil }
+        guard count >= 0 else {
+            throw DecodingError.dataCorruptedError(
+                forKey: key, in: self,
+                debugDescription: "\(key.stringValue) must be non-negative, got \(count)"
+            )
+        }
+        return count
     }
 }
 

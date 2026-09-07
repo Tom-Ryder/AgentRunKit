@@ -283,6 +283,20 @@ struct TokenUsageTotalsCodableTests {
 }
 
 struct TokenUsageTotalsValidationTests {
+    @Test
+    func unavailableUsageRejectsPartialCacheWriteCoverage() throws {
+        let json = """
+        {"input":0,"output":0,"reasoning":0,"cacheWrite":0,"accounting":\
+        {"type":"observed","usage":"unavailable","cacheRead":"unavailable","cacheWrite":"partial"}}
+        """
+        do {
+            _ = try JSONDecoder().decode(TokenUsageTotals.self, from: Data(json.utf8))
+            Issue.record("Expected unavailable usage to reject partial cache-write coverage")
+        } catch let DecodingError.dataCorrupted(context) {
+            #expect(context.codingPath.map(\.stringValue) == ["accounting"])
+        }
+    }
+
     @Test(arguments: [
         "null", "[]", "0", "{}", #"{"type":"unknown"}"#,
         #"{"type":"observed"}"#,

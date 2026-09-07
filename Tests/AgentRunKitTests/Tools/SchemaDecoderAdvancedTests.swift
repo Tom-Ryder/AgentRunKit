@@ -4,6 +4,22 @@ import Testing
 
 struct SchemaDecoderAdvancedTests {
     @Test
+    func nestedTokenUsagePreservesNullableCacheCounts() {
+        struct Params: Codable, SchemaProviding {
+            let usage: TokenUsage
+        }
+        #expect(Params.jsonSchema == .object(properties: [
+            "usage": .object(properties: [
+                "input": .integer(),
+                "output": .integer(),
+                "reasoning": .integer(),
+                "cacheRead": .anyOf([.integer(), .null]),
+                "cacheWrite": .anyOf([.integer(), .null])
+            ], required: ["input", "output", "reasoning"])
+        ], required: ["usage"]))
+    }
+
+    @Test
     func arrayOfObjects() throws {
         struct Item: Codable {
             let id: Int

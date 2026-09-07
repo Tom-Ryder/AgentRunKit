@@ -53,7 +53,7 @@ struct TokenUsageTests {
     }
 
     @Test(arguments: ["input", "output", "reasoning", "cacheRead", "cacheWrite"], [
-        "-1", #""1""#, "true", "1.5", "9223372036854775808"
+        "-1", #""1""#, "true"
     ])
     func persistedUsageRejectsMalformedCounts(_ key: String, _ value: String) throws {
         var fields = ["input": "1", "output": "2", "reasoning": "3"]
@@ -67,6 +67,23 @@ struct TokenUsageTests {
             #expect(context.codingPath.map(\.stringValue) == ["tokenUsage", key])
         } catch let DecodingError.typeMismatch(_, context) {
             #expect(context.codingPath.map(\.stringValue) == ["tokenUsage", key])
+        }
+    }
+
+    @Test(arguments: ["input", "output", "reasoning", "cacheRead", "cacheWrite"], [
+        "1.5", "9223372036854775808"
+    ])
+    func persistedUsagePreservesNumericConversionErrors(_ key: String, _ value: String) throws {
+        var fields = ["input": "1", "output": "2", "reasoning": "3"]
+        fields[key] = value
+        let usageJSON = fields.map { #""\#($0.key)":\#($0.value)"# }.joined(separator: ",")
+        let data = Data(#"{"content":"answer","toolCalls":[],"tokenUsage":{\#(usageJSON)}}"#.utf8)
+        do {
+            _ = try JSONDecoder().decode(AssistantMessage.self, from: data)
+            Issue.record("Expected unrepresentable token count to fail")
+        } catch let DecodingError.dataCorrupted(context) {
+            #expect(context.codingPath.map(\.stringValue) == ["tokenUsage", key])
+            #expect(context.underlyingError != nil)
         }
     }
 
