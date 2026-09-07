@@ -5,20 +5,13 @@ public enum MCPContent: Sendable, Equatable {
     case text(String)
     case image(data: Data, mimeType: String)
     case audio(data: Data, mimeType: String)
-    case resourceLink(uri: String, name: String?)
-    case embeddedResource(uri: String, mimeType: String?, text: String?)
+    case resourceLink(uri: String, name: String)
+    case embeddedResource(uri: String, mimeType: String?, content: MCPResourceContent)
 }
 
 extension MCPContent: Decodable {
     private enum CodingKeys: String, CodingKey {
-        case type, text, data, mimeType, resource
-    }
-
-    private struct ResourceFields: Decodable {
-        let uri: String
-        let name: String?
-        let mimeType: String?
-        let text: String?
+        case type, text, data, mimeType, resource, uri, name
     }
 
     public init(from decoder: any Decoder) throws {
@@ -36,13 +29,15 @@ extension MCPContent: Decodable {
         case "audio":
             self = try Self.decodeBinary(from: container, factory: MCPContent.audio, label: "audio")
 
+        case "resource_link":
+            self = try .resourceLink(
+                uri: container.decode(String.self, forKey: .uri),
+                name: container.decode(String.self, forKey: .name)
+            )
+
         case "resource":
             let res = try container.decode(ResourceFields.self, forKey: .resource)
-            if res.text != nil || res.mimeType != nil {
-                self = .embeddedResource(uri: res.uri, mimeType: res.mimeType, text: res.text)
-            } else {
-                self = .resourceLink(uri: res.uri, name: res.name)
-            }
+            self = .embeddedResource(uri: res.uri, mimeType: res.mimeType, content: res.content)
 
         default:
             throw DecodingError.dataCorrupted(
@@ -66,6 +61,45 @@ extension MCPContent: Decodable {
             )
         }
         return factory(decoded, mime)
+    }
+}
+
+private struct ResourceFields: Decodable {
+    let uri: String
+    let mimeType: String?
+    let content: MCPResourceContent
+
+    private enum CodingKeys: String, CodingKey {
+        case uri, mimeType, text, blob
+    }
+
+    init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        uri = try container.decode(String.self, forKey: .uri)
+        mimeType = try container.contains(.mimeType) ? container.decode(String.self, forKey: .mimeType) : nil
+        let text: String?
+        do {
+            text = try container.decodeIfPresent(String.self, forKey: .text)
+        } catch let DecodingError.typeMismatch(type, _) where type == String.self {
+            text = nil
+        }
+        if let text {
+            content = .text(text)
+            return
+        }
+        guard container.contains(.blob) else {
+            throw DecodingError.dataCorrupted(.init(
+                codingPath: decoder.codingPath,
+                debugDescription: "Embedded resource requires a text string or a base64 blob"
+            ))
+        }
+        let blob = try container.decode(String.self, forKey: .blob)
+        guard let data = Data(base64Encoded: blob) else {
+            throw DecodingError.dataCorruptedError(
+                forKey: .blob, in: container, debugDescription: "Invalid base64 data for embedded resource"
+            )
+        }
+        content = .blob(data)
     }
 }
 
@@ -109,8 +143,9 @@ public struct MCPCallResult: Sendable, Equatable, Decodable {
             case let .text(str): str
             case let .image(_, mimeType): "[Image: \(mimeType)]"
             case let .audio(_, mimeType): "[Audio: \(mimeType)]"
-            case let .resourceLink(uri, name): name.map { "[\($0)](\(uri))" } ?? uri
-            case let .embeddedResource(_, _, text): text ?? "[Embedded resource]"
+            case let .resourceLink(uri, name): "[\(name)](\(uri))"
+            case let .embeddedResource(_, _, .text(text)): text
+            case .embeddedResource(_, _, .blob): "[Embedded resource]"
             }
         }.joined(separator: "\n")
         return ToolResult(content: text, isError: isError)

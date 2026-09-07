@@ -54,6 +54,21 @@ Pass multiple ``MCPServerConfiguration`` values to a single session. All servers
 
 ``MCPTool`` adapts each discovered MCP tool to the ``AnyTool`` protocol. Once inside the `withTools` closure, MCP tools are indistinguishable from native ``Tool`` instances. The agent calls them through the same interface, and their results follow the same ``ToolResult`` type.
 
+## Tool Result Content
+
+``MCPCallResult/content`` preserves the decoded ``MCPContent`` blocks returned by a server. A `resource_link` block carries its URI and required name. A `resource` block embeds a body whose optional MIME type and ``MCPResourceContent`` remain available to the caller: `.text(String)` preserves text, and `.blob(Data)` preserves the decoded binary bytes.
+
+The protocol permits a resource to satisfy both text and blob schemas. Decoding prefers a valid text string, including an empty string; otherwise it accepts a valid blob representation. Fields belonging only to the other representation do not invalidate the selected one. Missing both representations, malformed required fields, and invalid base64 in the selected blob representation fail decoding.
+
+``MCPCallResult/toToolResult()`` provides the text projection used by ``MCPTool``. Structured content takes precedence when available. Otherwise, text blocks and embedded text are joined with the other content, resource links render as `[name](uri)`, and binary resources render as `[Embedded resource]`. The original binary data remains in the call result. Links are not fetched as part of a tool call.
+
+Resource construction and pattern matching require two source migrations:
+
+| Previous API | Current API |
+|---|---|
+| `.resourceLink(uri:name:)` with an optional name | Supply the required `String` name. |
+| `.embeddedResource(uri:mimeType:text:)` with optional text | Use `.embeddedResource(uri:mimeType:content:)` with `.text(text)` or `.blob(data)`. |
+
 ## Checkpoint Binding Validation
 
 When a checkpointed run includes MCP tool calls, the agent loop records each participating tool as an ``MCPToolBinding`` in ``AgentCheckpoint/mcpToolBindings``. On resume, ``Agent/resume(from:checkpointer:context:tokenBudget:requestContext:approvalHandler:)`` validates that every recorded binding has a live counterpart with the same `serverName` and `toolName`. Missing bindings throw ``AgentCheckpointError/mcpBindingMismatch(_:)`` before any event is yielded, catching deployment skew where the resuming agent is configured against a different MCP server set. See <doc:CheckpointAndResume>.
@@ -121,6 +136,9 @@ For session-based usage with custom transports, use the internal initializer tha
 - ``MCPSession``
 - ``MCPTool``
 - ``MCPToolInfo``
+- ``MCPContent``
+- ``MCPResourceContent``
+- ``MCPCallResult``
 - ``MCPToolBinding``
 - ``MCPServerConfiguration``
 - ``StdioMCPTransport``

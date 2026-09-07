@@ -541,6 +541,72 @@ struct MCPClientEdgeCaseTests {
     }
 }
 
+@Suite(.tags(.wireFormat))
+struct MCPClientResourceTests {
+    @Test(arguments: [nil, #"{"zeta":1,"alpha":2}"#] as [String?])
+    func callToolPreservesResourceBodiesAndStructuredPrecedence(structured: String?) async throws {
+        let structuredField = structured.map { #","structuredContent":\#($0)"# } ?? ""
+        let resultJSON = #"{"content":[{"type":"text","text":"Read these"},"#
+            + #"{"type":"resource_link","uri":"file:///document","name":"Document"},"#
+            + #"{"type":"resource","resource":{"uri":"file:///text","text":"Embedded text"}},"#
+            + #"{"type":"resource","resource":{"uri":"file:///binary","blob":"AAH+/w=="}}],"#
+            + #""isError":true\#(structuredField)}"#
+        try await withCallResult(resultJSON) { client in
+            let result = try await client.callTool(name: "resources", arguments: Data("{}".utf8))
+            #expect(result.content == [
+                .text("Read these"), .resourceLink(uri: "file:///document", name: "Document"),
+                .embeddedResource(uri: "file:///text", mimeType: nil, content: .text("Embedded text")),
+                .embeddedResource(uri: "file:///binary", mimeType: nil, content: .blob(Data([0, 1, 254, 255])))
+            ])
+            #expect(result.isError)
+            if structured != nil {
+                #expect(result.structuredContent == Data(#"{"alpha":2,"zeta":1}"#.utf8))
+                #expect(result.toToolResult() == ToolResult(content: #"{"alpha":2,"zeta":1}"#, isError: true))
+            } else {
+                #expect(result.structuredContent == nil)
+                #expect(result.toToolResult() == ToolResult(
+                    content: "Read these\n[Document](file:///document)\nEmbedded text\n[Embedded resource]",
+                    isError: true
+                ))
+            }
+        }
+    }
+
+    @Test(arguments: [nil, #"{"answer":"valid"}"#] as [String?])
+    func callToolRejectsMalformedBinaryEvenWithStructuredContent(structured: String?) async throws {
+        let structuredField = structured.map { #","structuredContent":\#($0)"# } ?? ""
+        let resultJSON = #"{"content":[{"type":"resource","resource":{"uri":"file:///binary","blob":"%%%"}}]"#
+            + #"\#(structuredField)}"#
+        try await withCallResult(resultJSON) { client in
+            do {
+                _ = try await client.callTool(name: "resources", arguments: Data("{}".utf8))
+                Issue.record("Expected malformed embedded blob to fail")
+            } catch let DecodingError.dataCorrupted(context) {
+                #expect(context.codingPath.map { $0.intValue.map(String.init) ?? $0.stringValue }
+                    == ["content", "0", "resource", "blob"])
+            }
+        }
+    }
+
+    private func withCallResult(_ result: String, operation: (MCPClient) async throws -> Void) async throws {
+        let response = #"{"jsonrpc":"2.0","id":3,"result":\#(result)}"#
+        let transport = ScriptedMCPTransport(responses: [
+            MCPTestHelpers.encodeResponse(id: 1, result: MCPTestHelpers.initializeResult()),
+            MCPTestHelpers.encodeResponse(id: 2, result: MCPTestHelpers.emptyToolsListResult()),
+            Data(response.utf8)
+        ])
+        let client = MCPClient(serverName: "resources", transport: transport)
+        do {
+            try await client.connectAndInitialize()
+            try await operation(client)
+        } catch {
+            await client.shutdown()
+            throw error
+        }
+        await client.shutdown()
+    }
+}
+
 private actor IDCollector {
     var ids: [JSONRPCID] = []
     func add(_ id: JSONRPCID) {

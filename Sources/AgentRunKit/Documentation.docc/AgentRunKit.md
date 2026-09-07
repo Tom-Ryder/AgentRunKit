@@ -198,6 +198,7 @@ For a complete walkthrough, see <doc:GettingStarted>.
 - ``StdioMCPTransport``
 - ``MCPTransport``
 - ``MCPContent``
+- ``MCPResourceContent``
 - ``MCPCallResult``
 
 ### MCP Wire Format

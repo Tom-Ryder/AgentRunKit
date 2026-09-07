@@ -301,16 +301,18 @@ struct MCPToolTests {
     }
 
     @Test
-    func resourceLinkWithoutName() {
-        let result = MCPCallResult(content: [.resourceLink(uri: "file:///test.txt", name: nil)])
-        let toolResult = result.toToolResult()
-        #expect(toolResult.content == "file:///test.txt")
+    func decodedResourceLinkPreservesMixedText() throws {
+        let json = #"{"content":[{"type":"text","text":"Read this"},"#
+            + #"{"type":"resource_link","uri":"file:///test.txt","name":"Test File"}]}"#
+        let result = try JSONDecoder().decode(MCPCallResult.self, from: Data(json.utf8))
+        #expect(result.content == [.text("Read this"), .resourceLink(uri: "file:///test.txt", name: "Test File")])
+        #expect(result.toToolResult().content == "Read this\n[Test File](file:///test.txt)")
     }
 
     @Test
     func embeddedResourceWithText() {
         let result = MCPCallResult(content: [
-            .embeddedResource(uri: "file:///doc.md", mimeType: "text/markdown", text: "# Hello")
+            .embeddedResource(uri: "file:///doc.md", mimeType: "text/markdown", content: .text("# Hello"))
         ])
         let toolResult = result.toToolResult()
         #expect(toolResult.content == "# Hello")
@@ -331,33 +333,129 @@ struct MCPToolTests {
     }
 }
 
+@Suite(.tags(.wireFormat))
+struct MCPResourceDecodingTests {
+    @Test(arguments: [
+        (#"{"uri":"file:///resource","text":"hello"}"#,
+         MCPContent.embeddedResource(uri: "file:///resource", mimeType: nil, content: .text("hello"))),
+        (#"{"uri":"file:///resource","text":"hello","mimeType":"text/plain"}"#,
+         .embeddedResource(uri: "file:///resource", mimeType: "text/plain", content: .text("hello"))),
+        (#"{"uri":"file:///resource","blob":"AAH+/w=="}"#,
+         .embeddedResource(uri: "file:///resource", mimeType: nil, content: .blob(Data([0, 1, 254, 255])))),
+        (#"{"uri":"file:///resource","blob":"AAH+/w==","mimeType":"application/octet-stream"}"#,
+         .embeddedResource(uri: "file:///resource", mimeType: "application/octet-stream",
+                           content: .blob(Data([0, 1, 254, 255])))),
+        (#"{"uri":"file:///resource","blob":""}"#,
+         .embeddedResource(uri: "file:///resource", mimeType: nil, content: .blob(Data()))),
+        (#"{"uri":"file:///resource","text":"hello","blob":"AAH+/w=="}"#,
+         .embeddedResource(uri: "file:///resource", mimeType: nil, content: .text("hello"))),
+        (#"{"uri":"file:///resource","text":"","blob":"AAH+/w=="}"#,
+         .embeddedResource(uri: "file:///resource", mimeType: nil, content: .text(""))),
+        (#"{"uri":"file:///resource","text":"hello","blob":"%%%"}"#,
+         .embeddedResource(uri: "file:///resource", mimeType: nil, content: .text("hello"))),
+        (#"{"uri":"file:///resource","text":"hello","blob":42}"#,
+         .embeddedResource(uri: "file:///resource", mimeType: nil, content: .text("hello"))),
+        (#"{"uri":"file:///resource","text":null,"blob":"AAH+/w=="}"#,
+         .embeddedResource(uri: "file:///resource", mimeType: nil, content: .blob(Data([0, 1, 254, 255])))),
+        (#"{"uri":"file:///resource","text":42,"blob":"AAH+/w=="}"#,
+         .embeddedResource(uri: "file:///resource", mimeType: nil, content: .blob(Data([0, 1, 254, 255])))),
+        (#"{"uri":"file:///resource","text":1e400,"blob":"AA=="}"#,
+         .embeddedResource(uri: "file:///resource", mimeType: nil, content: .blob(Data([0])))),
+        (#"{"uri":"file:///resource","text":[1e400],"blob":"AA=="}"#,
+         .embeddedResource(uri: "file:///resource", mimeType: nil, content: .blob(Data([0])))),
+        (#"{"uri":"file:///resource","text":{},"blob":"AAH+/w=="}"#,
+         .embeddedResource(uri: "file:///resource", mimeType: nil, content: .blob(Data([0, 1, 254, 255]))))
+    ])
+    func embeddedResourceSelectsAValidRepresentation(resource: String, expected: MCPContent) throws {
+        let json = #"{"content":[{"type":"resource","resource":\#(resource)}]}"#
+        let result = try JSONDecoder().decode(MCPCallResult.self, from: Data(json.utf8))
+        #expect(result.content == [expected])
+    }
+
+    @Test
+    func decodedBinaryResourceRemainsAvailableBehindTextProjection() throws {
+        let json = #"{"content":[{"type":"resource","resource":{"uri":"file:///binary","blob":"AAH+/w=="}}]}"#
+        let result = try JSONDecoder().decode(MCPCallResult.self, from: Data(json.utf8))
+        #expect(result.toToolResult().content == "[Embedded resource]")
+        #expect(result.content == [
+            .embeddedResource(uri: "file:///binary", mimeType: nil, content: .blob(Data([0, 1, 254, 255])))
+        ])
+    }
+
+    @Test(arguments: [
+        (#"{"type":"resource_link","name":"name"}"#, ["uri"]),
+        (#"{"type":"resource_link","uri":"file:///resource"}"#, ["name"]),
+        (#"{"type":"resource_link","uri":null,"name":"name"}"#, ["uri"]),
+        (#"{"type":"resource_link","uri":42,"name":"name"}"#, ["uri"]),
+        (#"{"type":"resource_link","uri":"file:///resource","name":null}"#, ["name"]),
+        (#"{"type":"resource_link","uri":"file:///resource","name":42}"#, ["name"]),
+        (#"{"type":"resource_link","resource":{"uri":"file:///resource","name":"name"}}"#, ["uri"]),
+        (#"{"type":"resource"}"#, ["resource"]),
+        (#"{"type":"resource","resource":null}"#, ["resource"]),
+        (#"{"type":"resource","resource":42}"#, ["resource"]),
+        (#"{"type":"resource","resource":{"text":"hello"}}"#, ["resource", "uri"]),
+        (#"{"type":"resource","resource":{"uri":null,"text":"hello"}}"#, ["resource", "uri"]),
+        (#"{"type":"resource","resource":{"uri":42,"blob":"AA=="}}"#, ["resource", "uri"]),
+        (#"{"type":"resource","resource":{"uri":"file:///r","mimeType":null,"text":"hello"}}"#,
+         ["resource", "mimeType"]),
+        (#"{"type":"resource","resource":{"uri":"file:///r","mimeType":42,"blob":"AA=="}}"#,
+         ["resource", "mimeType"]),
+        (#"{"type":"resource","resource":{"uri":"file:///resource"}}"#, ["resource"]),
+        (#"{"type":"resource","resource":{"uri":"file:///resource","name":"old link"}}"#, ["resource"]),
+        (#"{"type":"resource","resource":{"uri":"file:///resource","text":null}}"#, ["resource"]),
+        (#"{"type":"resource","resource":{"uri":"file:///resource","text":42}}"#, ["resource"]),
+        (#"{"type":"resource","resource":{"uri":"file:///resource","blob":null}}"#, ["resource", "blob"]),
+        (#"{"type":"resource","resource":{"uri":"file:///resource","blob":42}}"#, ["resource", "blob"]),
+        (#"{"type":"resource","resource":{"uri":"file:///resource","blob":"%%%"}}"#, ["resource", "blob"]),
+        (#"{"type":"resource","resource":{"uri":"file:///resource","blob":"a"}}"#, ["resource", "blob"])
+    ])
+    func malformedResourceReportsItsWirePath(content: String, expectedPath: [String]) throws {
+        let json = #"{"content":[\#(content)]}"#
+        do {
+            _ = try JSONDecoder().decode(MCPCallResult.self, from: Data(json.utf8))
+            Issue.record("Expected malformed resource content to fail")
+        } catch let error as DecodingError {
+            let path: [any CodingKey]
+            switch error {
+            case let .keyNotFound(key, context): path = context.codingPath + [key]
+            case let .typeMismatch(_, context), let .valueNotFound(_, context), let .dataCorrupted(context):
+                path = context.codingPath
+            @unknown default:
+                Issue.record("Unexpected decoding error")
+                return
+            }
+            #expect(path.map { $0.intValue.map(String.init) ?? $0.stringValue } == ["content", "0"] + expectedPath)
+        }
+    }
+}
+
 private func callResultToJSONValue(_ result: MCPCallResult) -> JSONValue {
     let contentValues: [JSONValue] = result.content.map { item in
         switch item {
         case let .text(text):
-            .object(["type": .string("text"), "text": .string(text)])
+            return .object(["type": .string("text"), "text": .string(text)])
         case let .image(data, mimeType):
-            .object([
+            return .object([
                 "type": .string("image"),
                 "data": .string(data.base64EncodedString()),
                 "mimeType": .string(mimeType)
             ])
         case let .audio(data, mimeType):
-            .object([
+            return .object([
                 "type": .string("audio"),
                 "data": .string(data.base64EncodedString()),
                 "mimeType": .string(mimeType)
             ])
         case let .resourceLink(uri, name):
-            .object(["type": .string("resource"), "resource": .object(
-                ["uri": .string(uri)].merging(name.map { ["name": .string($0)] } ?? [:]) { _, new in new }
-            )])
-        case let .embeddedResource(uri, mimeType, text):
-            .object(["type": .string("resource"), "resource": .object(
-                ["uri": .string(uri)]
-                    .merging(mimeType.map { ["mimeType": .string($0)] } ?? [:]) { _, new in new }
-                    .merging(text.map { ["text": .string($0)] } ?? [:]) { _, new in new }
-            )])
+            return .object(["type": .string("resource_link"), "uri": .string(uri), "name": .string(name)])
+        case let .embeddedResource(uri, mimeType, content):
+            var resource: [String: JSONValue] = ["uri": .string(uri)]
+            if let mimeType { resource["mimeType"] = .string(mimeType) }
+            switch content {
+            case let .text(text): resource["text"] = .string(text)
+            case let .blob(data): resource["blob"] = .string(data.base64EncodedString())
+            }
+            return .object(["type": .string("resource"), "resource": .object(resource)])
         }
     }
     var dict: [String: JSONValue] = [
