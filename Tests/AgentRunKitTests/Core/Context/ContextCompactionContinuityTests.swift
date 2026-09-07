@@ -22,12 +22,13 @@ struct ContextCompactionContinuityTests {
                     tokenUsage: TokenUsage(input: 50, output: 100),
                     continuity: summaryContinuity
                 ),
-            ]
+            ],
+            contextWindowSize: 1000
         )
-        let compactor = ContextCompactor(
-            client: client, configuration: AgentConfiguration()
+        var compactor = ContextCompactor(
+            client: client, configuration: AgentConfiguration(compactionThreshold: 0.5)
         )
-        let messages: [ChatMessage] = [
+        var messages: [ChatMessage] = [
             .user("Hello"),
             .assistant(AssistantMessage(
                 content: "Working state",
@@ -37,14 +38,23 @@ struct ContextCompactionContinuityTests {
             .tool(id: "call_1", name: "noop", content: "result"),
         ]
 
-        let compacted = try await compactor.summarize(messages)
-        let assistants = compacted.compactMap { message -> AssistantMessage? in
+        var usage = TokenUsageTotals()
+        let outcome = try await compactor.compactOrTruncateIfNeeded(
+            &messages, lastTotalTokens: 900, totalUsage: &usage
+        )
+        let assistants = messages.compactMap { message -> AssistantMessage? in
             guard case let .assistant(assistant) = message else { return nil }
             return assistant
         }
 
-        #expect(hasCompactionBridge(compacted))
-        #expect(assistants.count == 2)
+        #expect(outcome == .compacted)
+        #expect(await client.generateCallCount == 1)
+        #expect(usage.input == 50 && usage.output == 100 && usage.total == 150)
+        #expect(usage.coverage == .complete)
+        #expect(usage.cacheRead == nil && usage.cacheReadCoverage == .unavailable)
+        #expect(usage.cacheWrite == nil && usage.cacheWriteCoverage == .unavailable)
+        #expect(hasCompactionBridge(messages))
+        try #require(assistants.count == 2)
         #expect(assistants[0].content == "Understood. Resuming from the checkpoint.")
         #expect(assistants[0].continuity == nil)
         #expect(assistants[1].content == "Working state")
@@ -73,10 +83,10 @@ struct ContextCompactionContinuityTests {
                 ),
             ]
         )
-        let compactor = ContextCompactor(
-            client: client, configuration: AgentConfiguration()
+        var compactor = ContextCompactor(
+            client: client, configuration: AgentConfiguration(compactionThreshold: 0.5)
         )
-        let messages: [ChatMessage] = [
+        var messages: [ChatMessage] = [
             .user("Hello"),
             .assistant(AssistantMessage(content: "Older state", continuity: olderContinuity)),
             .assistant(AssistantMessage(
@@ -87,14 +97,21 @@ struct ContextCompactionContinuityTests {
             .tool(id: "call_1", name: "noop", content: "result"),
         ]
 
-        let compacted = try await compactor.summarize(messages)
-        let assistants = compacted.compactMap { message -> AssistantMessage? in
+        var usage = TokenUsageTotals()
+        let outcome = try await compactor.reactiveCompact(&messages, totalUsage: &usage)
+        let assistants = messages.compactMap { message -> AssistantMessage? in
             guard case let .assistant(assistant) = message else { return nil }
             return assistant
         }
 
-        #expect(hasCompactionBridge(compacted))
-        #expect(assistants.count == 2)
+        #expect(outcome == .compacted)
+        #expect(await client.generateCallCount == 1)
+        #expect(usage.input == 50 && usage.output == 100 && usage.total == 150)
+        #expect(usage.coverage == .complete)
+        #expect(usage.cacheRead == nil && usage.cacheReadCoverage == .unavailable)
+        #expect(usage.cacheWrite == nil && usage.cacheWriteCoverage == .unavailable)
+        #expect(hasCompactionBridge(messages))
+        try #require(assistants.count == 2)
         #expect(assistants[0].content == "Understood. Resuming from the checkpoint.")
         #expect(assistants[0].continuity == nil)
         #expect(assistants[1].content == "Working state")

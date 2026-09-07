@@ -609,19 +609,26 @@ struct CompactionContextPreservationTests {
                 AssistantMessage(content: "Summary of work.", tokenUsage: TokenUsage(input: 50, output: 100)),
             ]
         )
-        let compactor = ContextCompactor(
-            client: client, configuration: AgentConfiguration()
+        var compactor = ContextCompactor(
+            client: client, configuration: AgentConfiguration(compactionThreshold: 0.5)
         )
-        let messages: [ChatMessage] = [
+        var messages: [ChatMessage] = [
             .user("Hello"),
             .assistant(AssistantMessage(content: "", toolCalls: [compactionNoopCall])),
             .tool(id: "call_1", name: "noop", content: "result"),
             .assistant(AssistantMessage(content: "All done.")),
         ]
-        let compacted = try await compactor.summarize(messages)
+        var usage = TokenUsageTotals()
+        let outcome = try await compactor.reactiveCompact(&messages, totalUsage: &usage)
 
-        #expect(hasCompactionBridge(compacted))
-        guard case let .assistant(ack) = compacted.last else {
+        #expect(outcome == .compacted)
+        #expect(await client.generateCallCount == 1)
+        #expect(usage.input == 50 && usage.output == 100 && usage.total == 150)
+        #expect(usage.coverage == .complete)
+        #expect(usage.cacheRead == nil && usage.cacheReadCoverage == .unavailable)
+        #expect(usage.cacheWrite == nil && usage.cacheWriteCoverage == .unavailable)
+        #expect(hasCompactionBridge(messages))
+        guard case let .assistant(ack) = messages.last else {
             Issue.record("Expected acknowledgment assistant as last message"); return
         }
         #expect(ack.content == "Understood. Resuming from the checkpoint.")
@@ -773,10 +780,10 @@ struct MediaStrippingTests {
                 AssistantMessage(content: "Summary.", tokenUsage: TokenUsage(input: 50, output: 100)),
             ]
         )
-        let compactor = ContextCompactor(
-            client: client, configuration: AgentConfiguration()
+        var compactor = ContextCompactor(
+            client: client, configuration: AgentConfiguration(compactionThreshold: 0.5)
         )
-        let messages: [ChatMessage] = [
+        var messages: [ChatMessage] = [
             .user([
                 .text("Describe this"),
                 .image(data: Data(repeating: 0xFF, count: 1000), mimeType: "image/png"),
@@ -786,9 +793,16 @@ struct MediaStrippingTests {
             ]),
             .assistant(AssistantMessage(content: "I see an image.")),
         ]
-        _ = try await compactor.summarize(messages)
+        var usage = TokenUsageTotals()
+        let outcome = try await compactor.reactiveCompact(&messages, totalUsage: &usage)
 
+        #expect(outcome == .compacted)
+        #expect(usage.input == 50 && usage.output == 100 && usage.total == 150)
+        #expect(usage.coverage == .complete)
+        #expect(usage.cacheRead == nil && usage.cacheReadCoverage == .unavailable)
+        #expect(usage.cacheWrite == nil && usage.cacheWriteCoverage == .unavailable)
         let captured = await client.allCapturedMessages
+        try #require(captured.count == 1)
         guard case let .userMultimodal(parts) = captured[0][0] else {
             Issue.record("Expected userMultimodal"); return
         }
@@ -807,16 +821,23 @@ struct MediaStrippingTests {
                 AssistantMessage(content: "Summary.", tokenUsage: TokenUsage(input: 50, output: 100)),
             ]
         )
-        let compactor = ContextCompactor(
-            client: client, configuration: AgentConfiguration()
+        var compactor = ContextCompactor(
+            client: client, configuration: AgentConfiguration(compactionThreshold: 0.5)
         )
-        let messages: [ChatMessage] = [
+        var messages: [ChatMessage] = [
             .user("Plain text message"),
             .assistant(AssistantMessage(content: "Response")),
         ]
-        _ = try await compactor.summarize(messages)
+        var usage = TokenUsageTotals()
+        let outcome = try await compactor.reactiveCompact(&messages, totalUsage: &usage)
 
+        #expect(outcome == .compacted)
+        #expect(usage.input == 50 && usage.output == 100 && usage.total == 150)
+        #expect(usage.coverage == .complete)
+        #expect(usage.cacheRead == nil && usage.cacheReadCoverage == .unavailable)
+        #expect(usage.cacheWrite == nil && usage.cacheWriteCoverage == .unavailable)
         let captured = await client.allCapturedMessages
+        try #require(captured.count == 1)
         guard case let .user(text) = captured[0][0] else {
             Issue.record("Expected user string message"); return
         }

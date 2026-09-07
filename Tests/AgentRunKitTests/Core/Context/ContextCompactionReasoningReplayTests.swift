@@ -10,12 +10,14 @@ struct ContextCompactionReasoningReplayTests {
                 AssistantMessage(content: "Summary.", tokenUsage: TokenUsage(input: 50, output: 100)),
             ]
         )
-        let compactor = ContextCompactor(client: client, configuration: AgentConfiguration())
+        var compactor = ContextCompactor(
+            client: client, configuration: AgentConfiguration(compactionThreshold: 0.5)
+        )
         let oldReasoning = "Older weather lookup reasoning."
         let recentReasoning = "Recent weather lookup reasoning."
         let oldCall = ToolCall(id: "call_old", name: "get_weather", arguments: #"{"city":"Berlin"}"#)
         let recentCall = ToolCall(id: "call_recent", name: "get_weather", arguments: #"{"city":"Paris"}"#)
-        let messages: [ChatMessage] = [
+        var messages: [ChatMessage] = [
             .system("You are a weather assistant."),
             .user("Check Berlin."),
             .assistant(AssistantMessage(
@@ -34,10 +36,17 @@ struct ContextCompactionReasoningReplayTests {
             .tool(id: recentCall.id, name: recentCall.name, content: #"{"weather":"sun"}"#),
         ]
 
-        let compacted = try await compactor.summarize(messages)
+        var usage = TokenUsageTotals()
+        let outcome = try await compactor.reactiveCompact(&messages, totalUsage: &usage)
 
-        #expect(hasCompactionBridge(compacted))
-        #expect(!compacted.contains { message in
+        #expect(outcome == .compacted)
+        #expect(await client.generateCallCount == 1)
+        #expect(usage.input == 50 && usage.output == 100 && usage.total == 150)
+        #expect(usage.coverage == .complete)
+        #expect(usage.cacheRead == nil && usage.cacheReadCoverage == .unavailable)
+        #expect(usage.cacheWrite == nil && usage.cacheWriteCoverage == .unavailable)
+        #expect(hasCompactionBridge(messages))
+        #expect(!messages.contains { message in
             if case let .assistant(assistant) = message {
                 assistant.reasoning?.content == oldReasoning
             } else {
@@ -49,7 +58,7 @@ struct ContextCompactionReasoningReplayTests {
             baseURL: #require(URL(string: "http://localhost:8080")),
             assistantReplayProfile: .reasoningContent
         )
-        let request = try openAIClient.buildRequest(messages: compacted, tools: [])
+        let request = try openAIClient.buildRequest(messages: messages, tools: [])
         let data = try JSONEncoder().encode(request)
         let body = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
         let encodedMessages = try #require(body["messages"] as? [[String: Any]])

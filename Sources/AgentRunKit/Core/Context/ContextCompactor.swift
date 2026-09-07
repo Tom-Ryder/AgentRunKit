@@ -180,11 +180,6 @@ struct ContextCompactor {
         )
     }
 
-    func summarize(_ messages: [ChatMessage]) async throws -> [ChatMessage] {
-        let response = try await summaryResponse(messages, summaryGenerator: nil)
-        return try compactedMessages(from: messages, summary: Self.validatedSummary(from: response))
-    }
-
     func compactedMessages(from messages: [ChatMessage], summary: String) -> [ChatMessage] {
         let taskContext = extractTaskContext(messages)
         let recentContext = extractRecentContext(messages).map { $0.droppingServerContinuationAnchorIfAssistant() }
