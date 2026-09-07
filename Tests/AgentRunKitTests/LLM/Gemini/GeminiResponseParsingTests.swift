@@ -458,21 +458,13 @@ struct GeminiFunctionCallReasoningDetailsTests {
     }
 }
 
-extension GeminiResponseParsingTests {
-    @Test(arguments: [
-        (nil, nil), ("null", nil), ("{}", TokenUsage(cacheRead: 0)),
-        (#"{"promptTokenCount":null,"candidatesTokenCount":null,"thoughtsTokenCount":null,"#
-            + #""cachedContentTokenCount":null}"#, TokenUsage(cacheRead: 0)),
-        (#"{"promptTokenCount":1124,"totalTokenCount":1171,"thoughtsTokenCount":47}"#,
-         TokenUsage(input: 1124, reasoning: 47, cacheRead: 0)),
-        (#"{"promptTokenCount":100,"candidatesTokenCount":20,"cachedContentTokenCount":0}"#,
-         TokenUsage(input: 100, output: 20, cacheRead: 0)),
-        (#"{"promptTokenCount":100,"candidatesTokenCount":20,"cachedContentTokenCount":null}"#,
-         TokenUsage(input: 100, output: 20, cacheRead: 0)),
-        (#"{"promptTokenCount":100,"candidatesTokenCount":20,"cachedContentTokenCount":80}"#,
-         TokenUsage(input: 100, output: 20, cacheRead: 80)),
-        (#"{"promptTokenCount":100,"cachedContentTokenCount":101}"#, nil)
-    ] as [(String?, TokenUsage?)])
+@Suite(.tags(.provider, .wireFormat))
+struct GeminiUsageResponseTests {
+    private func makeClient() -> GeminiClient {
+        GeminiClient(apiKey: "test-key", model: "gemini-2.5-pro")
+    }
+
+    @Test(arguments: GeminiUsageTestFixtures.measurements)
     func metadataPresenceAndScalarDefaults(metadata: String?, expected: TokenUsage?) throws {
         let metadataField = metadata.map { #", "usageMetadata":\#($0)"# } ?? ""
         let json = #"{"candidates":[{"content":{"role":"model","parts":[{"text":"Checking"},"#
@@ -488,9 +480,7 @@ extension GeminiResponseParsingTests {
         #expect(message.tokenUsage == expected)
     }
 
-    @Test(arguments: ["promptTokenCount", "candidatesTokenCount", "thoughtsTokenCount", "cachedContentTokenCount"], [
-        "-1", #""1""#, "true", "1.5", "9223372036854775808"
-    ])
+    @Test(arguments: GeminiUsageTestFixtures.scalarKeys, GeminiUsageTestFixtures.malformedScalars)
     func malformedUsageMetadataThrows(key: String, value: String) throws {
         let json = #"{"candidates":[{"content":{"parts":[{"text":"Answer"}]},"finishReason":"STOP"}],"#
             + #""usageMetadata":{"\#(key)":\#(value)}}"#

@@ -236,16 +236,19 @@ struct GeminiUsageMetadata: Decodable {
     let tokenUsage: TokenUsage?
 
     private enum CodingKeys: String, CodingKey {
-        case promptTokenCount, candidatesTokenCount, thoughtsTokenCount, cachedContentTokenCount
+        case promptTokenCount, toolUsePromptTokenCount
+        case candidatesTokenCount, thoughtsTokenCount, cachedContentTokenCount
     }
 
     init(from decoder: any Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        let input = try container.decodeTokenCountIfPresent(forKey: .promptTokenCount) ?? 0
+        let prompt = try container.decodeTokenCountIfPresent(forKey: .promptTokenCount) ?? 0
+        let toolUsePrompt = try container.decodeTokenCountIfPresent(forKey: .toolUsePromptTokenCount) ?? 0
         let output = try container.decodeTokenCountIfPresent(forKey: .candidatesTokenCount) ?? 0
         let reasoning = try container.decodeTokenCountIfPresent(forKey: .thoughtsTokenCount) ?? 0
         let cacheRead = try container.decodeTokenCountIfPresent(forKey: .cachedContentTokenCount) ?? 0
-        guard cacheRead <= input else {
+        let (input, overflow) = prompt.addingReportingOverflow(toolUsePrompt)
+        guard !overflow, cacheRead <= prompt else {
             tokenUsage = nil
             return
         }

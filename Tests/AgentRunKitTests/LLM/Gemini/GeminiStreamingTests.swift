@@ -2,44 +2,41 @@
 import Foundation
 import Testing
 
+private func collectDeltas(from sseLines: [String]) async throws -> [StreamDelta] {
+    let client = GeminiClient(apiKey: "test-key", model: "gemini-2.5-pro")
+    let state = GeminiStreamState()
+    let streamPair = AsyncThrowingStream<StreamDelta, Error>.makeStream()
+    let byteStream = makeByteStream(from: sseLines)
+
+    try await processSSEStream(bytes: byteStream, provider: .gemini, stallTimeout: nil) { event, diagnostics in
+        try await client.handleSSEEvent(
+            event, state: state, diagnostics: diagnostics, continuation: streamPair.continuation
+        )
+    }
+    streamPair.continuation.finish()
+
+    var deltas: [StreamDelta] = []
+    for try await delta in streamPair.stream {
+        deltas.append(delta)
+    }
+    return deltas
+}
+
+private func makeByteStream(from sseLines: [String]) -> ControlledByteStream {
+    let allBytes = sseLines.joined(separator: "\n\n").appending("\n\n")
+    let (stream, continuation) = AsyncStream<UInt8>.makeStream()
+    for byte in Array(allBytes.utf8) {
+        continuation.yield(byte)
+    }
+    continuation.finish()
+    return ControlledByteStream(stream: stream)
+}
+
 // swiftlint:disable line_length
 
 struct GeminiStreamingTests {
     private func makeClient() -> GeminiClient {
         GeminiClient(apiKey: "test-key", model: "gemini-2.5-pro")
-    }
-
-    private func collectDeltas(
-        from sseLines: [String],
-        client: GeminiClient? = nil
-    ) async throws -> [StreamDelta] {
-        let geminiClient = client ?? makeClient()
-        let state = GeminiStreamState()
-        let streamPair = AsyncThrowingStream<StreamDelta, Error>.makeStream()
-        let byteStream = makeByteStream(from: sseLines)
-
-        try await processSSEStream(bytes: byteStream, provider: .gemini, stallTimeout: nil) { event, diagnostics in
-            try await geminiClient.handleSSEEvent(
-                event, state: state, diagnostics: diagnostics, continuation: streamPair.continuation
-            )
-        }
-        streamPair.continuation.finish()
-
-        var deltas: [StreamDelta] = []
-        for try await delta in streamPair.stream {
-            deltas.append(delta)
-        }
-        return deltas
-    }
-
-    private func makeByteStream(from sseLines: [String]) -> ControlledByteStream {
-        let allBytes = sseLines.joined(separator: "\n\n").appending("\n\n")
-        let (stream, continuation) = AsyncStream<UInt8>.makeStream()
-        for byte in Array(allBytes.utf8) {
-            continuation.yield(byte)
-        }
-        continuation.finish()
-        return ControlledByteStream(stream: stream)
     }
 
     @Test
@@ -424,21 +421,9 @@ struct GeminiStreamingTests {
 
 // swiftlint:enable line_length
 
-extension GeminiStreamingTests {
-    @Test(arguments: [
-        (nil, nil), ("null", nil), ("{}", TokenUsage(cacheRead: 0)),
-        (#"{"promptTokenCount":null,"candidatesTokenCount":null,"thoughtsTokenCount":null,"#
-            + #""cachedContentTokenCount":null}"#, TokenUsage(cacheRead: 0)),
-        (#"{"promptTokenCount":1124,"totalTokenCount":1171,"thoughtsTokenCount":47}"#,
-         TokenUsage(input: 1124, reasoning: 47, cacheRead: 0)),
-        (#"{"promptTokenCount":100,"candidatesTokenCount":20,"cachedContentTokenCount":0}"#,
-         TokenUsage(input: 100, output: 20, cacheRead: 0)),
-        (#"{"promptTokenCount":100,"candidatesTokenCount":20,"cachedContentTokenCount":null}"#,
-         TokenUsage(input: 100, output: 20, cacheRead: 0)),
-        (#"{"promptTokenCount":100,"candidatesTokenCount":20,"cachedContentTokenCount":80}"#,
-         TokenUsage(input: 100, output: 20, cacheRead: 80)),
-        (#"{"promptTokenCount":100,"cachedContentTokenCount":101}"#, nil)
-    ] as [(String?, TokenUsage?)])
+@Suite(.tags(.provider, .wireFormat, .streaming))
+struct GeminiUsageStreamingTests {
+    @Test(arguments: GeminiUsageTestFixtures.measurements)
     func terminalMetadataResolvesScalarsWithoutAccumulatingEarlierCounts(
         metadata: String?, expected: TokenUsage?
     ) async throws {
@@ -447,8 +432,10 @@ extension GeminiStreamingTests {
             + #"{"functionCall":{"id":"call_1","name":"lookup","args":{}}}]},"#
             + #""finishReason":"STOP"}]\#(metadataField)}"#
         let deltas = try await collectDeltas(from: [
-            #"data: {"usageMetadata":{"promptTokenCount":500,"cachedContentTokenCount":400}}"#,
-            #"data: {"candidates":[{"content":{"parts":[]}}],"usageMetadata":{"promptTokenCount":600}}"#,
+            #"data: {"usageMetadata":{"promptTokenCount":500,"cachedContentTokenCount":400,"#
+                + #""toolUsePromptTokenCount":700}}"#,
+            #"data: {"candidates":[{"content":{"parts":[]}}],"usageMetadata":{"promptTokenCount":600,"#
+                + #""toolUsePromptTokenCount":800}}"#,
             terminal
         ])
         #expect(deltas == [
@@ -457,9 +444,7 @@ extension GeminiStreamingTests {
         ])
     }
 
-    @Test(arguments: ["promptTokenCount", "candidatesTokenCount", "thoughtsTokenCount", "cachedContentTokenCount"], [
-        "-1", #""1""#, "true", "1.5", "9223372036854775808"
-    ])
+    @Test(arguments: GeminiUsageTestFixtures.scalarKeys, GeminiUsageTestFixtures.malformedScalars)
     func malformedStreamedUsageMetadataThrows(key: String, value: String) async throws {
         let line = #"data: {"candidates":[{"content":{"parts":[{"text":"Answer"}]},"finishReason":"STOP"}],"#
             + #""usageMetadata":{"\#(key)":\#(value)}}"#

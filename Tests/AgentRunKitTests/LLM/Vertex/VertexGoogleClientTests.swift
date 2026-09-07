@@ -268,3 +268,171 @@ struct VertexGoogleHistoryValidationTests {
         }
     }
 }
+
+@Suite(.tags(.provider, .wireFormat))
+struct VertexGoogleUsageTests {
+    enum Execution: CaseIterable {
+        case blocking, streaming
+    }
+
+    @Test(arguments: GeminiUsageTestFixtures.measurements, Execution.allCases)
+    func sharedUsageMappingSurvivesVertexTransport(
+        measurement: (metadata: String?, expected: TokenUsage?), execution: Execution
+    ) async throws {
+        let usage = measurement.metadata.map { #","usageMetadata":\#($0)"# } ?? ""
+        let response = #"{"candidates":[{"content":{"parts":[{"text":"Checking"},"#
+            + #"{"functionCall":{"id":"call_1","name":"lookup","args":{}}}]},"#
+            + #""finishReason":"STOP"}]\#(usage)}"#
+        try await withClient(responses: [response], execution: execution) { client in
+            switch execution {
+            case .blocking:
+                let message = try await client.generate(messages: [.user("Work")], tools: [], responseFormat: nil)
+                #expect(message.content == "Checking")
+                #expect(message.toolCalls == [ToolCall(id: "call_1", name: "lookup", arguments: "{}")])
+                #expect(message.tokenUsage == measurement.expected)
+            case .streaming:
+                var deltas: [StreamDelta] = []
+                for try await delta in client.stream(messages: [.user("Work")], tools: []) {
+                    deltas.append(delta)
+                }
+                #expect(deltas == [
+                    .content("Checking"), .toolCallStart(index: 0, id: "call_1", name: "lookup", kind: .function),
+                    .toolCallDelta(index: 0, arguments: "{}"), .finished(usage: measurement.expected)
+                ])
+            }
+        }
+    }
+
+    @Test(arguments: GeminiUsageTestFixtures.malformedScalars, Execution.allCases)
+    func malformedToolUseCountFailsVertexTransport(value: String, execution: Execution) async throws {
+        let response = #"{"candidates":[{"content":{"parts":[{"text":"Checking"}]},"finishReason":"STOP"}],"#
+            + #""usageMetadata":{"toolUsePromptTokenCount":\#(value)}}"#
+        try await withClient(responses: [response], execution: execution) { client in
+            do {
+                switch execution {
+                case .blocking:
+                    _ = try await client.generate(messages: [.user("Work")], tools: [], responseFormat: nil)
+                case .streaming:
+                    for try await _ in client.stream(messages: [.user("Work")], tools: []) {}
+                }
+                Issue.record("Expected malformed tool-use count to fail")
+            } catch let AgentError.llmError(.decodingFailed(description)) {
+                #expect(description.contains("usageMetadata"))
+                #expect(description.contains("toolUsePromptTokenCount"))
+            }
+        }
+    }
+
+    @Test(arguments: Execution.allCases)
+    func toolUsePromptCountsCrossTheCumulativeCeiling(execution: Execution) async throws {
+        let response = #"{"candidates":[{"content":{"parts":[{"text":"Working"}]},"finishReason":"STOP"}],"#
+            + #""usageMetadata":\#(GeminiUsageTestFixtures.toolUseMetadata)}"#
+        try await withClient(responses: [response], execution: execution) { client in
+            let agent = Agent<EmptyContext>(
+                client: client, tools: [], configuration: AgentConfiguration(maxIterations: 2)
+            )
+            let totals: TokenUsageTotals
+            switch execution {
+            case .blocking:
+                let result = try await agent.run(userMessage: "Work", context: EmptyContext(), tokenBudget: 283)
+                #expect(result.finishReason == .tokenBudgetExceeded(budget: 283, used: 284))
+                #expect(result.iterations == 1)
+                totals = result.totalTokenUsage
+            case .streaming:
+                var events: [StreamEvent.Kind] = []
+                for try await event in agent.stream(userMessage: "Work", context: EmptyContext(), tokenBudget: 283) {
+                    events.append(event.kind)
+                }
+                guard case let .finished(usage, _, reason, _) = events.last else {
+                    Issue.record("Expected token budget termination")
+                    return
+                }
+                #expect(reason == .tokenBudgetExceeded(budget: 283, used: 284))
+                totals = usage
+            }
+            #expect(totals.input == 72)
+            #expect(totals.output == 106)
+            #expect(totals.reasoning == 106)
+            #expect(totals.total == 284)
+            #expect(totals.coverage == .complete)
+            #expect(totals.cacheRead == 0)
+            #expect(totals.cacheReadCoverage == .complete)
+            #expect(totals.cacheWrite == nil)
+            #expect(totals.cacheWriteCoverage == .unavailable)
+        }
+    }
+
+    @Test
+    func toolUseInputAdvancesAdvisoryAndPreservesAMeasurementGap() async throws {
+        let response = #"{"candidates":[{"content":{"parts":[{"text":"Working"}]},"finishReason":"STOP"}],"#
+            + #""usageMetadata":\#(GeminiUsageTestFixtures.toolUseMetadata)}"#
+        let finish = #"{"candidates":[{"content":{"parts":[{"functionCall":{"id":"finish_1","#
+            + #""name":"finish","args":{"content":"done"}}}]},"finishReason":"STOP"}]}"#
+        try await withClient(responses: [response, finish], execution: .streaming) { client in
+            let agent = Agent<EmptyContext>(client: client, tools: [], configuration: AgentConfiguration(
+                maxIterations: 2, contextBudget: ContextBudgetConfig(softThreshold: 0.85)
+            ))
+            var events: [StreamEvent.Kind] = []
+            var samples: [TokenUsage?] = []
+            for try await event in agent.stream(userMessage: "Work", context: EmptyContext()) {
+                events.append(event.kind)
+                if case let .iterationCompleted(usage, _, _) = event.kind {
+                    samples.append(usage)
+                }
+            }
+            let budgets = events.compactMap { event -> ContextBudget? in
+                guard case let .budgetUpdated(budget) = event else { return nil }
+                return budget
+            }
+            let expectedBudget = ContextBudget(windowSize: 200, currentUsage: 178, softThreshold: 0.85)
+            #expect(budgets == [expectedBudget])
+            #expect(events.contains(.budgetAdvisory(budget: expectedBudget)))
+            #expect(samples == [TokenUsage(input: 72, output: 106, reasoning: 106, cacheRead: 0), nil])
+            guard case let .finished(totals, content, reason, _) = events.last else {
+                Issue.record("Expected a finished Agent result")
+                return
+            }
+            #expect(content == "done")
+            #expect(reason == .completed)
+            #expect(totals.input == 72)
+            #expect(totals.output == 106)
+            #expect(totals.reasoning == 106)
+            #expect(totals.total == 284)
+            #expect(totals.coverage == .partial)
+            #expect(totals.cacheRead == 0)
+            #expect(totals.cacheReadCoverage == .partial)
+            #expect(totals.cacheWrite == nil)
+            #expect(totals.cacheWriteCoverage == .unavailable)
+        }
+    }
+
+    private func withClient(
+        responses: [String], execution: Execution, operation: (VertexGoogleClient) async throws -> Void
+    ) async throws {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [HTTPTestURLProtocol.self]
+        let session = URLSession(configuration: configuration)
+        defer { session.invalidateAndCancel() }
+        let client = VertexGoogleClient(
+            projectID: "usage-\(UUID().uuidString)", location: "us-central1", model: "gemini-2.5-pro",
+            tokenProvider: { "test-token" }, contextWindowSize: 200, session: session, retryPolicy: .none
+        )
+        let request = try client.gemini.buildRequest(messages: [.user("Work")], tools: [])
+        let urlRequest = try client.buildVertexURLRequest(request, stream: execution == .streaming, token: "test-token")
+        let url = try #require(urlRequest.url)
+        let sequence = HTTPTestResponseSequence(responses: responses.map { response in
+            switch execution {
+            case .blocking:
+                HTTPTestResponse(body: Data(response.utf8))
+            case .streaming:
+                HTTPTestResponse(
+                    body: Data("data: \(response)\n\n".utf8), headers: ["Content-Type": "text/event-stream"]
+                )
+            }
+        })
+        HTTPTestURLProtocol.register(url: url) { _ in try sequence.nextResponse(url: url) }
+        defer { HTTPTestURLProtocol.unregister(url: url) }
+        try await operation(client)
+        #expect(HTTPTestURLProtocol.recordedBodyData(for: url).count == responses.count)
+    }
+}
