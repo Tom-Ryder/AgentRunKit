@@ -2,6 +2,21 @@
 import Foundation
 import Testing
 
+private let openAIChatMalformedUsageCases: [(usage: String, pathDepth: Int)] = [
+    (#"{"completion_tokens":5}"#, 1),
+    (#"{"prompt_tokens":10}"#, 1),
+    (#"{"prompt_tokens":-1,"completion_tokens":5}"#, 2),
+    (#"{"prompt_tokens":10,"completion_tokens":-1}"#, 2),
+    (#"{"prompt_tokens":10,"completion_tokens":null}"#, 2),
+    (#"{"prompt_tokens":10,"completion_tokens":9223372036854775808}"#, 2),
+    (#"{"prompt_tokens":10,"completion_tokens":1.5}"#, 2),
+    (#"{"prompt_tokens":10,"completion_tokens":5,"completion_tokens_details":{"reasoning_tokens":-1}}"#, 3),
+    (#"{"prompt_tokens":10,"completion_tokens":5,"prompt_tokens_details":{"cached_tokens":-1}}"#, 3),
+    (#"{"prompt_tokens":10,"completion_tokens":5,"prompt_tokens_details":{"cache_write_tokens":"2"}}"#, 3),
+    (#"{"prompt_tokens":10,"completion_tokens":5,"prompt_tokens_details":{"cache_write_tokens":-1}}"#, 3),
+    (#"{"prompt_tokens":10,"completion_tokens":5,"prompt_tokens_details":false}"#, 2)
+]
+
 struct OpenAIClientResponseTests {
     @Test
     func responseDecodesCorrectly() throws {
@@ -834,18 +849,10 @@ struct StreamingAudioChunkTests {
     }
 }
 
-extension OpenAIClientResponseTests {
-    @Test(arguments: [
-        (#"{"cached_tokens":80,"cache_write_tokens":70}"#,
-         TokenUsage(input: 100, output: 30, reasoning: 20, cacheRead: 80, cacheWrite: 70)),
-        (#"{"cached_tokens":0,"cache_write_tokens":0}"#,
-         TokenUsage(input: 100, output: 30, reasoning: 20, cacheRead: 0, cacheWrite: 0)),
-        (#"{"cached_tokens":80}"#, TokenUsage(input: 100, output: 30, reasoning: 20, cacheRead: 80)),
-        (#"{"cache_write_tokens":70}"#, TokenUsage(input: 100, output: 30, reasoning: 20, cacheWrite: 70)),
-        (#"{"cached_tokens":null,"cache_write_tokens":null}"#, TokenUsage(input: 100, output: 30, reasoning: 20)),
-        ("{}", TokenUsage(input: 100, output: 30, reasoning: 20)),
-        ("null", TokenUsage(input: 100, output: 30, reasoning: 20))
-    ])
+private struct OpenAIChatUsageParsingTests {
+    enum DecoderMode: CaseIterable { case response, streamingChunk }
+
+    @Test(arguments: openAIChatCacheUsageCases)
     func cacheDetailsPreserveReportedDimensions(details: String, expected: TokenUsage) throws {
         let json = #"{"choices":[{"message":{"role":"assistant","content":"Answer"}}],"usage":{"#
             + #""prompt_tokens":100,"completion_tokens":50,"prompt_tokens_details":\#(details),"#
@@ -880,39 +887,48 @@ extension OpenAIClientResponseTests {
         #expect(message.tokenUsage == nil)
     }
 
-    @Test(arguments: [
-        (#"{"completion_tokens":5}"#, "promptTokens"),
-        (#"{"prompt_tokens":10}"#, "completionTokens"),
-        (#"{"prompt_tokens":-1,"completion_tokens":5}"#, "promptTokens"),
-        (#"{"prompt_tokens":10,"completion_tokens":-1}"#, "completionTokens"),
-        (#"{"prompt_tokens":10,"completion_tokens":null}"#, "completionTokens"),
-        (#"{"prompt_tokens":10,"completion_tokens":9223372036854775808}"#, "completionTokens"),
-        (#"{"prompt_tokens":10,"completion_tokens":1.5}"#, "completionTokens"),
-        (#"{"prompt_tokens":10,"completion_tokens":5,"completion_tokens_details":{"reasoning_tokens":-1}}"#,
-         "reasoningTokens"),
-        (#"{"prompt_tokens":10,"completion_tokens":5,"prompt_tokens_details":{"cached_tokens":-1}}"#,
-         "cachedTokens"),
-        (#"{"prompt_tokens":10,"completion_tokens":5,"prompt_tokens_details":{"cache_write_tokens":"2"}}"#,
-         "cacheWriteTokens"),
-        (#"{"prompt_tokens":10,"completion_tokens":5,"prompt_tokens_details":{"cache_write_tokens":-1}}"#,
-         "cacheWriteTokens"),
-        (#"{"prompt_tokens":10,"completion_tokens":5,"prompt_tokens_details":false}"#, "promptTokensDetails")
-    ])
-    func malformedUsageThrowsThroughBothDecoders(usage: String, key: String) throws {
+    @Test(arguments: openAIChatMalformedUsageCases, DecoderMode.allCases)
+    func malformedUsageThrowsThroughBothDecoders(
+        usageCase: (usage: String, pathDepth: Int), mode: DecoderMode
+    ) throws {
         let client = OpenAIClient(apiKey: "test", baseURL: OpenAIClient.openRouterBaseURL)
-        let response = #"{"choices":[{"message":{"role":"assistant","content":"Answer"}}],"usage":\#(usage)}"#
-        let chunk = #"{"choices":[{"delta":{"content":"Answer"},"finish_reason":"stop"}],"usage":\#(usage)}"#
-        for decode in [
-            { _ = try client.parseResponse(Data(response.utf8)) },
-            { _ = try client.parseStreamingChunk(Data(chunk.utf8)) }
-        ] {
-            do {
-                try decode()
-                Issue.record("Expected malformed usage to fail")
-            } catch let AgentError.llmError(.decodingFailed(description)) {
-                #expect(description.contains("usage"))
-                #expect(description.contains(key))
+        do {
+            switch mode {
+            case .response:
+                let response = #"{"choices":[{"message":{"role":"assistant","content":"Answer"}}],"#
+                    + #""usage":\#(usageCase.usage)}"#
+                _ = try client.parseResponse(Data(response.utf8))
+            case .streamingChunk:
+                let chunk = #"{"choices":[{"delta":{"content":"Answer"},"finish_reason":"stop"}],"#
+                    + #""usage":\#(usageCase.usage)}"#
+                _ = try client.parseStreamingChunk(Data(chunk.utf8))
             }
+            Issue.record("Expected malformed usage to fail")
+        } catch let AgentError.llmError(.decodingFailed(description)) {
+            #expect(description.contains("usage"))
+        }
+    }
+
+    @Test(arguments: openAIChatMalformedUsageCases)
+    func malformedUsagePreservesNestedDecodingPath(usage: String, pathDepth: Int) throws {
+        let response = #"{"choices":[{"message":{"role":"assistant","content":"Answer"}}],"usage":\#(usage)}"#
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        do {
+            _ = try decoder.decode(ChatCompletionResponse.self, from: Data(response.utf8))
+            Issue.record("Expected malformed usage to fail")
+        } catch let error as DecodingError {
+            let context: DecodingError.Context
+            switch error {
+            case let .dataCorrupted(value), let .keyNotFound(_, value),
+                 let .typeMismatch(_, value), let .valueNotFound(_, value):
+                context = value
+            @unknown default:
+                Issue.record("Unexpected decoding error: \(error)")
+                return
+            }
+            #expect(context.codingPath.first?.stringValue == "usage")
+            #expect(context.codingPath.count == pathDepth)
         }
     }
 }

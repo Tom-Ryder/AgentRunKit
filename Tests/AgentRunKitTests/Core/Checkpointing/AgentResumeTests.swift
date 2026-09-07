@@ -616,7 +616,10 @@ struct AgentTerminalResumeTests {
         #expect(usage.input == 9)
         #expect(usage.output == 4)
         #expect(usage.reasoning == 0)
+        #expect(usage.total == 13)
         #expect(usage.coverage == .complete)
+        #expect(usage.cacheRead == nil && usage.cacheReadCoverage == .unavailable)
+        #expect(usage.cacheWrite == nil && usage.cacheWriteCoverage == .unavailable)
         #expect(content == terminalOutcome.content)
         #expect(reason == .completed)
         #expect(history == terminalMessages)
@@ -639,13 +642,17 @@ struct AgentTerminalResumeTests {
             from: target.checkpointID, checkpointer: observer, context: EmptyContext()
         ))
 
-        #expect(events.map(\.kind) == [
-            .iterationCompleted(usage: nil, iteration: 1, history: terminalMessages),
-            .finished(
-                tokenUsage: makeTokenUsageTotals(TokenUsage(input: 9, output: 4)),
-                content: terminalOutcome.content, reason: .completed, history: terminalMessages
-            ),
-        ])
+        #expect(events.count == 2)
+        #expect(events.first?.kind == .iterationCompleted(usage: nil, iteration: 1, history: terminalMessages))
+        guard case let .finished(usage, content, reason, history) = events.last?.kind else {
+            Issue.record("Expected a live .finished")
+            return
+        }
+        #expect(usage.input == 9 && usage.output == 4 && usage.reasoning == 0 && usage.total == 13)
+        #expect(usage.coverage == .complete)
+        #expect(usage.cacheRead == nil && usage.cacheReadCoverage == .unavailable)
+        #expect(usage.cacheWrite == nil && usage.cacheWriteCoverage == .unavailable)
+        #expect(content == terminalOutcome.content && reason == .completed && history == terminalMessages)
         #expect(events.first?.origin == .replayed(from: target.checkpointID))
         #expect(events.first?.runID == target.runID)
         #expect(events.first?.sessionID == target.sessionID)

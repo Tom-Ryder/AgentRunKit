@@ -345,7 +345,7 @@ private struct PromptTokensDetails: Decodable {
     }
 }
 
-struct CompletionTokensDetails: Decodable {
+private struct CompletionTokensDetails: Decodable {
     let reasoningTokens: Int?
 
     private enum CodingKeys: String, CodingKey {

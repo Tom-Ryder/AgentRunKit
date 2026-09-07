@@ -448,6 +448,9 @@ struct AnthropicStreamingTests {
 }
 
 struct AnthropicStreamingInputUsageTests {
+    private let cachedStartUsage =
+        #"{"input_tokens":100,"output_tokens":7,"cache_read_input_tokens":600,"cache_creation_input_tokens":100}"#
+
     private func makeClient() throws -> AnthropicClient {
         try AnthropicClient(apiKey: "test-key", model: "claude-sonnet-4-6")
     }
@@ -598,13 +601,39 @@ struct AnthropicStreamingInputUsageTests {
         #expect(deltas.last == .finished(usage: expected))
     }
 
-    @Test
-    func malformedStartUsageThrowsTypedDecodingFailure() async throws {
+    @Test(arguments: [
+        (#"{"input_tokens":-1,"output_tokens":0}"#, "input_tokens"),
+        (#"{"input_tokens":true,"output_tokens":0}"#, "input_tokens"),
+        (#"{"input_tokens":"100","output_tokens":0}"#, "input_tokens"),
+        (#"{"input_tokens":1.5,"output_tokens":0}"#, "input_tokens"),
+        (#"{"input_tokens":9223372036854775808,"output_tokens":0}"#, "input_tokens"),
+        (#"{"input_tokens":null,"output_tokens":0}"#, "input_tokens"),
+        (#"{"output_tokens":0}"#, "input_tokens"),
+        (#"{"input_tokens":100,"output_tokens":-1}"#, "output_tokens"),
+        (#"{"input_tokens":100,"output_tokens":true}"#, "output_tokens"),
+        (#"{"input_tokens":100,"output_tokens":"7"}"#, "output_tokens"),
+        (#"{"input_tokens":100,"output_tokens":1.5}"#, "output_tokens"),
+        (#"{"input_tokens":100,"output_tokens":9223372036854775808}"#, "output_tokens"),
+        (#"{"input_tokens":100,"output_tokens":null}"#, "output_tokens"),
+        (#"{"input_tokens":100}"#, "output_tokens"),
+        (#"{"input_tokens":100,"output_tokens":7,"cache_read_input_tokens":-1}"#, "cache_read_input_tokens"),
+        (#"{"input_tokens":100,"output_tokens":7,"cache_creation_input_tokens":-1}"#,
+         "cache_creation_input_tokens"),
+        (#"{"input_tokens":100,"output_tokens":7,"output_tokens_details":{"thinking_tokens":-1}}"#,
+         "thinking_tokens"),
+        (#"{"input_tokens":100,"output_tokens":7,"output_tokens_details":{"thinking_tokens":null}}"#,
+         "thinking_tokens"),
+        (#"{"input_tokens":100,"output_tokens":7,"output_tokens_details":{}}"#, "thinking_tokens"),
+        (#"{"input_tokens":100,"output_tokens":7,"output_tokens_details":false}"#, "output_tokens_details")
+    ])
+    func malformedStartUsageThrowsTypedDecodingFailure(usage: String, key: String) async throws {
         do {
-            _ = try await usageStream(start: #"{"input_tokens":-1,"output_tokens":0}"#, updates: [])
+            _ = try await usageStream(start: usage, updates: [#"{"output_tokens":50}"#])
             Issue.record("Expected malformed usage to fail")
         } catch let AgentError.llmError(.decodingFailed(description)) {
-            #expect(description.contains("input_tokens"))
+            #expect(description.contains("message"))
+            #expect(description.contains("usage"))
+            #expect(description.contains(key))
         }
     }
 
@@ -642,6 +671,7 @@ struct AnthropicStreamingInputUsageTests {
         (#"{"output_tokens":50,"cache_read_input_tokens":-1}"#, "cache_read_input_tokens"),
         (#"{"output_tokens":50,"cache_creation_input_tokens":-1}"#, "cache_creation_input_tokens"),
         (#"{"output_tokens":50,"output_tokens_details":{"thinking_tokens":-1}}"#, "thinking_tokens"),
+        (#"{"output_tokens":50,"output_tokens_details":{"thinking_tokens":null}}"#, "thinking_tokens"),
         (#"{"output_tokens":50,"output_tokens_details":{}}"#, "thinking_tokens")
     ])
     func malformedDeltaUsageThrowsTypedDecodingFailure(usage: String, key: String) async throws {
@@ -652,10 +682,6 @@ struct AnthropicStreamingInputUsageTests {
             #expect(description.contains("usage"))
             #expect(description.contains(key))
         }
-    }
-
-    private var cachedStartUsage: String {
-        #"{"input_tokens":100,"output_tokens":7,"cache_read_input_tokens":600,"cache_creation_input_tokens":100}"#
     }
 
     private func usageStream(start: String?, updates: [String]) async throws -> [StreamDelta] {

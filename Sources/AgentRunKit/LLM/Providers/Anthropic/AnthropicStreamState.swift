@@ -27,7 +27,7 @@ actor AnthropicStreamState {
         isCompleted = true
     }
 
-    func setInputUsage(_ usage: AnthropicUsage) {
+    func applyStartUsage(_ usage: AnthropicUsage) {
         inputTokens = usage.inputTokens
         cacheReadInputTokens = usage.cacheReadInputTokens
         cacheCreationInputTokens = usage.cacheCreationInputTokens

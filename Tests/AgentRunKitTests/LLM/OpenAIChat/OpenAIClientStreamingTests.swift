@@ -2,6 +2,34 @@
 import Foundation
 import Testing
 
+private func collectStream(
+    host: String,
+    body: String,
+    profile: OpenAIChatProfile = .compatible
+) async throws -> (deltas: [StreamDelta], error: (any Error)?) {
+    let session = URLSession(configuration: HTTPTestURLProtocol.configuration())
+    defer { session.invalidateAndCancel() }
+    let client = try OpenAIClient(
+        apiKey: "test-key",
+        model: "test-model",
+        baseURL: #require(URL(string: "https://\(host).test/v1")),
+        session: session,
+        profile: profile
+    )
+    let request = try client.buildRequest(messages: [.user("Hi")], tools: [], stream: true)
+    let urlRequest = try client.buildURLRequest(request)
+    let requestURL = try #require(urlRequest.url)
+    HTTPTestURLProtocol.register(url: requestURL, response: HTTPTestResponse(
+        body: Data(body.utf8), headers: ["Content-Type": "text/event-stream"]
+    ))
+    defer { HTTPTestURLProtocol.unregister(url: requestURL) }
+    return await collectStreamResult(client.stream(messages: [.user("Hi")], tools: [], requestContext: nil))
+}
+
+private func sseChunk(_ json: String) -> String {
+    "data: \(json)\n\n"
+}
+
 struct OpenAIChatStreamingReasoningTests {
     private func makeClient(baseURL: URL, session: URLSession) -> OpenAIClient {
         OpenAIClient(
@@ -112,34 +140,6 @@ struct OpenAIChatStreamingReasoningTests {
 }
 
 struct OpenAIClientStreamingCompletionTests {
-    private func collectStream(
-        host: String,
-        body: String,
-        profile: OpenAIChatProfile = .compatible
-    ) async throws -> (deltas: [StreamDelta], error: (any Error)?) {
-        let session = URLSession(configuration: HTTPTestURLProtocol.configuration())
-        defer { session.invalidateAndCancel() }
-        let client = try OpenAIClient(
-            apiKey: "test-key",
-            model: "test-model",
-            baseURL: #require(URL(string: "https://\(host).test/v1")),
-            session: session,
-            profile: profile
-        )
-        let request = try client.buildRequest(messages: [.user("Hi")], tools: [], stream: true)
-        let urlRequest = try client.buildURLRequest(request)
-        let requestURL = try #require(urlRequest.url)
-        HTTPTestURLProtocol.register(url: requestURL, response: HTTPTestResponse(
-            body: Data(body.utf8), headers: ["Content-Type": "text/event-stream"]
-        ))
-        defer { HTTPTestURLProtocol.unregister(url: requestURL) }
-        return await collectStreamResult(client.stream(messages: [.user("Hi")], tools: [], requestContext: nil))
-    }
-
-    private func sseChunk(_ json: String) -> String {
-        "data: \(json)\n\n"
-    }
-
     @Test
     func streamEndingBeforeFinishThrowsProviderTerminationMissing() async throws {
         let result = try await collectStream(
@@ -466,18 +466,8 @@ struct OpenAIClientStreamingCompletionTests {
     }
 }
 
-extension OpenAIClientStreamingCompletionTests {
-    @Test(arguments: [
-        (#"{"cached_tokens":80,"cache_write_tokens":70}"#,
-         TokenUsage(input: 100, output: 30, reasoning: 20, cacheRead: 80, cacheWrite: 70)),
-        (#"{"cached_tokens":0,"cache_write_tokens":0}"#,
-         TokenUsage(input: 100, output: 30, reasoning: 20, cacheRead: 0, cacheWrite: 0)),
-        (#"{"cached_tokens":80}"#, TokenUsage(input: 100, output: 30, reasoning: 20, cacheRead: 80)),
-        (#"{"cache_write_tokens":70}"#, TokenUsage(input: 100, output: 30, reasoning: 20, cacheWrite: 70)),
-        (#"{"cached_tokens":null,"cache_write_tokens":null}"#, TokenUsage(input: 100, output: 30, reasoning: 20)),
-        ("{}", TokenUsage(input: 100, output: 30, reasoning: 20)),
-        ("null", TokenUsage(input: 100, output: 30, reasoning: 20))
-    ])
+struct OpenAIChatStreamingUsageTests {
+    @Test(arguments: openAIChatCacheUsageCases)
     func streamedCacheDetailsPreserveReportedDimensions(details: String, expected: TokenUsage) async throws {
         let usage = #"{"prompt_tokens":100,"completion_tokens":50,"prompt_tokens_details":\#(details),"#
             + #""completion_tokens_details":{"reasoning_tokens":20}}"#

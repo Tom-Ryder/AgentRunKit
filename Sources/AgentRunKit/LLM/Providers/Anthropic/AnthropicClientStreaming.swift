@@ -269,7 +269,7 @@ extension AnthropicClient {
     ) async throws {
         let event = try decodeEvent(AnthropicMessageStartEvent.self, from: data)
         if let usage = event.message.usage {
-            await state.setInputUsage(usage)
+            await state.applyStartUsage(usage)
         }
     }
 
