@@ -1,4 +1,5 @@
 import Foundation
+import Synchronization
 
 private enum HTTPTestHelperError: Error {
     case expectedJSONObject
@@ -13,49 +14,50 @@ func decodeHTTPTestJSONObject(from data: Data) throws -> [String: Any] {
     return object
 }
 
-/// @unchecked Sendable justification: URL loading callbacks cross concurrency domains and
-/// NSLock guards all shared mutable state in this test helper.
-final class HTTPTestURLProtocolState: @unchecked Sendable {
+final class HTTPTestURLProtocolState: Sendable {
     typealias Handler = @Sendable (URLRequest) throws -> (HTTPURLResponse, Data)
 
-    private let lock = NSLock()
-    private var handlers: [String: Handler] = [:]
-    private var recordedBodies: [String: [Data]] = [:]
+    private struct State {
+        var handlers: [String: Handler] = [:]
+        var recordedBodies: [String: [Data]] = [:]
+    }
+
+    private let state = Mutex(State())
 
     func register(url: URL, handler: @escaping Handler) {
-        lock.withLock {
-            handlers[url.absoluteString] = handler
+        state.withLock {
+            $0.handlers[url.absoluteString] = handler
         }
     }
 
     func unregister(url: URL) {
-        lock.withLock {
-            handlers.removeValue(forKey: url.absoluteString)
-            recordedBodies.removeValue(forKey: url.absoluteString)
+        state.withLock {
+            $0.handlers.removeValue(forKey: url.absoluteString)
+            $0.recordedBodies.removeValue(forKey: url.absoluteString)
         }
     }
 
     func handler(for url: URL) -> Handler? {
-        lock.withLock {
-            handlers[url.absoluteString]
+        state.withLock {
+            $0.handlers[url.absoluteString]
         }
     }
 
     func recordBody(_ body: Data, for url: URL) {
-        lock.withLock {
-            recordedBodies[url.absoluteString, default: []].append(body)
+        state.withLock {
+            $0.recordedBodies[url.absoluteString, default: []].append(body)
         }
     }
 
     func recordedBody(for url: URL) -> Data? {
-        lock.withLock {
-            recordedBodies[url.absoluteString]?.last
+        state.withLock {
+            $0.recordedBodies[url.absoluteString]?.last
         }
     }
 
     func recordedBodies(for url: URL) -> [Data] {
-        lock.withLock {
-            recordedBodies[url.absoluteString] ?? []
+        state.withLock {
+            $0.recordedBodies[url.absoluteString] ?? []
         }
     }
 }
@@ -200,12 +202,9 @@ struct HTTPTestResponse {
     }
 }
 
-/// @unchecked Sendable justification: response sequencing is shared across URLProtocol callbacks
-/// and NSLock serializes all access to the queued payloads.
-final class HTTPTestResponseSequence: @unchecked Sendable {
-    private let lock = NSLock()
+final class HTTPTestResponseSequence: Sendable {
     private let responses: [HTTPTestResponse]
-    private var index = 0
+    private let index = Mutex(0)
 
     init(payloads: [Data]) {
         responses = payloads.map { HTTPTestResponse(body: $0) }
@@ -216,7 +215,7 @@ final class HTTPTestResponseSequence: @unchecked Sendable {
     }
 
     func nextResponse(url: URL) throws -> (HTTPURLResponse, Data) {
-        try lock.withLock {
+        try index.withLock { index in
             guard index < responses.count else {
                 throw URLError(.badServerResponse)
             }

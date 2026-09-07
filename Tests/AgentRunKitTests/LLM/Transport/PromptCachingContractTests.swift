@@ -38,9 +38,7 @@ struct PromptCachingContractTests {
         let (api, usageScenario) = scenario
         let baseURL = try #require(URL(string: "https://prompt-cache-\(UUID().uuidString).test/v1"))
         let requestURL = try requestURL(baseURL: baseURL, api: api, execution: execution)
-        let configuration = URLSessionConfiguration.ephemeral
-        configuration.protocolClasses = [HTTPTestURLProtocol.self]
-        let session = URLSession(configuration: configuration)
+        let session = URLSession(configuration: HTTPTestURLProtocol.configuration())
         defer { session.invalidateAndCancel() }
         let sequence = HTTPTestResponseSequence(responses: scriptedResponses(
             api: api, execution: execution, usageScenario: usageScenario

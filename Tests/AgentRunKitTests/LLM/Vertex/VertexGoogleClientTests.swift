@@ -411,9 +411,7 @@ struct VertexGoogleUsageTests {
     private func withClient(
         responses: [String], execution: Execution, operation: (VertexGoogleClient) async throws -> Void
     ) async throws {
-        let configuration = URLSessionConfiguration.ephemeral
-        configuration.protocolClasses = [HTTPTestURLProtocol.self]
-        let session = URLSession(configuration: configuration)
+        let session = URLSession(configuration: HTTPTestURLProtocol.configuration())
         defer { session.invalidateAndCancel() }
         let client = VertexGoogleClient(
             projectID: "usage-\(UUID().uuidString)", location: "us-central1", model: "gemini-2.5-pro",

@@ -72,9 +72,7 @@ func withAnthropicContextClient(
 ) async throws {
     let baseURL = try #require(URL(string: "https://anthropic-context-\(UUID().uuidString).test/v1"))
     let url = baseURL.appendingPathComponent("messages")
-    let configuration = URLSessionConfiguration.ephemeral
-    configuration.protocolClasses = [HTTPTestURLProtocol.self]
-    let session = URLSession(configuration: configuration)
+    let session = URLSession(configuration: HTTPTestURLProtocol.configuration())
     defer { session.invalidateAndCancel() }
     let sequence = HTTPTestResponseSequence(responses: responses)
     HTTPTestURLProtocol.register(url: url) { _ in try sequence.nextResponse(url: url) }

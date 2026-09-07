@@ -144,9 +144,7 @@ struct ResponsesCrossConversationTests {
     func sharedClientGenerateDoesNotContaminateAcrossConversations() async throws {
         let baseURL = try #require(URL(string: "https://responses-cross-conv.test/v1"))
         let requestURL = baseURL.appendingPathComponent("responses")
-        let configuration = URLSessionConfiguration.ephemeral
-        configuration.protocolClasses = [HTTPTestURLProtocol.self]
-        let session = URLSession(configuration: configuration)
+        let session = URLSession(configuration: HTTPTestURLProtocol.configuration())
 
         let responseSequence = HTTPTestResponseSequence(
             payloads: [crossConvPayload(id: "resp_A", text: "Hi A"), crossConvPayload(id: "resp_B", text: "Hi B")]
@@ -193,9 +191,7 @@ struct ResponsesCrossConversationTests {
     func sharedClientStreamingDoesNotContaminateAcrossConversations() async throws {
         let baseURL = try #require(URL(string: "https://responses-stream-cross-conv.test/v1"))
         let requestURL = baseURL.appendingPathComponent("responses")
-        let configuration = URLSessionConfiguration.ephemeral
-        configuration.protocolClasses = [HTTPTestURLProtocol.self]
-        let session = URLSession(configuration: configuration)
+        let session = URLSession(configuration: HTTPTestURLProtocol.configuration())
 
         let responseSequence = HTTPTestResponseSequence(responses: [
             crossConvSSEResponse(id: "resp_A", text: "Hi A"),

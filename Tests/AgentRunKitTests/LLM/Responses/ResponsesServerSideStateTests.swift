@@ -96,9 +96,7 @@ struct ResponsesServerSideStateTests {
     func truncatedHistoryGenerateUsesFullRequestAndAdvancesCursor() async throws {
         let baseURL = try #require(URL(string: "https://responses-truncation-reset.test/v1"))
         let requestURL = baseURL.appendingPathComponent("responses")
-        let configuration = URLSessionConfiguration.ephemeral
-        configuration.protocolClasses = [HTTPTestURLProtocol.self]
-        let session = URLSession(configuration: configuration)
+        let session = URLSession(configuration: HTTPTestURLProtocol.configuration())
 
         let responseJSON = """
         {
@@ -186,9 +184,7 @@ struct ResponsesServerSideStateTests {
     func rewrittenHistoryGenerateUpdatesCursorAfterSuccess() async throws {
         let baseURL = try #require(URL(string: "https://responses-force-full-success.test/v1"))
         let requestURL = baseURL.appendingPathComponent("responses")
-        let configuration = URLSessionConfiguration.ephemeral
-        configuration.protocolClasses = [HTTPTestURLProtocol.self]
-        let session = URLSession(configuration: configuration)
+        let session = URLSession(configuration: HTTPTestURLProtocol.configuration())
 
         let responseJSON = """
         {
@@ -326,9 +322,7 @@ struct ResponsesServerSideStateTests {
     func rewrittenHistoryFailureCannotReuseStaleCursorWithoutCountShrink() async throws {
         let baseURL = try #require(URL(string: "https://responses-force-full-failure.test/v1"))
         let requestURL = baseURL.appendingPathComponent("responses")
-        let configuration = URLSessionConfiguration.ephemeral
-        configuration.protocolClasses = [HTTPTestURLProtocol.self]
-        let session = URLSession(configuration: configuration)
+        let session = URLSession(configuration: HTTPTestURLProtocol.configuration())
         let failureBody = #"{"error":{"message":"upstream unavailable"}}"#
 
         HTTPTestURLProtocol.register(url: requestURL) { _ in
@@ -392,9 +386,7 @@ struct ResponsesServerSideStateTests {
     func malformedGenerateResponseDoesNotAdvanceDeltaCursor(fields: String) async throws {
         let baseURL = try #require(URL(string: "https://responses-malformed-\(UUID().uuidString).test/v1"))
         let requestURL = baseURL.appendingPathComponent("responses")
-        let configuration = URLSessionConfiguration.ephemeral
-        configuration.protocolClasses = [HTTPTestURLProtocol.self]
-        let session = URLSession(configuration: configuration)
+        let session = URLSession(configuration: HTTPTestURLProtocol.configuration())
         defer { session.invalidateAndCancel() }
 
         let malformedResponseJSON = #"{"id":"resp_bad","status":"completed",\#(fields)}"#
@@ -449,9 +441,7 @@ struct ResponsesStreamingCursorTests {
     func streamingForceFullRequestBypassesStaleCursor() async throws {
         let baseURL = try #require(URL(string: "https://responses-stream-force.test/v1"))
         let requestURL = baseURL.appendingPathComponent("responses")
-        let configuration = URLSessionConfiguration.ephemeral
-        configuration.protocolClasses = [HTTPTestURLProtocol.self]
-        let session = URLSession(configuration: configuration)
+        let session = URLSession(configuration: HTTPTestURLProtocol.configuration())
 
         let completedJSON = """
         {"type":"response.completed","response":{"id":"resp_002","status":"completed",\
@@ -509,9 +499,7 @@ struct ResponsesUsageCursorTests {
     func normalizedUsagePreservesCursorAcrossBlockingAndStreaming(details: String, expected: TokenUsage?) async throws {
         let baseURL = try #require(URL(string: "https://responses-usage-\(UUID().uuidString).test/v1"))
         let requestURL = baseURL.appendingPathComponent("responses")
-        let configuration = URLSessionConfiguration.ephemeral
-        configuration.protocolClasses = [HTTPTestURLProtocol.self]
-        let session = URLSession(configuration: configuration)
+        let session = URLSession(configuration: HTTPTestURLProtocol.configuration())
         defer { session.invalidateAndCancel() }
         func responseJSON(_ id: String) -> String {
             #"{"id":"\#(id)","status":"completed","output":[{"type":"reasoning","id":"reasoning_1","#
@@ -568,9 +556,7 @@ struct ResponsesUsageCursorTests {
     func malformedStreamedUsagePreservesCursorForNextRequest(usage: String, key: String) async throws {
         let baseURL = try #require(URL(string: "https://responses-malformed-stream-\(UUID().uuidString).test/v1"))
         let requestURL = baseURL.appendingPathComponent("responses")
-        let configuration = URLSessionConfiguration.ephemeral
-        configuration.protocolClasses = [HTTPTestURLProtocol.self]
-        let session = URLSession(configuration: configuration)
+        let session = URLSession(configuration: HTTPTestURLProtocol.configuration())
         defer { session.invalidateAndCancel() }
         func responseJSON(_ id: String) -> String {
             #"{"id":"\#(id)","status":"completed","output":[{"type":"message","#
@@ -622,9 +608,7 @@ struct ResponsesAgentRunRecoveryTests {
     func rewrittenHistoryForcesFullRequestThenResumesDeltaMode() async throws {
         let baseURL = try #require(URL(string: "https://responses-agent.test/v1"))
         let requestURL = baseURL.appendingPathComponent("responses")
-        let configuration = URLSessionConfiguration.ephemeral
-        configuration.protocolClasses = [HTTPTestURLProtocol.self]
-        let session = URLSession(configuration: configuration)
+        let session = URLSession(configuration: HTTPTestURLProtocol.configuration())
         let responseSequence = HTTPTestResponseSequence(payloads: makeAgentRunRecoveryPayloads())
 
         HTTPTestURLProtocol.register(url: requestURL) { _ in
@@ -671,9 +655,7 @@ struct ResponsesAgentRunRecoveryTests {
     func pruneRewriteForcesFullSummaryRequestBeforeMainRunRequest() async throws {
         let baseURL = try #require(URL(string: "https://responses-prune-summary.test/v1"))
         let requestURL = baseURL.appendingPathComponent("responses")
-        let configuration = URLSessionConfiguration.ephemeral
-        configuration.protocolClasses = [HTTPTestURLProtocol.self]
-        let session = URLSession(configuration: configuration)
+        let session = URLSession(configuration: HTTPTestURLProtocol.configuration())
         let responseSequence = HTTPTestResponseSequence(payloads: makePruneRewriteSummaryPayloads())
 
         HTTPTestURLProtocol.register(url: requestURL) { _ in
@@ -724,9 +706,7 @@ struct ResponsesAgentRunRecoveryTests {
     func sameTurnPromptTooLongRecoveryForcesFullRetry() async throws {
         let baseURL = try #require(URL(string: "https://responses-prompt-too-long.test/v1"))
         let requestURL = baseURL.appendingPathComponent("responses")
-        let configuration = URLSessionConfiguration.ephemeral
-        configuration.protocolClasses = [HTTPTestURLProtocol.self]
-        let session = URLSession(configuration: configuration)
+        let session = URLSession(configuration: HTTPTestURLProtocol.configuration())
         let responseSequence = HTTPTestResponseSequence(responses: makePromptTooLongRecoveryResponses())
 
         HTTPTestURLProtocol.register(url: requestURL) { _ in
