@@ -784,29 +784,6 @@ struct ResponsesResponseParsingTests {
         let msg = await client.parseResponse(response)
         #expect(msg.content == "Partial")
     }
-
-    @Test(arguments: [
-        (#"{"cached_tokens":80,"cache_write_tokens":70}"#,
-         TokenUsage(input: 100, output: 30, reasoning: 20, cacheRead: 80, cacheWrite: 70)),
-        (#"{"cached_tokens":0,"cache_write_tokens":0}"#,
-         TokenUsage(input: 100, output: 30, reasoning: 20, cacheRead: 0, cacheWrite: 0)),
-        (#"{"cached_tokens":80}"#, TokenUsage(input: 100, output: 30, reasoning: 20, cacheRead: 80)),
-        (#"{"cache_write_tokens":70}"#, TokenUsage(input: 100, output: 30, reasoning: 20, cacheWrite: 70)),
-        (#"{"cached_tokens":null,"cache_write_tokens":null}"#, TokenUsage(input: 100, output: 30, reasoning: 20)),
-        ("{}", TokenUsage(input: 100, output: 30, reasoning: 20)),
-        ("null", TokenUsage(input: 100, output: 30, reasoning: 20))
-    ])
-    func usageMappingSeparatesReasoningAndCacheDetails(details: String, expected: TokenUsage) async throws {
-        let json = #"{"id":"resp_004","status":"completed","output":[],"usage":{"#
-            + #""input_tokens":100,"output_tokens":50,"input_tokens_details":\#(details),"#
-            + #""output_tokens_details":{"reasoning_tokens":20}}}"#
-        let client = makeClient()
-        let response = try await client.decodeResponse(Data(json.utf8))
-        let msg = await client.parseResponse(response)
-
-        #expect(msg.tokenUsage == expected)
-        #expect(msg.tokenUsage?.total == 150)
-    }
 }
 
 struct ResponsesStoreFieldTests {
@@ -936,26 +913,23 @@ struct ResponsesExtraFieldsTests {
     }
 }
 
-extension ResponsesResponseParsingTests {
-    @Test(arguments: [
-        (#"{"output_tokens":5}"#, "input_tokens"),
-        (#"{"input_tokens":10}"#, "output_tokens"),
-        (#"{"input_tokens":-1,"output_tokens":5}"#, "input_tokens"),
-        (#"{"input_tokens":10,"output_tokens":-1}"#, "output_tokens"),
-        (#"{"input_tokens":10,"output_tokens":null}"#, "output_tokens"),
-        (#"{"input_tokens":10,"output_tokens":9223372036854775808}"#, "output_tokens"),
-        (#"{"input_tokens":10,"output_tokens":1.5}"#, "output_tokens"),
-        (#"{"input_tokens":10,"output_tokens":5,"output_tokens_details":{"reasoning_tokens":-1}}"#,
-         "reasoning_tokens"),
-        (#"{"input_tokens":10,"output_tokens":5,"input_tokens_details":{"cached_tokens":-1}}"#, "cached_tokens"),
-        (#"{"input_tokens":10,"output_tokens":5,"input_tokens_details":{"cache_write_tokens":"2"}}"#,
-         "cache_write_tokens"),
-        (#"{"input_tokens":10,"output_tokens":5,"input_tokens_details":{"cache_write_tokens":-1}}"#,
-         "cache_write_tokens"),
-        (#"{"input_tokens":10,"output_tokens":5,"input_tokens_details":false}"#, "input_tokens_details")
-    ])
+struct ResponsesUsageTests {
+    @Test(arguments: responsesCacheUsageCases)
+    func usageMappingSeparatesReasoningAndCacheDetails(details: String, expected: TokenUsage) async throws {
+        let json = #"{"id":"resp_004","status":"completed","output":[],"usage":{"#
+            + #""input_tokens":100,"output_tokens":50,"input_tokens_details":\#(details),"#
+            + #""output_tokens_details":{"reasoning_tokens":20}}}"#
+        let client = ResponsesAPIClient(baseURL: ResponsesAPIClient.openAIBaseURL)
+        let response = try await client.decodeResponse(Data(json.utf8))
+        let msg = await client.parseResponse(response)
+
+        #expect(msg.tokenUsage == expected)
+        #expect(msg.tokenUsage?.total == 150)
+    }
+
+    @Test(arguments: responsesMalformedUsageCases)
     func malformedUsageThrowsWithItsFieldPath(usage: String, key: String) async throws {
-        let client = makeClient()
+        let client = ResponsesAPIClient(baseURL: ResponsesAPIClient.openAIBaseURL)
         let response = #"{"id":"resp_bad","status":"completed","output":[],"usage":\#(usage)}"#
         do {
             _ = try await client.decodeResponse(Data(response.utf8))

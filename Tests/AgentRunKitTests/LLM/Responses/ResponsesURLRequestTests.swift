@@ -3,6 +3,42 @@ import Foundation
 import Testing
 
 struct ResponsesURLRequestTests {
+    @Test(arguments: Endpoint.allCases, [false, true])
+    func cacheIdentifiersReachURLRequest(endpoint: Endpoint, stream: Bool) async throws {
+        let client = endpoint.makeClient()
+        let request = try await client.buildRequest(
+            messages: [.user("Hello")], tools: [], stream: stream,
+            extraFields: [
+                "prompt_cache_key": .string("shared-prefix-v1"),
+                "safety_identifier": .string("user-digest-123"),
+                "user": .string("legacy-user")
+            ]
+        )
+        let urlRequest = try await client.buildURLRequest(request)
+        let body = try JSONDecoder().decode([String: JSONValue].self, from: #require(urlRequest.httpBody))
+
+        #expect(urlRequest.url?.absoluteString == endpoint.url)
+        #expect(body["prompt_cache_key"] == .string("shared-prefix-v1"))
+        #expect(body["safety_identifier"] == .string("user-digest-123"))
+        #expect(body["user"] == .string("legacy-user"))
+        #expect(body["stream"] == (stream ? .bool(true) : nil))
+    }
+
+    @Test(arguments: Endpoint.allCases, ["model", "input", "tools", "stream", "previous_response_id", "unknown"])
+    func reservedAndUnknownExtraFieldsFailURLRequestEncoding(endpoint: Endpoint, key: String) async throws {
+        let client = endpoint.makeClient()
+        let request = try await client.buildRequest(
+            messages: [.user("Hello")], tools: [], stream: true,
+            extraFields: [key: .string("override")]
+        )
+        do {
+            _ = try await client.buildURLRequest(request)
+            Issue.record("Expected invalid extra field to fail request encoding")
+        } catch let AgentError.llmError(.encodingFailed(description)) {
+            #expect(description.contains(key))
+        }
+    }
+
     @Test(arguments: [false, true])
     func nestedSchemaBodyHasDeterministicObjectOrder(stream: Bool) async throws {
         let client = ResponsesAPIClient(model: "test", baseURL: ResponsesAPIClient.openAIBaseURL, store: false)
@@ -100,5 +136,27 @@ struct ResponsesURLRequestTests {
         let urlRequest = try await client.buildURLRequest(request)
 
         #expect(urlRequest.url?.absoluteString == "https://custom.api.com/v2/custom/responses")
+    }
+
+    enum Endpoint: CaseIterable {
+        case openAI, openRouter
+
+        var url: String {
+            switch self {
+            case .openAI: "https://api.openai.com/v1/responses"
+            case .openRouter: "https://openrouter.ai/api/v1/responses"
+            }
+        }
+
+        func makeClient() -> ResponsesAPIClient {
+            switch self {
+            case .openAI:
+                ResponsesAPIClient(
+                    apiKey: "test-key", model: "gpt-4.1", baseURL: ResponsesAPIClient.openAIBaseURL
+                )
+            case .openRouter:
+                ResponsesAPIClient.openRouter(apiKey: "test-key", model: "gpt-4.1")
+            }
+        }
     }
 }

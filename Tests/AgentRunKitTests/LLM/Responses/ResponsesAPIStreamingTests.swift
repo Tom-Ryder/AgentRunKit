@@ -877,18 +877,8 @@ struct ResponsesStreamingFailureSafetyTests {
     }
 }
 
-extension ResponsesStreamingTests {
-    @Test(arguments: [
-        (#"{"cached_tokens":80,"cache_write_tokens":70}"#,
-         TokenUsage(input: 100, output: 30, reasoning: 20, cacheRead: 80, cacheWrite: 70)),
-        (#"{"cached_tokens":0,"cache_write_tokens":0}"#,
-         TokenUsage(input: 100, output: 30, reasoning: 20, cacheRead: 0, cacheWrite: 0)),
-        (#"{"cached_tokens":80}"#, TokenUsage(input: 100, output: 30, reasoning: 20, cacheRead: 80)),
-        (#"{"cache_write_tokens":70}"#, TokenUsage(input: 100, output: 30, reasoning: 20, cacheWrite: 70)),
-        (#"{"cached_tokens":null,"cache_write_tokens":null}"#, TokenUsage(input: 100, output: 30, reasoning: 20)),
-        ("{}", TokenUsage(input: 100, output: 30, reasoning: 20)),
-        ("null", TokenUsage(input: 100, output: 30, reasoning: 20))
-    ])
+struct ResponsesStreamingUsageTests {
+    @Test(arguments: responsesCacheUsageCases)
     func streamedUsageSeparatesReasoningAndCacheDetails(details: String, expected: TokenUsage) async throws {
         let completed = #"{"type":"response.completed","response":{"id":"resp_cache","output":[],"usage":{"#
             + #""input_tokens":100,"output_tokens":50,"input_tokens_details":\#(details),"#
@@ -933,31 +923,5 @@ extension ResponsesStreamingTests {
             .toolCallStart(index: 1, id: "call_1", name: "lookup", kind: .function),
             .toolCallDelta(index: 1, arguments: "{}"), .finished(usage: nil)
         ])
-    }
-
-    @Test(arguments: [
-        #"{"output_tokens":5}"#,
-        #"{"input_tokens":10}"#,
-        #"{"input_tokens":-1,"output_tokens":5}"#,
-        #"{"input_tokens":10,"output_tokens":-1}"#,
-        #"{"input_tokens":10,"output_tokens":null}"#,
-        #"{"input_tokens":10,"output_tokens":9223372036854775808}"#,
-        #"{"input_tokens":10,"output_tokens":1.5}"#,
-        #"{"input_tokens":10,"output_tokens":5,"output_tokens_details":{"reasoning_tokens":-1}}"#,
-        #"{"input_tokens":10,"output_tokens":5,"input_tokens_details":{"cached_tokens":-1}}"#,
-        #"{"input_tokens":10,"output_tokens":5,"input_tokens_details":{"cache_write_tokens":"2"}}"#,
-        #"{"input_tokens":10,"output_tokens":5,"input_tokens_details":{"cache_write_tokens":-1}}"#,
-        #"{"input_tokens":10,"output_tokens":5,"input_tokens_details":false}"#
-    ])
-    func malformedStreamedUsageThrows(usage: String) async {
-        let completed = #"{"type":"response.completed","response":{"id":"resp_bad","output":[],"usage":\#(usage)}}"#
-        let result = await collectRunStreamElementsResult(
-            client: makeResponsesStreamingClient(), lines: [responsesSSELine(completed)]
-        )
-        #expect(result.elements.isEmpty)
-        guard case .llmError(.decodingFailed) = result.error as? AgentError else {
-            Issue.record("Expected malformed usage decoding failure")
-            return
-        }
     }
 }

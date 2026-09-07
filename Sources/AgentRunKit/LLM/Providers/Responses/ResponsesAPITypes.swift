@@ -16,7 +16,8 @@ struct ResponsesRequest: Encodable {
 
     private static let validExtraFields: Set<String> = [
         "temperature", "top_p", "metadata", "truncation",
-        "user", "service_tier", "tool_choice", "parallel_tool_calls"
+        "user", "service_tier", "tool_choice", "parallel_tool_calls",
+        "prompt_cache_key", "safety_identifier"
     ]
 
     enum CodingKeys: String, CodingKey {

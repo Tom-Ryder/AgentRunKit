@@ -499,7 +499,7 @@ struct ResponsesStreamingCursorTests {
     }
 }
 
-extension ResponsesStreamingCursorTests {
+struct ResponsesUsageCursorTests {
     @Test(arguments: [
         (#"{"cached_tokens":80,"cache_write_tokens":70}"#,
          TokenUsage(input: 100, output: 30, reasoning: 20, cacheRead: 80, cacheWrite: 70)),
@@ -564,37 +564,56 @@ extension ResponsesStreamingCursorTests {
         #expect(input.first?["content"] as? String == "Final")
     }
 
-    @Test
-    func malformedStreamedUsageCannotAdvanceCursor() async throws {
-        let baseURL = try #require(URL(string: "https://responses-malformed-stream-usage.test/v1"))
+    @Test(arguments: responsesMalformedUsageCases)
+    func malformedStreamedUsagePreservesCursorForNextRequest(usage: String, key: String) async throws {
+        let baseURL = try #require(URL(string: "https://responses-malformed-stream-\(UUID().uuidString).test/v1"))
         let requestURL = baseURL.appendingPathComponent("responses")
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [HTTPTestURLProtocol.self]
         let session = URLSession(configuration: configuration)
         defer { session.invalidateAndCancel() }
+        func responseJSON(_ id: String) -> String {
+            #"{"id":"\#(id)","status":"completed","output":[{"type":"message","#
+                + #""content":[{"type":"output_text","text":"Answer"}]}],"#
+                + #""usage":{"input_tokens":10,"output_tokens":5}}"#
+        }
         let body = #"data: {"type":"response.completed","response":{"id":"resp_bad","output":[],"#
-            + #""usage":{"input_tokens":10,"output_tokens":5,"input_tokens_details":{"cache_write_tokens":-1}}}}"#
-            + "\n\n"
+            + #""usage":\#(usage)}}"# + "\n\n"
         let sequence = HTTPTestResponseSequence(responses: [
-            HTTPTestResponse(body: Data(body.utf8), headers: ["Content-Type": "text/event-stream"])
+            HTTPTestResponse(body: Data(responseJSON("resp_prev").utf8)),
+            HTTPTestResponse(body: Data(body.utf8), headers: ["Content-Type": "text/event-stream"]),
+            HTTPTestResponse(body: Data(responseJSON("resp_recovered").utf8))
         ])
         HTTPTestURLProtocol.register(url: requestURL) { _ in try sequence.nextResponse(url: requestURL) }
         defer { HTTPTestURLProtocol.unregister(url: requestURL) }
         let client = ResponsesAPIClient(baseURL: baseURL, session: session, retryPolicy: .none, store: true)
-        let prior: [ChatMessage] = [.user("Hello"), .assistant(AssistantMessage(content: "Answer"))]
-        await client.setCursorState(responseId: "resp_prev", messages: prior)
+        let chat = Chat<EmptyContext>(client: client)
+        let first = try await chat.send("Hello")
         let result = await collectStreamResult(client.stream(
-            messages: prior + [.user("Again")], tools: [], requestContext: nil
+            messages: first.history + [.user("Again")], tools: [], requestContext: nil
         ))
-        guard case .llmError(.decodingFailed) = result.error as? AgentError else {
+        guard case let .llmError(.decodingFailed(description)) = result.error as? AgentError else {
             Issue.record("Expected malformed usage decoding failure")
             return
         }
+        #expect(description.contains("response"))
+        #expect(description.contains("usage"))
+        #expect(description.contains(key))
         #expect(result.deltas.isEmpty)
         #expect(await client.lastResponseId == "resp_prev")
-        #expect(await client.lastMessageCount == prior.count)
-        #expect(await client.lastPrefixSignature == client.prefixSignature(prior))
-        #expect(HTTPTestURLProtocol.recordedBodyData(for: requestURL).count == 1)
+        #expect(await client.lastMessageCount == first.history.count)
+        #expect(await client.lastPrefixSignature == client.prefixSignature(first.history))
+        _ = try await chat.send("Retry", history: first.history)
+        let bodies = try HTTPTestURLProtocol.recordedBodyData(for: requestURL).map {
+            try JSONDecoder().decode([String: JSONValue].self, from: $0)
+        }
+        try #require(bodies.count == 3)
+        #expect(bodies[0]["previous_response_id"] == nil)
+        #expect(bodies[1]["previous_response_id"] == .string("resp_prev"))
+        #expect(bodies[2]["previous_response_id"] == .string("resp_prev"))
+        #expect(bodies[2]["input"] == .array([.object([
+            "type": .string("message"), "role": .string("user"), "content": .string("Retry")
+        ])]))
     }
 }
 
