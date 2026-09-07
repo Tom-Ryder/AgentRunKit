@@ -840,17 +840,19 @@ struct StreamStallDetectionTests {
 
     @Test
     func cancelledSSEStreamPropagatesCancellation() async throws {
+        let clock = TestClock()
         let (byteStream, byteContinuation) = AsyncStream<UInt8>.makeStream()
         let controlled = ControlledByteStream(stream: byteStream)
         let task = Task {
             try await processSSEStream(
                 bytes: controlled,
                 provider: .custom("test"),
-                stallTimeout: .seconds(5)
+                stallTimeout: .seconds(5),
+                clock: clock
             ) { _, _ in .continue }
         }
 
-        try await Task.sleep(for: .milliseconds(20))
+        await clock.awaitSuspensions(atLeast: 1)
         task.cancel()
         byteContinuation.finish()
 
@@ -878,14 +880,15 @@ struct StreamStallDetectionTests {
         try await processSSEStream(
             bytes: controlled,
             provider: .custom("test"),
-            stallTimeout: .seconds(5)
+            stallTimeout: .seconds(5),
+            clock: TestClock()
         ) { event, _ in
             await counter.increment()
             return event.data == "[DONE]" ? .complete : .continue
         }
 
         let total = await counter.count
-        #expect(total >= 2)
+        #expect(total == 2)
     }
 
     @Test
@@ -932,7 +935,8 @@ struct StreamStallDetectionTests {
             try await processSSEStream(
                 bytes: controlled,
                 provider: .custom("test"),
-                stallTimeout: .seconds(5)
+                stallTimeout: .seconds(5),
+                clock: TestClock()
             ) { _, _ in .continue }
             Issue.record("Expected provider termination missing")
         } catch let error as AgentError {

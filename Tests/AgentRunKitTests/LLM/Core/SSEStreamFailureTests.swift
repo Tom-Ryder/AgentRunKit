@@ -281,7 +281,8 @@ struct SSEStreamFailureTests {
             try await processSSEStream(
                 bytes: bytes,
                 provider: .custom("test"),
-                stallTimeout: .seconds(5)
+                stallTimeout: .seconds(5),
+                clock: TestClock()
             ) { _, _ in .continue }
             Issue.record("Expected mid-stream transport failure")
         } catch let error as AgentError {
