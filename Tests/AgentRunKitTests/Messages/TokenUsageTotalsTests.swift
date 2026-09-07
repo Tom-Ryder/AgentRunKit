@@ -142,6 +142,8 @@ struct TokenUsageTotalsTests {
         #expect(totals.cacheRead == .max)
         #expect(totals.cacheWrite == .max)
         #expect(totals.coverage == .partial)
+        #expect(totals.cacheReadCoverage == .partial)
+        #expect(totals.cacheWriteCoverage == .partial)
     }
 }
 

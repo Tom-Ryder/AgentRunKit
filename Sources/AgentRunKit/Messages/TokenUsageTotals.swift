@@ -1,38 +1,26 @@
 import Foundation
 
 /// Accumulates reported token counts while preserving measurement availability.
+///
+/// For coverage and saturation semantics, see <doc:TokenAccounting>.
 public struct TokenUsageTotals: Sendable, Equatable, Codable {
-    private var inputCount = 0
-    private var outputCount = 0
-    private var reasoningCount = 0
-    private var cacheReadCount: Int? = 0
-    private var cacheWriteCount: Int? = 0
-    private var accounting: TokenUsageAccounting = .empty
+    /// The reported input subtotal, including reported cache reads and writes.
+    public private(set) var input: Int = 0
+    /// The reported output subtotal, excluding separately reported reasoning.
+    public private(set) var output: Int = 0
+    /// The subtotal of separately reported reasoning tokens.
+    public private(set) var reasoning: Int = 0
+    /// The cache-read subtotal, including measured zero, or nil when its coverage is unavailable.
+    public private(set) var cacheRead: Int? = 0
+    /// The cache-write subtotal, including measured zero, or nil when its coverage is unavailable.
+    public private(set) var cacheWrite: Int? = 0
 
-    public var input: Int {
-        inputCount
-    }
-
-    public var output: Int {
-        outputCount
-    }
-
-    public var reasoning: Int {
-        reasoningCount
-    }
-
-    public var cacheRead: Int? {
-        cacheReadCount
-    }
-
-    public var cacheWrite: Int? {
-        cacheWriteCount
-    }
-
+    /// The sum of input, output, and reasoning, saturated at Int.max.
     public var total: Int {
         saturatingTokenSum(saturatingTokenSum(input, output), reasoning)
     }
 
+    /// Measurement availability across recorded responses, independent of separate reasoning breakdowns.
     public var coverage: TokenUsageCoverage {
         switch accounting {
         case .empty: .complete
@@ -40,6 +28,7 @@ public struct TokenUsageTotals: Sendable, Equatable, Codable {
         }
     }
 
+    /// Measurement availability for cache reads, tracked independently of cache writes.
     public var cacheReadCoverage: TokenUsageCoverage {
         switch accounting {
         case .empty: .complete
@@ -47,12 +36,15 @@ public struct TokenUsageTotals: Sendable, Equatable, Codable {
         }
     }
 
+    /// Measurement availability for cache writes, tracked independently of cache reads.
     public var cacheWriteCoverage: TokenUsageCoverage {
         switch accounting {
         case .empty: .complete
         case let .observed(_, _, cacheWrite): cacheWrite
         }
     }
+
+    private var accounting: TokenUsageAccounting = .empty
 
     /// Creates exact zero totals before any response has been recorded.
     public init() {}
@@ -64,8 +56,8 @@ public struct TokenUsageTotals: Sendable, Equatable, Codable {
         var writeCoverage: TokenUsageCoverage = usage?.cacheWrite == nil ? .unavailable : .complete
         switch accounting {
         case .empty:
-            cacheReadCount = nil
-            cacheWriteCount = nil
+            cacheRead = nil
+            cacheWrite = nil
         case let .observed(previousUsage, previousRead, previousWrite):
             usageCoverage = previousUsage.combined(with: usageCoverage)
             readCoverage = previousRead.combined(with: readCoverage)
@@ -73,14 +65,14 @@ public struct TokenUsageTotals: Sendable, Equatable, Codable {
         }
         accounting = .observed(usage: usageCoverage, cacheRead: readCoverage, cacheWrite: writeCoverage)
         guard let usage else { return }
-        inputCount = saturatingTokenSum(inputCount, usage.input)
-        outputCount = saturatingTokenSum(outputCount, usage.output)
-        reasoningCount = saturatingTokenSum(reasoningCount, usage.reasoning)
+        input = saturatingTokenSum(input, usage.input)
+        output = saturatingTokenSum(output, usage.output)
+        reasoning = saturatingTokenSum(reasoning, usage.reasoning)
         if let cacheRead = usage.cacheRead {
-            cacheReadCount = saturatingTokenSum(cacheReadCount ?? 0, cacheRead)
+            self.cacheRead = saturatingTokenSum(self.cacheRead ?? 0, cacheRead)
         }
         if let cacheWrite = usage.cacheWrite {
-            cacheWriteCount = saturatingTokenSum(cacheWriteCount ?? 0, cacheWrite)
+            self.cacheWrite = saturatingTokenSum(self.cacheWrite ?? 0, cacheWrite)
         }
     }
 
@@ -90,18 +82,18 @@ public struct TokenUsageTotals: Sendable, Equatable, Codable {
 
     public init(from decoder: any Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        inputCount = try container.decodeTokenCount(forKey: .input)
-        outputCount = try container.decodeTokenCount(forKey: .output)
-        reasoningCount = try container.decodeTokenCount(forKey: .reasoning)
-        cacheReadCount = try container.decodeTokenCountIfPresent(forKey: .cacheRead)
-        cacheWriteCount = try container.decodeTokenCountIfPresent(forKey: .cacheWrite)
+        input = try container.decodeTokenCount(forKey: .input)
+        output = try container.decodeTokenCount(forKey: .output)
+        reasoning = try container.decodeTokenCount(forKey: .reasoning)
+        cacheRead = try container.decodeTokenCountIfPresent(forKey: .cacheRead)
+        cacheWrite = try container.decodeTokenCountIfPresent(forKey: .cacheWrite)
         if container.contains(.accounting) {
             accounting = try container.decode(TokenUsageAccounting.self, forKey: .accounting)
         } else {
             accounting = .observed(
                 usage: .partial,
-                cacheRead: cacheReadCount == nil ? .unavailable : .partial,
-                cacheWrite: cacheWriteCount == nil ? .unavailable : .partial
+                cacheRead: cacheRead == nil ? .unavailable : .partial,
+                cacheWrite: cacheWrite == nil ? .unavailable : .partial
             )
         }
         try validateAccounting(in: container)
@@ -109,11 +101,11 @@ public struct TokenUsageTotals: Sendable, Equatable, Codable {
 
     public func encode(to encoder: any Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
-        try container.encode(inputCount, forKey: .input)
-        try container.encode(outputCount, forKey: .output)
-        try container.encode(reasoningCount, forKey: .reasoning)
-        try container.encodeIfPresent(cacheReadCount, forKey: .cacheRead)
-        try container.encodeIfPresent(cacheWriteCount, forKey: .cacheWrite)
+        try container.encode(input, forKey: .input)
+        try container.encode(output, forKey: .output)
+        try container.encode(reasoning, forKey: .reasoning)
+        try container.encodeIfPresent(cacheRead, forKey: .cacheRead)
+        try container.encodeIfPresent(cacheWrite, forKey: .cacheWrite)
         try container.encode(accounting, forKey: .accounting)
     }
 
