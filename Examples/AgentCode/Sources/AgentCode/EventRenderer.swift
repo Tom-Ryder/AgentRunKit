@@ -52,6 +52,15 @@ final class EventRenderer {
         clearSpinnerLineIfNeeded()
     }
 
+    static func finishedSummary(usage: TokenUsageTotals, reason: FinishReason?) -> String {
+        let measurement = switch usage.coverage {
+        case .complete: "\(usage.total) tokens"
+        case .partial: "\(usage.total) reported tokens (partial)"
+        case .unavailable: "usage unavailable"
+        }
+        return "\(reason?.description ?? "completed") · \(measurement)"
+    }
+
     private func startTool(name: String, id: String) {
         activeTools[id] = ToolActivity(name: name, startedAt: Date())
         guard Terminal.isInteractiveOutput() else { return }
@@ -125,13 +134,9 @@ final class EventRenderer {
             Terminal.writeLine(content)
         }
         Terminal.writeLine("")
-        let status = reason?.description ?? "completed"
-        let measurement = switch usage.coverage {
-        case .complete: "\(usage.total) tokens"
-        case .partial: "\(usage.total) reported tokens (partial)"
-        case .unavailable: "usage unavailable"
-        }
-        Terminal.writeLine("\(Terminal.pill("finished", style: .green)) \(status) · \(measurement)")
+        Terminal.writeLine(
+            "\(Terminal.pill("finished", style: .green)) \(Self.finishedSummary(usage: usage, reason: reason))"
+        )
     }
 
     private func renderIteration(usage: TokenUsage?, iteration: Int) {

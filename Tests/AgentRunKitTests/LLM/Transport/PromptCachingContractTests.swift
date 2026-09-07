@@ -409,9 +409,7 @@ private extension PromptCachingContractTests {
             alpha: #"{ "z": 1, "a": 2 }"#
         ))
     }
-}
 
-private extension PromptCachingContractTests {
     func assertGeminiHistory(first: [String: JSONValue], second: [String: JSONValue]) throws {
         for body in [first, second] {
             #expect(body["systemInstruction"] == .object([

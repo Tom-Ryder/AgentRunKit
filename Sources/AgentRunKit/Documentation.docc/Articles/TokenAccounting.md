@@ -28,11 +28,13 @@ Empty totals have complete coverage and five exact zero counts because no respon
 
 Once measurements have gaps, later responses cannot restore complete coverage. Cache dimensions are independent: a response can report complete input and output measurements while leaving one or both cache breakdowns unavailable. A cache subtotal is `nil` exactly when its coverage is unavailable; partial and complete cache subtotals always have a numeric value, including zero.
 
-Provider adapters resolve wire defaults before constructing ``TokenUsage``. For example, Gemini and Vertex Google treat omitted cache-read counts inside a present usage metadata object as zero, allowing complete cache-read coverage. An absent metadata object contributes `nil` usage instead. Foundation Models does not report token usage, so recording its responses produces unavailable totals. See <doc:LLMProviders> for provider mappings.
+Provider adapters resolve wire defaults before constructing ``TokenUsage``. For example, Gemini and Vertex Google treat omitted or null counters inside a present usage metadata object as zero, allowing complete cache-read coverage. An absent or null metadata object contributes `nil` usage instead. Foundation Models does not report token usage, so recording its responses produces unavailable totals. See <doc:LLMProviders> for provider mappings.
 
 ## Interpreting Counts
 
 Input includes reported cache reads and cache writes. Cache counters describe portions of input, so ``TokenUsageTotals/total`` adds only input, output, and reasoning. Output excludes reasoning when a provider supplies a separate breakdown; undifferentiated output remains output. A reasoning count of zero can mean that no separate breakdown was reported. Complete overall coverage describes usage availability and does not establish that a provider identified every reasoning token separately.
+
+Gemini and Vertex Google input includes both `promptTokenCount` and `toolUsePromptTokenCount`. Cached content is already included in `promptTokenCount`, so its count is not added again. Tool-use input therefore contributes to usage totals, context utilization, token ceilings, and compaction thresholds.
 
 All sums saturate at `Int.max`. Coverage still describes measurement availability when a sum saturates; it does not certify arithmetic precision or the accuracy of provider estimates.
 
@@ -45,6 +47,8 @@ The aggregate represents recorded responses. It does not estimate failed HTTP at
 ``AgentResult/totalTokenUsage``, the `tokenUsage` payload of ``StreamEvent/Kind/finished(tokenUsage:content:reason:history:)``, and ``AgentCheckpoint/tokenUsage`` carry ``TokenUsageTotals``. ``AgentStream/tokenUsage`` is optional until a finish event or checkpoint preload supplies totals. ``Agent`` and streaming ``Chat`` populate these values automatically.
 
 A blocking response contributes once when it returns. A streamed response contributes once after the stream drains and passes validation. A finished delta followed by a stream error, cancellation, or invalid completion contributes no returned response. A summarization response contributes as soon as it returns, even when its content is rejected and compaction falls back. Local pruning, truncation, and failed requests that return no response contribute nothing.
+
+For custom ``LLMClient`` implementations, each ``StreamDelta/finished(usage:)`` replaces the previous usage snapshot for that response. If a stream sends multiple finished deltas, the last value wins, including `nil`; those snapshots are not added together. This response-level rule is separate from provider wire updates, which each adapter normalizes before emitting deltas.
 
 Completed Agent iterations still carry optional single-response ``TokenUsage``. Their sample array cannot reconstruct aggregate totals: summary responses are included in totals but have no iteration sample. Missing samples remain `nil`, including on Foundation Models. Resume restores aggregate values and coverage directly; replaying saved or buffered events does not record responses again. Nested child events do not change parent totals.
 
